@@ -23,7 +23,7 @@
 //! that is what, on a doorbell with no chime paired, tells a legitimate empty list
 //! (`[]`) apart from a camera that did not answer (no state at all).
 //!
-//! Settings do not go through the [`CameraDriver`] trait: they are read/write pairs
+//! Settings do not go through the [`bairelay_neolink_core::bc_protocol::CameraDriver`] trait: they are read/write pairs
 //! specific to the Baichuan protocol, and the trait is not meant to
 //! carry thirty methods. The dispatch therefore goes through the concrete [`BcCamera`]
 //! this module knows how to interrogate, block by block.
@@ -373,7 +373,7 @@ pub(crate) const REASON_NO_LOCK: &str =
 	" - setting not locked: the family keeps its state";
 
 /// The consequence of a **transient** refusal, published this time **first** in
-/// the sentence: [`publishable_reason`] cuts at 160 characters keeping the
+/// the sentence: [`bairelay_mqtt::status::publishable_reason`] cuts at 160 characters keeping the
 /// beginning, so the end of a sentence does not survive a long technical reason
 /// (`the camera's answer is unintelligible: …`). Yet that is precisely the half
 /// the operator looks at: is the family usable or not.
