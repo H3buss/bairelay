@@ -377,7 +377,7 @@ pub(crate) const REASON_NO_LOCK: &str =
 /// beginning, so the end of a sentence does not survive a long technical reason
 /// (`the camera's answer is unintelligible: …`). Yet that is precisely the half
 /// the operator looks at: is the family usable or not.
-pub(crate) const REASON_TRANSITOIRE: &str =
+pub(crate) const REASON_TRANSIENT: &str =
 	"transient read error: the family stays published as writable";
 
 /// **Local** and structural refusal: the tag we would have to send back in order
@@ -451,7 +451,7 @@ pub(crate) async fn publish_reason_unknown(
 /// Publishes the reason for a **transient** refusal: the camera answered badly, too
 /// tard, or in an unusable block, and the family **stays published as writable**.
 ///
-/// The consequence ([`REASON_TRANSITOIRE`]) comes first, before the technical reason
+/// The consequence ([`REASON_TRANSIENT`]) comes first, before the technical reason
 /// : it is the half the operator looks at and it has to survive the cut at
 /// 160 characters. A `400` torn out during a burst of fifteen radio commands must
 /// never again look like a forbidden setting.
@@ -460,7 +460,7 @@ pub(crate) async fn publish_reason_transient(
 	family: Family,
 	reason: &str,
 ) {
-	publish_reason(publ, family, &format!("{REASON_TRANSITOIRE}, {reason}")).await;
+	publish_reason(publ, family, &format!("{REASON_TRANSIENT}, {reason}")).await;
 }
 
 /// Makes the reason disappear: the family just answered, so the reason for a

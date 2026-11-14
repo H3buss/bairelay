@@ -4,6 +4,7 @@ pub mod control;
 pub mod discovery;
 pub mod error;
 pub mod settings;
+pub mod published_text_guard;
 pub mod status;
 pub mod system_ca;
 pub mod test_support;

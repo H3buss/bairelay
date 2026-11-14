@@ -1343,4 +1343,36 @@ mod tests {
 		}
 		assert!(seen > 0, "aucune spec de réglage n'a dst vérifiée");
 	}
+
+	/// The labels of the spec table are what Home Assistant shows the operator, and
+	/// what its automations match on: `entity_id` is pinned at first discovery, so a
+	/// french label that ships once survives in somebody's automation for years. This
+	/// is the discovery half of the guard written after nine french reason sentences
+	/// reached the broker behind a message saying published text was english.
+	#[test]
+	fn every_spec_label_and_topic_segment_is_english() {
+		for feature in Feature::ALL {
+			for spec in specs_for(feature) {
+				for (what, value) in
+					[("label", spec.label), ("family", spec.family), ("leaf", spec.leaf), ("unique id parts", spec.leaf)]
+				{
+					assert!(value.is_ascii(), "{what} is not ascii on the wire: {value:?}");
+					let lowered = value.to_lowercase();
+						let bad: Vec<&str> = lowered
+						.split(|c: char| !c.is_alphabetic() && c != '-')
+						.filter(|w| {
+							[
+								"la", "les", "des", "du", "une", "est", "dans", "pour", "sur", "par", "avec", "sans",
+								"que", "qui", "pas", "plus", "interphone", "caméra", "reglages", "réglages",
+								"balise", "motif", "famille", "lecture", "écriture", "carillon", "sonnerie", "muet",
+							]
+							.contains(w)
+						})
+						.collect();
+					assert!(bad.is_empty(), "spec of {feature:?} would publish french: {what} = {value:?} ({bad:?})");
+				}
+			}
+		}
+	}
+
 }

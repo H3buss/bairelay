@@ -403,8 +403,8 @@ impl<'a> StatusPublisher<'a> {
 const REASON_MAX: usize = 160;
 
 /// Ce qu'on publie quand le motif lui-même est inutilisable.
-const REASON_SANS_DETAIL: &str = "the camera gave no reason";
-const REASON_MASQUE: &str = "reason hidden: it could have contained a secret";
+pub(crate) const REASON_SANS_DETAIL: &str = "the camera gave no reason";
+pub(crate) const REASON_MASQUE: &str = "reason hidden: it could have contained a secret";
 
 /// Les sous-chaînes qui n'ont rien à faire sur un topic conservé. Aucun motif
 /// construit par le pont n'en contient ; cette ceinture tient la promesse

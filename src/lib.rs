@@ -22,6 +22,7 @@ pub mod hassio;
 /// caller instead of being rewritten over there.
 #[allow(dead_code)]
 pub(crate) mod polling;
+pub(crate) mod published_text_guard;
 pub mod local_time;
 pub mod mqtt_dispatch;
 pub mod mqtt_loop;
