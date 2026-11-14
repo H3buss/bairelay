@@ -4,7 +4,7 @@
 //! dit deux choses, mais pas au même moment : `event` 3 prévient qu'elle se
 //! wakele — cent millisecondes après le bouton — et `event` 4 avec `reason`
 //! 19 ne confirme l'appui que **dix‑huit secondes plus tard**, à la fin de
-//! l'enregistrement ([`crate::annonces`] publie ce second moment). Dix‑huit
+//! l'enregistrement ([`crate::camera_tasks::report_doorbell_press`] publie ce second moment). Dix‑huit
 //! secondes pour une sonnette, c'est trop.
 //!
 //! Ce que fait l'interrogation, et seulement cela : à `event` 3, take le
@@ -39,9 +39,9 @@
 //!
 //! Coût, énoncé pour être mesuré et non oublié : une interrogation qui réussit
 //! achète une session TCP, et une session allonge l'activité de la caméra —
-//! 249 s relevées contre 19 s sans nous. Chaque étape est écrite dans le carnet
-//! du pont ([`bairelay_wake_server::consigner`]), horodatée à la milliseconde,
-//! parce que le journal du conteneur n'est pas consultable à distance.
+//! 249 s relevées contre 19 s sans nous. Chaque étape part en `tracing::debug!`
+//! avec les durées en millisecondes, parce que c'est le journal du conteneur qui
+//! sera relu : ce pont n'écrit pas de carnet séparé.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

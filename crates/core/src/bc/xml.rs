@@ -243,8 +243,8 @@ pub struct BcXml {
 	/// and quick-xml's serde decoding matches element names **exactly**, so
 	/// the block is carried by this field *and* by
 	/// [`audio_cfg_camel`](Self::audio_cfg_camel) below. Read it through
-	/// [`audio_cfg_block`](Self::audio_cfg_block) and write it through
-	/// [`body_with_audio_cfg`](Self::body_with_audio_cfg), which pick the
+	/// [`BcXml::audio_cfg_block`](Self::audio_cfg_block) and write it through
+	/// [`BcXml::body_with_audio_cfg`](Self::body_with_audio_cfg), which pick the
 	/// spelling the camera actually used; a SET under the other spelling is
 	/// the one thing this firmware is known to shrug off.
 	#[serde(default, rename = "AudioCfg", skip_serializing_if = "Option::is_none")]
@@ -377,7 +377,7 @@ impl BcXml {
 	/// quick-xml matches tag names case-sensitively; this folds them back
 	/// into one answer so callers never have to know about the pair, and it
 	/// stamps the casing onto the returned block — which is what makes
-	/// [`body_with_audio_cfg`] send the name back that the camera printed.
+	/// [`BcXml::body_with_audio_cfg`] send the name back that the camera printed.
 	/// Reading through anything else is what leaves a block stamped with the
 	/// wrong spelling, so read through this.
 	pub fn audio_cfg_block(&self) -> Option<AudioCfg> {
@@ -405,7 +405,7 @@ impl BcXml {
 	/// or printed directly under it (protocol note §0.1-5 / §1.1 — msg 484 is
 	/// reply *and* push).
 	///
-	/// Folds the carriers exactly the way [`audio_cfg_block`] folds the two
+	/// Folds the carriers exactly the way [`BcXml::audio_cfg_block`] folds the two
 	/// `<audioCfg>` casings, so no caller has to know the shapes exist.
 	/// Entries come back as read, including ones with no addressable id —
 	/// [`DingDongDevice::identifier`] is what decides whether an entry can be
@@ -2809,7 +2809,7 @@ impl DingDongCtrl {
 /// Both nestings are modelled: the wrapper (measured) and entries printed
 /// directly under `<dingdongList>` (the pushed variant the protocol note
 /// mentions). Whichever the camera filled is what
-/// [`BcXml::dingdong_chimes`](Self::dingdong_chimes) returns.
+/// [`BcXml::dingdong_chimes`] returns.
 #[derive(PartialEq, Eq, Default, Debug, Clone, Deserialize, Serialize)]
 pub struct DingDongList {
 	/// XML Version
@@ -3029,7 +3029,7 @@ impl DingDongAlarmCfg {
 /// The `<dingdongCfg>` wrapper — msg 487's request frame **and**, measured on
 /// the field camera, the root its 486 reply arrives under. The read therefore
 /// lands here rather than in the bare [`device_cfg`](Self::device_cfg) field,
-/// and [`BcXml::dingdong_events`](Self::dingdong_events) folds the two.
+/// and [`BcXml::dingdong_events`] folds the two.
 #[derive(PartialEq, Eq, Default, Debug, Clone, Deserialize, Serialize)]
 pub struct DingDongCfgReq {
 	/// XML Version
@@ -3249,7 +3249,7 @@ pub struct WifiSignal {
 ///
 /// The 26 reply carries this block **and** [`InputAdvanceCfg`]; the 25 setter
 /// wants both back, so [`BcCamera::set_image_cfg`](crate::bc_protocol::BcCamera::set_image_cfg)
-/// takes the pair as one [`ImageCfg`] carrier.
+/// takes the pair as one [`crate::bc_protocol::ImageCfg`] carrier.
 #[derive(PartialEq, Eq, Default, Debug, Clone, Deserialize, Serialize)]
 pub struct VideoInput {
 	/// XML Version

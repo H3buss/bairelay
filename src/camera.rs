@@ -1022,7 +1022,7 @@ impl CameraHandle {
 	}
 
 	/// Returns `true` if any currently-registered [`StreamSource`] for
-	/// this camera reports [`GapState::Bridging`]. Used by the
+	/// this camera reports [`crate::stream_source::GapState::Bridging`]. Used by the
 	/// per-camera preview-state aggregator to decide
 	/// whether to downgrade `PreviewState::Live` → `Connecting` for the
 	/// MQTT overlay while upstream frames are stalled.
@@ -1517,7 +1517,7 @@ impl CameraHandle {
 	/// source, log out via the concrete `BcCamera` handle if present,
 	/// clear the camera's driver/concrete slots, and publish the
 	/// disconnected MQTT status. Symmetric with
-	/// [`spawn_session_tasks`]; the caller is expected to have
+	/// [`Self::spawn_session_tasks`]; the caller is expected to have
 	/// already cancelled `session_cancel` before invoking this.
 	async fn teardown_session_tasks(
 		self: &Arc<Self>,

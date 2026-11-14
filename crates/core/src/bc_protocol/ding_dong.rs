@@ -16,12 +16,12 @@
 //! | 486 | (empty body) | `<deviceCfg>` per device, `<alarminCfg>` per event |
 //!
 //! Each part a camera doesn't have is **refused, not answered empty**, so
-//! [`get_ding_dong_cfg`] reads all five softly — a non-200 turns that *part*
+//! [`crate::bc_protocol::BcCamera::get_ding_dong_cfg`] reads all five softly — a non-200 turns that *part*
 //! into `None` and costs nothing else — and only refuses entirely when the
 //! camera answered none of the family (that is a connection talking nonsense,
 //! not a doorbell without a chime).
 //!
-//! Writes are the mirror: [`set_ding_dong_cfg`] re-reads, diffs the caller's
+//! Writes are the mirror: [`crate::bc_protocol::BcCamera::set_ding_dong_cfg`] re-reads, diffs the caller's
 //! block against what the camera holds **right now**, and sends only the parts
 //! whose text actually changed — whole blocks, never partial ones. The diff is
 //! not an optimisation: msg 610 re-arms the chime's mute countdown just by
@@ -228,8 +228,8 @@ impl BcCamera {
 	/// Write the changed parts of a chime block back, then read the whole
 	/// configuration again and return **what the camera holds afterwards**.
 	///
-	/// `cfg` must be a block from [`get_ding_dong_cfg`] with only the intended
-	/// tags patched — the same law as [`set_audio_cfg`], because the same
+	/// `cfg` must be a block from [`crate::bc_protocol::BcCamera::get_ding_dong_cfg`] with only the intended
+	/// tags patched — the same law as [`crate::bc_protocol::BcCamera::set_audio_cfg`], because the same
 	/// firmware silently shrugs off a truncated block. The write is staged:
 	///
 	/// 1. a fresh full read (the diff baseline — and the reason this method
@@ -527,7 +527,7 @@ impl BcCamera {
 
 	/// Soft read decoding: a non-200, or a 200 that didn't carry this
 	/// carrier, means "this camera doesn't have this part" → `None`. Never an
-	/// error — see [`get_ding_dong_cfg`] for why one refused part must not
+	/// error — see [`crate::bc_protocol::BcCamera::get_ding_dong_cfg`] for why one refused part must not
 	/// sink the whole read.
 	fn soft_block<T>(
 		&self,
@@ -741,7 +741,7 @@ mod tests {
 	}
 
 	/// Script the whole read sweep answering with `cfg`'s parts, in the order
-	/// [`get_ding_dong_cfg`] asks them. The 485/609 questions are only asked
+	/// [`crate::bc_protocol::BcCamera::get_ding_dong_cfg`] asks them. The 485/609 questions are only asked
 	/// — and only scripted — when the fixture has a chime id.
 	fn expect_read(mock: MockConnectionBuilder, cfg: &Arc<DingDongCfg>) -> MockConnectionBuilder {
 		let m = {

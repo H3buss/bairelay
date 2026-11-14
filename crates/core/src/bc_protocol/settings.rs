@@ -69,7 +69,7 @@ pub struct OsdCfg {
 /// one or the other. One can only patch and send back **what** it
 /// printed: `<MdAlarm>` has "free fields" nobody has
 /// enumerated, so rebuilding it would amputate the block — hence the refusal of
-/// [`set_motion_cfg`](Self::set_motion_cfg), which returns the write refused
+/// [`crate::bc_protocol::BcCamera::set_motion_cfg`], which returns the write refused
 /// instead of returning it falsely successful.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum MotionCfg {

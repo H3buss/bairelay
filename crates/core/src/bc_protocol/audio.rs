@@ -8,8 +8,8 @@
 //! The write is a **read-modify-write**, and not by taste: the firmware wants
 //! the block it just printed with one tag changed. A block that omits tags the
 //! camera sent is rejected, or — worse, because it looks like success —
-//! accepted and ignored. So [`set_audio_cfg`] is documented to take what
-//! [`get_audio_cfg`] returned, and the caller is expected to touch only the
+//! accepted and ignored. So [`crate::bc_protocol::BcCamera::set_audio_cfg`] is documented to take what
+//! [`crate::bc_protocol::BcCamera::get_audio_cfg`] returned, and the caller is expected to touch only the
 //! tags it came to change: everything else, including the tags whose meaning
 //! nobody has worked out (`audioSelect`, `audioListId`, `preAlarm`,
 //! `timeout`), goes back exactly as it arrived.
@@ -28,7 +28,7 @@ use crate::bc_protocol::connection::mock::{
 
 /// The `abilityInfo` token that would advertise this block if the report were
 /// complete. Used only when a caller asks for the gate; see
-/// [`get_audio_cfg`](Self::get_audio_cfg).
+/// [`crate::bc_protocol::BcCamera::get_audio_cfg`].
 const AUDIO_CFG_ABILITY: &str = "audioCfg";
 
 impl BcCamera {
@@ -39,7 +39,7 @@ impl BcCamera {
 	///
 	/// The returned block keeps every tag as the text the camera sent, and
 	/// carries in [`AudioCfg::tag`] the spelling the camera used for the
-	/// element — which is what [`set_audio_cfg`] has to send back.
+	/// element — which is what [`crate::bc_protocol::BcCamera::set_audio_cfg`] has to send back.
 	///
 	/// `gate` is the ability veto, and it is **off by default at the CLI**:
 	/// this doorbell's login-time `abilityInfo` under-reports (the same family
@@ -106,7 +106,7 @@ impl BcCamera {
 	}
 
 	/// Write the `<audioCfg>` block back (msg 265), then read it again with
-	/// [`get_audio_cfg`] and return **what the camera has stored afterwards**.
+	/// [`crate::bc_protocol::BcCamera::get_audio_cfg`] and return **what the camera has stored afterwards**.
 	///
 	/// `cfg` must be the block as read, with only the intended tags patched:
 	/// `BcXml::body_with_audio_cfg` sends the element under the spelling
@@ -116,7 +116,7 @@ impl BcCamera {
 	/// printed stays absent — `talkAndReplyVolume` and friends are `Option`
 	/// precisely so a camera without an intercom is not handed one.
 	///
-	/// `gate` is the same veto as on [`get_audio_cfg`], checked against
+	/// `gate` is the same veto as on [`crate::bc_protocol::BcCamera::get_audio_cfg`], checked against
 	/// read-write permission for `audioCfg`; the read-back inherits it.
 	pub async fn set_audio_cfg(&self, cfg: &AudioCfg, gate: bool) -> Result<AudioCfg> {
 		if gate {
