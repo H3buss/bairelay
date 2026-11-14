@@ -256,12 +256,17 @@ topic — did not happen here, and `topic_names_match_spec` plus
 | Mélodies déclarées par la caméra | Camera-declared melodies |
 | Faire sonner le carillon | Ring the chime |
 | Horaires du projecteur | Floodlight schedule |
+| Projecteur | Floodlight |
 | Mouvement détecté | Motion detected |
 | Appui sur le bouton | Button press |
 | Voyant lumineux | Status light |
 | Mode infrarouge | Infrared mode |
 | Détection PIR | PIR detection |
 | Niveau de batterie | Battery level |
+| Aperçu | Preview |
+| Redémarrer | Reboot |
+| Sirène | Siren |
+| Préréglage | Preset |
 | PTZ gauche / droite / haut / bas | PTZ Left / PTZ Right / PTZ Up / PTZ Down |
 | Reconnaissance personne / véhicule / animal / figure / colis | Person detection / Vehicle detection / Animal detection / Face detection / Package detection |
 

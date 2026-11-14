@@ -677,6 +677,157 @@ mod tests {
 		assert_eq!(topics.len(), out.len(), "two specs share a config topic");
 	}
 
+	/// The renaming table in `docs/settings.md` is a promise to the operator: the label
+	/// used to be french, here is what it became, so an automation that still points at
+	/// the old `entity_id` can be found and fixed. A table nobody checks rots the first
+	/// time someone renames a label in the code — which is the exact defect the nine
+	/// reason strings were caught with. So the documentation is read here, at compile
+	/// time (`include_str!`, which also puts the file in the build graph: editing the
+	/// doc rebuilds this test).
+	///
+	/// Four things must hold, and each one fails on a real mistake:
+	///
+	/// * every `now` of the table is a label the bridge actually publishes — a row whose
+	///   label is gone means the code was renamed and the table was not;
+	/// * no `was` of the table is still published — a row whose old label is still out
+	///   there means the rename was never finished;
+	/// * every label the bridge publishes has a row, apart from the labels that come from
+	///   the operator's own configuration (preset names), which this bridge did not name
+	///   and cannot have renamed;
+	/// * every published label is pure ASCII, which is the shape of "english here": a
+	///   french label that entered the table list later than the table is caught by the
+	///   rule above, a french label that never entered it is caught by this one.
+	///
+	/// Known gap, stated instead of papered over: the same file carries a **second**
+	/// `| was | now |` table, for the reason and error sentences. Those are not entity
+	/// labels, they are runtime strings living in several modules, and nothing checks
+	/// them against the table yet.
+	#[test]
+	fn the_renaming_table_covers_every_published_label() {
+		let doc = include_str!("../../../../docs/settings.md");
+
+		// first `| was | now |` table only: the entity labels
+		let mut rows: Vec<(String, Vec<String>)> = Vec::new();
+		let lines: Vec<&str> = doc.lines().collect();
+		let mut i = 0;
+		while i < lines.len() {
+			if lines[i].trim() != "| was | now |" {
+				i += 1;
+				continue;
+			}
+			i += 2; // the header and its separator
+			while i < lines.len() && lines[i].trim_start().starts_with('|') {
+				let cells: Vec<&str> = lines[i].split('|').map(|c| c.trim()).collect();
+				// cells[0] and the tail are the empty edges of a markdown row
+				if cells.len() == 4 && !cells[1].is_empty() && !cells[2].is_empty() {
+					// one row can rename several entities at once ("PTZ Left / PTZ
+					// Right / …"): alternatives are separated by " / ", never by a
+					// bare slash, so "Day/night mode" stays one label.
+					let now = cells[2]
+						.split(" / ")
+						.map(|s| s.trim().to_string())
+						.filter(|s| !s.is_empty())
+						.collect();
+					rows.push((cells[1].to_string(), now));
+				}
+				i += 1;
+			}
+			break;
+		}
+		assert!(
+			rows.len() >= 50,
+			"the renaming table was read as {} rows — the file moved, the header changed, \
+			 or the table was emptied: check the parser before believing the number",
+			rows.len()
+		);
+
+		// the set the bridge really publishes, with every feature and every family
+		// promoted to writable, so nothing is missing for being unpublished at startup
+		let caps = CameraCapabilitiesView {
+			has_ptz: true,
+			status_led: crate::discovery::Presence::Present,
+			ir_leds: crate::discovery::Presence::Present,
+			ai: crate::discovery::Presence::Present,
+			doorbell: crate::discovery::Presence::Present,
+		};
+		let flags = all_flags_on();
+		let presets = [(1u8, "Entrance".to_string())];
+		let publisher = publisher_with_features(&Feature::ALL);
+		for family in Family::ALL {
+			publisher.mark_family_read("Doorbell", family, true);
+		}
+		let out = publisher.compute_payloads("Doorbell", None, None, caps, &flags, &presets);
+		assert!(out.len() > 40, "the published set is truncated: {} entities", out.len());
+
+		let mut published: Vec<String> = Vec::with_capacity(out.len());
+		for (topic, payload) in &out {
+			let v: serde_json::Value = serde_json::from_slice(payload).unwrap();
+			published.push(
+				v["name"]
+					.as_str()
+					.unwrap_or_else(|| panic!("entity without a name: {topic}"))
+					.to_string(),
+			);
+		}
+		// names the operator chose in their own config: this bridge did not name them
+		let ours: Vec<&str> = published
+			.iter()
+			.map(String::as_str)
+			.filter(|l| !presets.iter().any(|(_, p)| p == l))
+			.collect();
+
+		let promised: Vec<&String> = rows.iter().flat_map(|(_, n)| n.iter()).collect();
+		// every problem is collected and reported together: a test that stops at the
+		// first one turns a table audit into twenty runs
+		let mut problems: Vec<String> = Vec::new();
+		for (was, now) in &rows {
+			for label in now {
+				if !ours.iter().any(|l| l == label) {
+					problems.push(format!(
+						"the table promises {label:?} (row {was:?}) but nothing publishes it: the \
+						 code was renamed and this table did not follow"
+					));
+				}
+			}
+			// A row whose two columns are the same word is not a rename: some labels
+			// were already the right english word ("Saturation"), and the row is there
+			// to tell the operator that this one did **not** change. Such a `was` is
+			// published by design, so only a real rename may disappear.
+			let unchanged = now.iter().any(|n| n == was);
+			if !unchanged && ours.iter().any(|l| l == was) {
+				problems.push(format!(
+					"the table says {was:?} was renamed, but it is still published: the rename was \
+					 never finished"
+				));
+			}
+		}
+		for label in &ours {
+			if !promised.iter().any(|p| p == label) {
+				problems.push(format!(
+					"the bridge publishes {label:?} and the table has no row for it: the label was \
+					 renamed and the operator was never told, or it is new and the table is the \
+					 place a name becomes reviewable"
+				));
+			}
+			if !label.is_ascii() {
+				problems.push(format!(
+					"the bridge publishes a label that is not ascii: {label:?}"
+				));
+			}
+		}
+		assert!(
+			problems.is_empty(),
+			"{} problems between the published labels and the renaming table:\n        {}",
+			problems.len(),
+			problems.join("\n        ")
+		);
+		// deliberately no `rows.len() >= labels.len()` check: one row can rename four
+		// entities at once (the PTZ directions), so the two counts are not comparable.
+		// Coverage is asserted label by label above, which is the only form of this
+		// promise that can actually go red.
+
+	}
+
 	/// The published label says **what it is**, never to whom it belongs. Home Assistant
 	/// already displays the device above each entity: repeating the name of the
 	/// camera ("Doorbell General volume") only truncates what is left to

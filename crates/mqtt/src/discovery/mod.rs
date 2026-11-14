@@ -551,7 +551,7 @@ pub fn build_floodlight_light(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "floodlight");
 	let payload = DiscoveryLight {
-		name: "Projecteur".to_string(),
+		name: "Floodlight".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:spotlight-beam".to_string()),
 		device: device_block(ctx, &friendly),
@@ -590,7 +590,7 @@ pub fn build_camera(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "camera");
 	let payload = DiscoveryCamera {
-		name: "Aperçu".to_string(),
+		name: "Preview".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:camera-iris".to_string()),
 		device: device_block(ctx, &friendly),
@@ -834,7 +834,7 @@ pub fn build_ptz_presets(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let mut seen = std::collections::HashSet::new();
 	options.retain(|n| seen.insert(n.clone()));
 	let payload = DiscoverySelect {
-		name: "Préréglage".to_string(),
+		name: "Preset".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:target".to_string()),
 		device: device_block(ctx, &friendly),
@@ -861,7 +861,7 @@ pub fn build_reboot(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "reboot");
 	let payload = DiscoveryButton {
-		name: "Redémarrer".to_string(),
+		name: "Reboot".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:restart".to_string()),
 		device: device_block(ctx, &friendly),
@@ -922,7 +922,7 @@ pub fn build_siren(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "siren");
 	let payload = DiscoveryButton {
-		name: "Sirène".to_string(),
+		name: "Siren".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:bell".to_string()),
 		device: device_block(ctx, &friendly),
