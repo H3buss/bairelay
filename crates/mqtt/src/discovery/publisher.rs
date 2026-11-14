@@ -48,9 +48,9 @@ impl CameraEnableFlags {
 			// listener, so they follow its flag.
 			Feature::Motion | Feature::Ai | Feature::Doorbell => self.motion,
 			Feature::Battery => self.battery,
-			// Les états bonus de la battery sortent de la même trame (253)
-			// que le niveau : même drapeau, sinon une caméra dont on a coupé
-			// la battery garderait cinq capteurs qui ne se rempliront jamais.
+			// The battery's bonus states come out of the same frame (253)
+			// as the level: same flag, otherwise a camera whose battery
+			// was switched off would keep five sensors that will never fill.
 			Feature::BatteryExtra => self.battery,
 			Feature::Floodlight => self.floodlight,
 			Feature::Led => self.light,
@@ -58,10 +58,10 @@ impl CameraEnableFlags {
 			// No per-camera enable flag today: gate only via
 			// capability detection + global features.
 			//
-			// `MotionSettings` reste accessible même quand `motion` est
-			// éteint : le drapeau pilote les *événements* de mouvement, pas le
-			// réglage de la détection, et les cut ensemble priverait l'
-			// opératrice du curseur de sensibilité.
+			// `MotionSettings` stays accessible even when `motion` is
+			// switched off: the flag drives the motion *events*, not the
+			// detection setting, and cutting both together would deprive the
+			// operator of the sensitivity slider.
 			Feature::Camera
 			| Feature::Ir
 			| Feature::Reboot
@@ -104,17 +104,17 @@ pub struct DiscoveryPublisher {
 	/// otherwise HA keeps a ghost entity backed by stale retained
 	/// config on the broker.
 	last_published: Arc<Mutex<HashMap<String, Recorded>>>,
-	/// Familles de réglages dont cette caméra a **déjà répondu à une lecture**
-	/// et qu'elle accepte de réécrire. C'est la mémoire de la discovery : sans
-	/// elle, rien ne distingue au démarrage une caméra qui a répondu « voilà ton
-	/// `<audioCfg>` » d'une caméra qui n'a jamais répondu, et le pont
-	/// publierait des curseurs et des interrupteurs pour des valeurs qu'il n'a
-	/// jamais vues. Une lecture réussie ajoute la famille ([`Self::marque_famille_lue`]) ;
-	/// un refus ou un porteur non réécrivable (`<MdAlarm>`) la retire.
+	/// Settings families this camera has **already answered a read of**
+	/// and accepts having rewritten. It is the memory of the discovery: without
+	/// it, nothing tells apart at startup a camera that answered "here is your
+	/// `<audioCfg>`" from one that never answered, and the bridge
+	/// would publish sliders and switches for values it has
+	/// never seen. A successful read adds the family ([`Self::mark_family_read`]);
+	/// a refusal or a non-rewritable carrier (`<MdAlarm>`) removes it.
 	///
-	/// Partagée entre les clones, comme `last_published` : la lecture faite par
-	/// la tâche d'une caméra est ainsi vue par la publication de discovery de
-	/// cette caméra. Clé = `camera_name`.
+	/// Shared between the clones, like `last_published`: the read done by
+	/// one camera's task is thus seen by that camera's discovery
+	/// publication. Key = `camera_name`.
 	familles_read: Arc<Mutex<HashMap<String, HashSet<Family>>>>,
 	/// Set by [`Self::seal`] at shutdown, before it waits on `in_flight`.
 	/// `publish` does nothing once it is set, so no publish re-creates a
@@ -169,19 +169,19 @@ impl DiscoveryPublisher {
 		&self.ha_topic
 	}
 
-	/// Enregistre le résultat d'une **lecture** d'une famille de réglages pour
-	/// une caméra, et dit si la discovery doit être republiée (`true` = l'état
-	/// a changé).
+	/// Records the result of a **read** of a settings family for
+	/// a camera, and says whether the discovery must be republished (`true` = the
+	/// state changed).
 	///
-	/// `ecrivable` vaut vrai seulement si la caméra a renvoyé le bloc **et**
-	/// accepte qu'on le lui renvoie : une famille lue via un porteur que le
-	/// firmware refuse de réécrire (`<MdAlarm>` pour la détection de mouvement)
-	/// reste en lecture seule, et le savoir ici évite que la publication
-	/// suivante ne promette un curseur qui écrira en vain.
+	/// `writable` is true only if the camera sent the block back **and**
+	/// accepts having it sent back to it: a family read through a carrier the
+	/// firmware refuses to rewrite (`<MdAlarm>` for motion detection)
+	/// stays read-only, and knowing it here stops the next
+	/// publication from promising a slider that would write in vain.
 	///
-	/// Appelé après chaque lecture réussie — `query/settings`, écriture avec
-	/// relecture, aperçu — jamais sur minuterie : une sonnette sur battery ne
-	/// survit pas à un interrogatoire périodique.
+	/// Called after every successful read — `query/settings`, write with
+	/// re-read, preview — never on a timer: a battery doorbell does
+	/// not survive being polled periodically.
 	pub fn mark_family_read(&self, camera_name: &str, family: Family, writable: bool) -> bool {
 		let mut guard = match self.familles_read.lock() {
 			Ok(g) => g,
@@ -195,8 +195,8 @@ impl DiscoveryPublisher {
 		}
 	}
 
-	/// Les familles de cette caméra publiées sous leur forme modifiable. Copie,
-	/// pour ne pas rendre un garde à travers un `await`.
+	/// This camera's families published in their modifiable form. A copy,
+	/// so as not to hand back a guard across an `await`.
 	pub fn writable_families(&self, camera_name: &str) -> HashSet<Family> {
 		let guard = match self.familles_read.lock() {
 			Ok(g) => g,
@@ -238,9 +238,9 @@ impl DiscoveryPublisher {
 			presets,
 		};
 
-		// Ce que la caméra a déjà accepté de relire décide de la plateforme de
-		// chaque entité de réglage : une famille jamais lue sort en lecture
-		// seule (voir [`Self::marque_famille_lue`]).
+		// What the camera already agreed to re-read decides the platform of
+		// each settings entity: a family never read comes out read-
+		// only (see [`Self::mark_family_read`]).
 		let writable = self.writable_families(camera_name);
 
 		// Iterate `Feature::ALL` rather than `self.features` so the
@@ -309,16 +309,16 @@ impl DiscoveryPublisher {
 					}
 				}
 				Feature::Pir => {
-					// L'interrupteur PIR historique n'est **pas** une feuille de
-					// réglages : son état vient de `status/pir`, que le pont
-					// publie à la connexion sans rien avoir à relire. Le gated
-					// ici le rendrait invisible alors qu'il fonctionne.
+					// The historical PIR switch is **not** a settings
+					// leaf: its state comes from `status/pir`, which the bridge
+					// publishes at connection without anything to re-read. Gating it
+					// here would make it invisible while it works.
 					if let Some(p) = build_pir(&ctx) {
 						out.push(p);
 					}
-					// La sensibilité PIR est un réglage, pas l'interrupteur :
-					// même fonctionnalité, même drapeau `pir`, et elle se tait
-					// tant que `<RfAlarmCfg>` n'a pas dst lu.
+					// The PIR sensitivity is a setting, not the switch:
+					// same feature, same `pir` flag, and it stays silent
+					// until `<RfAlarmCfg>` has been read.
 					out.extend(build_feature_entities(&ctx, Feature::Pir, &writable));
 				}
 				Feature::Ai => {
@@ -329,14 +329,14 @@ impl DiscoveryPublisher {
 						out.push(p);
 					}
 				}
-				// Réglages : chaque famille sort du tableau `SPECS` de
-				// `discovery::settings`, qui porte aussi ses topics. Rien n'est
-				// construit à la main ici, pour que la discovery et le
-				// dispatch ne puissent pas dériver l'un de l'autre.
+				// Settings: each family comes out of the `SPECS` table of
+				// `discovery::settings`, which also carries its topics. Nothing is
+				// built by hand here, so that the discovery and the
+				// dispatch cannot drift apart from each other.
 				//
-				// `ecrivables` décide de la plateforme : une famille que la
-				// caméra n'a pas encore relue sort en `sensor`/`binary_sensor`
-				// sans topic de commande, et son bouton n'est pas publié.
+				// `writable` decides the platform: a family the
+				// camera has not re-read yet comes out as `sensor`/`binary_sensor`
+				// with no command topic, and its button is not published.
 				Feature::Audio
 				| Feature::Denoise
 				| Feature::Image
@@ -401,8 +401,8 @@ impl DiscoveryPublisher {
 	/// be in the current preset list.
 	///
 	/// Finally clears the config and `status/...` topics of hardware the
-	/// camera is confirmed to lack ([`Self::compute_retractions`]) — mais avant
-	/// les nouvelles configurations, voir le commentaire du diff ci-dessous.
+	/// camera is confirmed to lack ([`Self::compute_retractions`]) — but before
+	/// the new configurations, see the comment on the diff below.
 	///
 	/// Topics hidden only by an `Unknown` presence stay published
 	/// (Unknown never deletes); see `swap_last_published`. A deleted
@@ -453,15 +453,15 @@ impl DiscoveryPublisher {
 			.collect();
 		let (removed, generation) =
 			self.swap_last_published(camera_name, new_topics, &held_candidates);
-		// Les effacements **avant** les configurations. Une famille de réglages
-		// qui passe de « jamais lue » à « relue » change de plateforme : son
-		// `unique_id` ne bouge pas, mais son topic de configuration non plus ne
-		// se recoupe pas (`.../sensor/...` d'un côté, `.../number/...` de
-		// l'autre). Home Assistant ne retire l'ancienne entité que sur un
-		// payload vide conservé lu sur l'ancien topic ; si ce payload part
-		// après la nouvelle configuration, l'opératrice voit deux entités porter
-		// le même `unique_id` et HA en garde une au hasard. L'ordre n'est donc
-		// pas une question d'élégance.
+		// The erasures **before** the configurations. A settings family
+		// going from "never read" to "re-read" changes platform: its
+		// `unique_id` does not move, but its configuration topic
+		// does not overlap either (`.../sensor/...` on one side, `.../number/...` on
+		// the other). Home Assistant only removes the old entity on an
+		// empty retained payload read on the old topic; if that payload
+		// leaves after the new configuration, the operator sees two entities carrying
+		// the same `unique_id` and HA keeps one at random. The order is therefore
+		// not a question of elegance.
 		// A removed topic that is also retracted is cleared once, below.
 		for topic in removed.iter().filter(|t| !retractions.contains(t)) {
 			self.client.publish_retained(topic, b"").await?;
@@ -615,11 +615,11 @@ mod tests {
 		)
 	}
 
-	/// Le nombre de lignes de `SPECS` qui ne peuvent pas être publiées avant
-	/// toute lecture : les boutons, qui n'ont aucun état à afficher et ne
-	/// deviennent donc pas des capteurs. Les tests de comptage en déduisent leur
-	/// attendu au lieu de le deviner — ajouter un bouton au tableau déplace
-	/// automatiquement ces attendus, alors qu'un nombre magique mentirait.
+	/// The number of `SPECS` lines that cannot be published before any
+	/// read: the buttons, which have no state to display and therefore
+	/// do not become sensors. The counting tests derive their
+	/// expectation from it instead of guessing it — adding a button to the table
+	/// moves these expectations automatically, where a magic number would lie.
 	fn specs_without_state() -> usize {
 		crate::discovery::settings::SPECS
 			.iter()
@@ -644,10 +644,10 @@ mod tests {
 		// Camera/Motion/Led/Ir/Reboot/Battery/Siren/Pir/Doorbell.
 		// PtPreset is suppressed because we pass `&[]` for presets.
 		// 2 + 4 + 3 + 9 = 18. On top of that: one entity per `SPECS` row
-		// **sauf** les boutons — aucune lecture n'a encore eu lieu, donc la
-		// famille carillon se publie en lecture seule et son bouton n'a pas
-		// d'équivalent lisible. Le réglage est data-driven, donc ce test n'a pas
-		// besoin d'un nouveau nombre magique à chaque nouveauté du protocole.
+		// **except** the buttons — no read has happened yet, so the
+		// chime family publishes read-only and its button has no
+		// readable equivalent. The setting is data-driven, so this test does not
+		// need a new magic number at every protocol novelty.
 		// The duplicate-topic check below is what catches two rows
 		// colliding.
 		assert_eq!(
@@ -670,21 +670,21 @@ mod tests {
 			assert!(uid.starts_with("bairelay_"), "uid bad prefix: {uid}");
 		}
 
-		// No duplicate topics : chaque ligne du tableau a son topic propre.
+		// No duplicate topics: each line of the table has its own topic.
 		let mut topics: Vec<String> = out.iter().map(|(t, _)| t.clone()).collect();
 		topics.sort();
 		topics.dedup();
-		assert_eq!(topics.len(), out.len(), "deux specs partagent un topic de config");
+		assert_eq!(topics.len(), out.len(), "two specs share a config topic");
 	}
 
-	/// Le libellé publié dit **ce que c'est**, jamais à qui c'est. Home Assistant
-	/// affiche déjà l'appareil au-dessus de chaque entité : répéter le nom de la
-	/// caméra (« Sonnette Volume général ») ne fait que tronquer ce qui reste à
-	/// lire. Deux règles, vérifiées sur le jeu **entier** que le pont publie,
-	/// dans les deux états que la promotion connaît — au démarrage (tout en
-	/// lecture seule) et après relecture (les boutons s'ajoutent, donc le jeu
-	/// change) — plus une troisième, qui empêche la correction de déborder : le
-	/// bloc `device`, lui, doit continuer de nommer l'appareil.
+	/// The published label says **what it is**, never to whom it belongs. Home Assistant
+	/// already displays the device above each entity: repeating the name of the
+	/// camera ("Doorbell General volume") only truncates what is left to
+	/// read. Two rules, checked on the **whole** set the bridge publishes,
+	/// in the two states the promotion knows — at startup (everything in
+	/// read-only) and after a re-read (buttons are added, so the set
+	/// changes) — plus a third, which stops the fix from overflowing: the
+	/// `device` block itself must keep naming the device.
 	#[test]
 	fn an_absent_label_carries_no_device_name() {
 		let caps = CameraCapabilitiesView {
@@ -695,35 +695,35 @@ mod tests {
 			doorbell: crate::discovery::Presence::Present,
 		};
 		let flags = all_flags_on();
-		let presets = [(1u8, "Entrée".to_string())];
+		let presets = [(1u8, "Entrance".to_string())];
 		for promotion in [false, true] {
 			let publisher = publisher_with_features(&Feature::ALL);
 			if promotion {
 				for family in Family::ALL {
-					publisher.mark_family_read("Sonnette", family, true);
+					publisher.mark_family_read("Doorbell", family, true);
 				}
 			}
-			let out = publisher.compute_payloads("Sonnette", None, None, caps, &flags, &presets);
-			let state = if promotion { "après promotion" } else { "au démarrage" };
-			assert!(out.len() > 40, "jeu publié tronqué ({state}) : {} entités", out.len());
+			let out = publisher.compute_payloads("Doorbell", None, None, caps, &flags, &presets);
+			let state = if promotion { "after promotion" } else { "at startup" };
+			assert!(out.len() > 40, "published set truncated ({state}): {} entities", out.len());
 			let mut noms: Vec<String> = Vec::with_capacity(out.len());
 			for (topic, payload) in &out {
 				let v: serde_json::Value = serde_json::from_slice(payload).unwrap();
-				let nom = v["name"].as_str().unwrap_or_else(|| panic!("entité sans name: {topic}"));
+				let label = v["name"].as_str().unwrap_or_else(|| panic!("entity without a name: {topic}"));
 				assert!(
-					!nom.to_lowercase().starts_with("sonnette"),
-					"le libellé {nom:?} recommence le nom de l'appareil ({topic}, {state})"
+					!label.to_lowercase().starts_with("doorbell"),
+					"the label {label:?} restarts the device name ({topic}, {state})"
 				);
 				assert_eq!(
 					v["device"]["name"].as_str(),
-					Some("Sonnette"),
-					"le bloc device doit rester le nom de l'appareil ({topic}, {state})"
+					Some("Doorbell"),
+					"the device block must stay the device name ({topic}, {state})"
 				);
-				noms.push(nom.to_lowercase());
+				noms.push(label.to_lowercase());
 			}
 			noms.sort();
 			if let Some(dup) = noms.windows(2).find(|w| w[0] == w[1]) {
-				panic!("deux entités de l'appareil portent le libellé {:?} ({state})", dup[0]);
+				panic!("two entities of the device carry the label {:?} ({state})", dup[0]);
 			}
 		}
 	}
@@ -745,7 +745,7 @@ mod tests {
 		assert_eq!(
 			out.len(),
 			14 + crate::discovery::settings::SPECS.len() - specs_without_state(),
-			"18 − 4 PT buttons, réglages compris"
+			"18 - 4 PT buttons, settings included"
 		);
 		for (topic, _) in &out {
 			assert!(!topic.contains("/button/bairelay_frontdoor_pan_"));
@@ -774,8 +774,8 @@ mod tests {
 			);
 		}
 		// Battery level sensor (legacy) plus the five extra battery states
-		// share the 253 frame and the flag: 18 + SPECS − 6, moins le bouton de
-		// carillon, qui n'a pas d'état à publish_now avant lecture.
+		// share the 253 frame and the flag: 18 + SPECS − 6, minus the chime's button,
+		// which has no state to publish before a read.
 		assert_eq!(
 			out.len(),
 			12 + crate::discovery::settings::SPECS.len() - specs_without_state()
@@ -784,9 +784,9 @@ mod tests {
 
 	#[test]
 	fn a_removed_settings_family_leaves_no_topic() {
-		// `[mqtt.discovery] features = [...]` retire des familles entières :
-		// rien ne doit en rester, sinon une entité HA dont l'état ne se
-		// remplit jamais.
+		// `[mqtt.discovery] features = [...]` removes whole families:
+		// nothing may be left of them, otherwise an HA entity whose state never
+// fills.
 		let caps = CameraCapabilitiesView::default();
 		let flags = all_flags_on();
 		let compute = |features: &[Feature]| {
@@ -800,23 +800,23 @@ mod tests {
 			.filter(|f| *f != Feature::Audio)
 			.collect();
 		let sans = compute(&sans_audio);
-		let nb_audio = crate::discovery::settings::specs_for(Feature::Audio).count();
-		assert!(nb_audio >= 3, "la famille audio doit avoir des entités");
+		let audio_count = crate::discovery::settings::specs_for(Feature::Audio).count();
+		assert!(audio_count >= 3, "the audio family must have entities");
 		assert_eq!(
 			sans.len(),
-			tout.len() - nb_audio,
-			"retirer la fonctionnalité audio doit retirer exactement ses entités"
+			tout.len() - audio_count,
+			"removing the audio feature must remove exactly its entities"
 		);
 		for (topic, payload) in &sans {
 			assert!(
 				!topic.contains("_audio_"),
-				"la famille audio est émise alors qu'elle est retirée des features : {topic}"
+				"the audio family is emitted while it is removed from the features: {topic}"
 			);
 			let v: serde_json::Value = serde_json::from_slice(payload).unwrap();
 			let st = v["state_topic"].as_str().unwrap_or_default();
 			assert!(
 				!st.contains("/status/audio/"),
-				"un état audio survit : {st}"
+				"an audio state survives: {st}"
 			);
 		}
 	}
@@ -1085,11 +1085,11 @@ mod tests {
 		);
 	}
 
-	/// Le passage d'une famille de réglages de « jamais lue » à « relue » change
-	/// sa plateforme, donc son topic de configuration. Le seul ordre qui marche
-	/// chez Home Assistant : payload vide conservé sur l'**ancien** topic
-	/// d'abord, nouvelle configuration ensuite. Dans l'autre ordre, l'opératrice
-	/// voit deux entités porter le même `unique_id` et HA en garde une au hasard.
+	/// A settings family going from "never read" to "re-read" changes
+	/// platform, therefore configuration topic. The only order that works
+	/// in Home Assistant: empty retained payload on the **old** topic
+	/// first, new configuration second. In the other order, the operator
+	/// sees two entities carrying the same `unique_id` and HA keeps one at random.
 	#[tokio::test]
 	async fn a_reread_family_publishes_empty_before_its_new_config() {
 		let (client, mock) = crate::test_support::mock_client();
@@ -1102,81 +1102,81 @@ mod tests {
 		);
 		let caps = CameraCapabilitiesView::default();
 		let flags = all_flags_on();
-		let capteur = "homeassistant/sensor/bairelay_cam-vol_audio_general_volume/config";
-		let curseur = "homeassistant/number/bairelay_cam-vol_audio_general_volume/config";
+		let sensor_topic = "homeassistant/sensor/bairelay_cam-general_audio_general_volume/config";
+		let curseur = "homeassistant/number/bairelay_cam-general_audio_general_volume/config";
 
-		// 1. Aucun réglage n'a encore dst lu : le volume général est un capteur
-		// qu'on ne peut pas toucher.
+		// 1. No setting has been read yet: the general volume is a sensor
+		// one cannot touch.
 		publisher
-			.publish("cam-vol", Some("10.0.0.1:9000"), None, caps, &flags, &[])
+			.publish("cam-general", Some("10.0.0.1:9000"), None, caps, &flags, &[])
 			.await
 			.expect("premier publish");
 		let first = mock.published();
 		let lu = first
 			.iter()
-			.position(|(t, p, r)| t == capteur && !p.is_empty() && *r)
-			.expect("le volume général doit être publié en capteur avant toute lecture");
+			.position(|(t, p, r)| t == sensor_topic && !p.is_empty() && *r)
+			.expect("the general volume must be published as a sensor before any read");
 		let v: serde_json::Value = serde_json::from_slice(&first[lu].1).expect("json");
-		assert!(v.get("command_topic").is_none(), "un capteur offre une commande : {v}");
+		assert!(v.get("command_topic").is_none(), "a sensor offers a command: {v}");
 		assert!(
 			!first.iter().any(|(t, _, _)| t == curseur),
-			"un curseur a dst publié pour une valeur que la caméra n'a jamais envoyée"
+			"a slider was published for a value the camera never sent"
 		);
 
-		// 2. `query/settings/audio` a répondu et la caméra accepte qu'on lui
-		// renvoie `<audioCfg>` : la famille devient modifiable.
+		// 2. `query/settings/audio` answered and the camera accepts having
+		// `<audioCfg>` sent back to it: the family becomes modifiable.
 		assert!(
-			publisher.mark_family_read("cam-vol", Family::Audio, true),
-			"la famille devait changer d'état"
+			publisher.mark_family_read("cam-general", Family::Audio, true),
+			"the family was supposed to change state"
 		);
 		publisher
-			.publish("cam-vol", Some("10.0.0.1:9000"), None, caps, &flags, &[])
+			.publish("cam-general", Some("10.0.0.1:9000"), None, caps, &flags, &[])
 			.await
-			.expect("deuxième publish");
+			.expect("second publish");
 		let after = mock.published();
 		let empty = after
 			.iter()
-			.position(|(t, p, r)| t == capteur && p.is_empty() && *r)
-			.expect("l'ancien topic de discovery doit recevoir un payload vide conservé");
+			.position(|(t, p, r)| t == sensor_topic && p.is_empty() && *r)
+			.expect("the old discovery topic must receive an empty retained payload");
 		let new = after
 			.iter()
 			.position(|(t, p, r)| t == curseur && !p.is_empty() && *r)
-			.expect("le nouveau topic doit recevoir la configuration modifiable");
+			.expect("the new topic must receive the modifiable configuration");
 		assert!(
 			empty < new,
-			"le payload vide doit partir AVANT la nouvelle configuration : {empty} vs {new}"
+			"the empty payload must leave BEFORE the new configuration: {empty} vs {new}"
 		);
 
-		// 3. Et l'inverse doit aussi être vrai : une caméra qui, depuis, refuse
-		// de réécrire le bloc redescend en lecture seule, sans fantôme. On ne
-		// regarde que la troisième volée de publications : le capteur a déjà dst
-		// publié une fois, et chercher sa première occurrence confondrait les
-		// deux moments qu'on veut comparer.
-		assert!(publisher.mark_family_read("cam-vol", Family::Audio, false));
+		// 3. And the reverse must also hold: a camera that, since then, refuses
+		// to rewrite the block comes back down to read-only, without a ghost. Only the
+		// third wave of publications is looked at: the sensor was already
+		// published once, and searching for its first occurrence would confuse the
+		// two moments we want to compare.
+		assert!(publisher.mark_family_read("cam-general", Family::Audio, false));
 		let before = mock.published().len();
 		publisher
-			.publish("cam-vol", Some("10.0.0.1:9000"), None, caps, &flags, &[])
+			.publish("cam-general", Some("10.0.0.1:9000"), None, caps, &flags, &[])
 			.await
-			.expect("troisième publish");
+			.expect("third publish");
 		let revenu = mock.published();
 		let troisieme = &revenu[before..];
 		let empty_curseur = troisieme
 			.iter()
 			.position(|(t, p, r)| t == curseur && p.is_empty() && *r)
-			.expect("le topic du curseur doit être vidé conservé");
+			.expect("the slider topic must be cleared, retained");
 		let capteur_rouvert = troisieme
 			.iter()
-			.position(|(t, p, r)| t == capteur && !p.is_empty() && *r)
-			.expect("le capteur doit être republié");
+			.position(|(t, p, r)| t == sensor_topic && !p.is_empty() && *r)
+			.expect("the sensor must be republished");
 		assert!(
 			empty_curseur < capteur_rouvert,
-			"retour en lecture seule publié dans le mauvais ordre"
+			"return to read-only published in the wrong order"
 		);
 	}
 
-	/// Une famille lue via un porteur que la caméra refuse de réécrire
-	/// (`<MdAlarm>` pour la détection de mouvement) ne doit **jamais** finir
-	/// modifiable, même si une lecture antérieure l'avait promotionnée.
+	/// A family read through a carrier the camera refuses to rewrite
+	/// (`<MdAlarm>` for motion detection) must **never** end up
+	/// modifiable, even if an earlier read had promoted it.
 	#[test]
 	fn a_non_writable_family_never_becomes_writable() {
 		let publisher = publisher_with_features(&Feature::ALL);
@@ -1203,19 +1203,19 @@ mod tests {
 					.map(|v| v.get("command_topic").is_some())
 					.unwrap_or(false)
 			}),
-			"une famille marquée écrivable doit offrir une commande, sinon le test ne prouve rien"
+			"a family marked writable must offer a command, otherwise the test proves nothing"
 		);
 
-		// La caméra a répondu `<MdAlarm>` depuis : plus d'écriture possible.
+		// The camera answered `<MdAlarm>` since: no write possible anymore.
 		assert!(publisher.mark_family_read("cam-mv", Family::Motion, false), "devait redescendre");
-		assert!(!publisher.mark_family_read("cam-mv", Family::Motion, false), "déjà descendue");
+		assert!(!publisher.mark_family_read("cam-mv", Family::Motion, false), "already come back down");
 		let read = states_de("/status/motion/");
-		assert!(!read.is_empty(), "la famille motion ne publie plus rien");
+		assert!(!read.is_empty(), "the motion family publishes nothing anymore");
 		for (topic, payload) in &read {
 			let v: serde_json::Value = serde_json::from_slice(payload).expect("json");
 			assert!(
 				v.get("command_topic").is_none(),
-				"motion offre encore une commande alors que la caméra refuse de réécrire son bloc : {topic}"
+				"motion still offers a command while the camera refuses to rewrite its block: {topic}"
 			);
 		}
 	}
