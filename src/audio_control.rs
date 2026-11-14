@@ -1,6 +1,6 @@
 //! `bairelay audio-check` — a **camera-free, network-free** round trip
 //! through the talk path: encode a file with the same [`AdpcmEncoder`] `talk`
-//! and `pont-audio` use, decode the result with the same [`AdpcmDecoder`] the
+//! and `audio-bridge` use, decode the result with the same [`AdpcmDecoder`] the
 //! RTSP side uses for the camera's own audio, and report what came back.
 //!
 //! This exists because the one thing nobody can measure from this machine is

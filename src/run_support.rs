@@ -873,44 +873,44 @@ cameras = []
 	/// non-`--use-stream-raw` path. The TCP connect fails (no real
 	/// camera at 127.0.0.1:65535), surfacing through `Err(e)` →
 	/// classify → exit code. Covers the dispatch_oneshot bind branch.
-	/// Corps d'un test one-shot, épinglé sur le tas pour traverser un fil sans
-	/// fioritures de generics.
-	type CorpsDeTest = std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>;
+	/// Body of a one-shot test, pinned to the heap so it can cross a
+	/// thread without generics fuss.
+	type TestBody = std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>;
 
-	/// Fait tourner un test one-shot sur un fil à **pile explicite**, avec son
-	/// propre runtime — le même détour que `sur_worker` de `mqtt_dispatch`.
+	/// Runs a one-shot test on a thread with an **explicit stack** and
+	/// its own runtime.
 	///
-	/// Pourquoi ce détour ici : `run_oneshot` sur le chemin TCP réel, c'est la
-	/// poignée de main Baïchuan, donc `BcXml` — tous les blocs du protocole en
-	/// `Option`, plusieurs kilo-octets, et au moins deux copies par commande. En
-	/// release — le profil du binaire qui tourne chez l'utilisatrice — le fil
-	/// reçoit exactement les **2 Mo d'un worker tokio**, la pile dont dispose
-	/// vraiment le one-shot : un test vert prouve que le chemin tient chez elle.
-	/// En debug, les cadres non optimisés réclament plus large, et le test ne
-	/// prouve plus que le comportement — c'est voulu, pas une cache.
-	fn sur_worker(body: fn() -> CorpsDeTest) {
-		let pile = if cfg!(debug_assertions) {
+	/// Why the detour here: `run_oneshot` over the real TCP path is the
+	/// Baichuan handshake, so `BcXml` — every protocol block in an
+	/// `Option`, several kilobytes, with at least two copies per command.
+	/// In release — the profile of the binary that runs at the operator's
+	/// place — the thread gets exactly **tokio's 2 MB worker stack**, the
+	/// stack the one-shot really has: a green test proves the path fits
+	/// there. In debug, unoptimised frames need more room and the test
+	/// proves behaviour only — by design, not a cheat.
+	fn on_worker(body: fn() -> TestBody) {
+		let stack = if cfg!(debug_assertions) {
 			8 * 1024 * 1024
 		} else {
 			2 * 1024 * 1024
 		};
 		std::thread::Builder::new()
-			.stack_size(pile)
+			.stack_size(stack)
 			.spawn(move || {
 				let rt = tokio::runtime::Builder::new_current_thread()
 					.enable_all()
 					.build()
-					.expect("runtime du fil de test");
+					.expect("test thread runtime");
 				rt.block_on(body());
 			})
-			.expect("fil de test à pile explicite")
+			.expect("test thread with explicit stack")
 			.join()
-			.expect("le one-shot ne doit pas paniquer sur une caméra absente");
+			.expect("the one-shot must not panic against an absent camera");
 	}
 
 	#[test]
 	fn run_oneshot_dispatch_path_returns_nonzero_on_tcp_failure() {
-		sur_worker(|| Box::pin(run_oneshot_dispatch_path()))
+		on_worker(|| Box::pin(run_oneshot_dispatch_path()))
 	}
 
 	async fn run_oneshot_dispatch_path() {
@@ -940,7 +940,7 @@ discovery = "local"
 	/// the snapshot --use-stream-raw branch (lines 161-180).
 	#[test]
 	fn run_oneshot_use_stream_raw_path_returns_nonzero_on_tcp_failure() {
-		sur_worker(|| Box::pin(run_oneshot_use_stream_raw_path()))
+		on_worker(|| Box::pin(run_oneshot_use_stream_raw_path()))
 	}
 
 	async fn run_oneshot_use_stream_raw_path() {

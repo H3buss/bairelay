@@ -1,4 +1,4 @@
-//! `talk-abilite` one-shot — ask the camera for its `<TalkAbility>`
+//! `talk-ability` one-shot — ask the camera for its `<TalkAbility>`
 //! (msg id 10) **without** the `two_way_audio` ability gate, and print the
 //! raw answer.
 //!
@@ -112,7 +112,7 @@ pub async fn run(cam: &BcCamera) -> Result<Outcome> {
 /// finding this probe exists to investigate). Mirrors
 /// [`crate::oneshot::snapshot::run_via_driver`].
 pub async fn run_via_driver(_cam: &dyn CameraDriver) -> Result<Outcome> {
-	anyhow::bail!("talk-abilite requires a concrete BcCamera; not supported through CameraDriver");
+	anyhow::bail!("talk-ability requires a concrete BcCamera; not supported through CameraDriver");
 }
 
 /// Round-trip the parsed `<TalkAbility>` through `quick_xml::se` so the

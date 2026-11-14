@@ -193,7 +193,7 @@ pub enum Outcome {
 		audio_type: String,
 		sample_rate: u16,
 		block_bytes: usize,
-		/// `--inactivite` in force, in seconds.
+		/// `--idle` in force, in seconds.
 		idle_secs: f64,
 	},
 }

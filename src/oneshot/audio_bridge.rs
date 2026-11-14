@@ -25,7 +25,7 @@
 //! and the talk slot is taken. Keeping a session open across silence buys a few
 //! hundred milliseconds on the next utterance and risks exactly the state we
 //! cannot clear from here; closing it on every gap risks nothing. That is the
-//! whole trade, and it is why `--inactivite` defaults to 2 s.
+//! whole trade, and it is why `--idle` defaults to 2 s.
 //!
 //! On stdin EOF (go2rtc ending the call is *normal*, not an error) and on
 //! Ctrl+C the sender is dropped, which is the end-of-stream signal
@@ -130,7 +130,7 @@ impl EndReason {
 enum Stop {
 	/// No more bytes, ever.
 	Eof,
-	/// `--inactivite` elapsed with nothing to send.
+	/// `--idle` elapsed with nothing to send.
 	Idle,
 	/// Ctrl+C during a burst.
 	Cancelled,
@@ -326,7 +326,7 @@ pub async fn run(
 	let min_idle = Duration::from_millis(u64::from(neg.block_millis) * 2);
 	if idle < min_idle {
 		return Err(anyhow!(
-			"--inactivite {} ms is shorter than two audio blocks ({} ms each at this \
+			"--idle {} ms is shorter than two audio blocks ({} ms each at this \
 			 camera); the session would close between blocks of one sentence",
 			idle.as_millis(),
 			neg.block_millis

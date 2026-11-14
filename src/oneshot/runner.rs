@@ -39,7 +39,7 @@ where
 ///
 /// `OP_TIMEOUT` is sized for request/response commands. A talk transmission
 /// paces itself at wall-clock speed (a 40 s clip takes 40 s to send) and
-/// `pont-audio` is a long-running bridge, so those pass their own budget
+/// `audio-bridge` is a long-running bridge, so those pass their own budget
 /// instead of being cut off at 30 s. Connect / login / logout budgets and the
 /// cancel handling are unchanged.
 pub async fn run_with_op_timeout<F, T>(
@@ -111,7 +111,7 @@ where
 	// Per-camera ability override, off by default. The battery doorbell
 	// answers `<TalkAbility>` (msg 10) with a complete FDX adpcm 16 kHz
 	// configuration while its `abilityInfo` lists no `two_way_audio` entry at
-	// all — a firmware under-declaration verified with the `talk-abilite`
+	// all — a firmware under-declaration verified with the `talk-ability`
 	// probe. Only a camera whose config says `two_way_audio = true` gets its
 	// gate lifted; every other camera keeps refusing the talk path exactly as
 	// before, and the `abilities` diagnostic keeps reporting the camera's own

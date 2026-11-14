@@ -203,7 +203,7 @@ pub enum AdpcmError {
 ///   `2 * data_bytes_per_block + 1` samples — every 64 ms at 16 kHz. A held
 ///   sample is a slope discontinuity, and 15.6 of them per second is what a
 ///   listener calls crackle; see the round-trip numbers in
-///   `bairelay controle-audio`.
+///   `bairelay audio-check`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HeaderConvention {
 	/// Header = this block's first sample (IMA convention, no duplicate).
@@ -241,8 +241,8 @@ impl AdpcmEncoder {
 	}
 
 	/// Same as [`new`](Self::new) with an explicit header convention. Used by
-	/// `bairelay controle-audio` to A/B the two conventions on real audio, and
-	/// by `--tete repetition` to reproduce the old duplicated-sample layout.
+	/// `bairelay audio-check` to A/B the two conventions on real audio, and
+	/// by `--header repeat` to reproduce the old duplicated-sample layout.
 	pub fn with_convention(data_bytes_per_block: usize, convention: HeaderConvention) -> Self {
 		Self {
 			decoder: AdpcmDecoder::new(),
@@ -349,7 +349,7 @@ impl AdpcmEncoder {
 	/// The pad **encodes silence**: each pad nibble is the code that best
 	/// reconstructs a zero sample from the state the block stopped on, exactly
 	/// like coding a real silent sample. What that buys, measured with
-	/// `bairelay controle-audio` on a tone that ends on its positive peak: the
+	/// `bairelay audio-check` on a tone that ends on its positive peak: the
 	/// played stream used to stop *parked* on the last value (6502 counts of a
 	/// 32767 scale, about −14 dBFS) and stay there for the rest of the block, so
 	/// the loudspeaker was cut mid-excitation when the transmission ended — one

@@ -291,7 +291,7 @@ impl BcCamera {
 
 		// Pace against one absolute deadline, never a relative sleep per payload.
 		//
-		// Measured on this machine with `bairelay controle-audio --gigue 51` (no
+		// Measured on this machine with `bairelay audio-check --bench 51` (no
 		// camera, no network): a relative `sleep(64 ms)` lands 9.3 ms late on
 		// average (worst 16.8 ms) because Windows resolves sleep timers on its
 		// ~15.6 ms system tick — and a *relative* sleep keeps that lateness, so
@@ -536,7 +536,7 @@ impl BcCamera {
 			// This branch used to fire on *any* lateness (`time_sent >
 			// expected_stream_end`), which turns the system's sleep granularity
 			// into permanent drift: every wait fires ~9 ms late on Windows
-			// (measured with `bairelay controle-audio --gigue 51`: mean +9.3 ms,
+			// (measured with `bairelay audio-check --bench 51`: mean +9.3 ms,
 			// worst +16.8 ms, and a 15.6 ms system tick explains it), each late
 			// send then pushed `expected_stream_end` to `time_sent + play_length`,
 			// and the lateness was never paid back — 51 blocks of a 3.26 s stream

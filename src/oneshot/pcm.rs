@@ -92,7 +92,7 @@ pub fn read_pcm_file(path: &Path, raw: bool) -> Result<PcmInput> {
 }
 
 /// Interpret a fully-buffered stream (a pipe) as headerless PCM. Used by
-/// `pont-audio`, whose input is raw s16le by contract.
+/// `audio-bridge`, whose input is raw s16le by contract.
 pub fn read_pcm_bytes(bytes: &[u8]) -> PcmInput {
 	from_raw(bytes)
 }

@@ -550,7 +550,7 @@ pub struct CameraConfig {
 	/// `abilityInfo` does not list `two_way_audio`, so the talk path
 	/// (`talk`, `audio-bridge`) is allowed for **this camera only**.
 	///
-	/// This is a firmware under-declaration, verified by `talk-abilite`: the
+	/// This is a firmware under-declaration, verified by `talk-ability`: the
 	/// doorbell answers `<TalkAbility>` (msg 10) with `version 1.1`, `FDX`
 	/// duplex and an `adpcm` 16000 Hz / 16 bit / 1024-sample-per-block
 	/// configuration, while its 56-entry `abilityInfo` lists no talk ability
