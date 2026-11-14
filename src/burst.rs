@@ -25,17 +25,16 @@
 //!    [`crate::family_state::proven_families`] is enough to publish the discovery
 //!    without radio. The module's only `sleep` is the session-wait probe
 //!    ([`await_session`]), bounded, which emits no command at all.
-//! 3. **Never during a stream.** The burst refuses to start while a live
-//!    burst while a `StreamSource` has subscribers: a camera sending
-//!    video is not the moment to ask it for ten XML blocks. The audio
-//!    dialogue, on its side, is a **separate process** (`bairelay parler`,
-//!    `pont-audio`): the bridge cannot see it, and the report says so — that
-//!    guard-rail is not in this binary.
+//! 3. **Never during a stream.** The burst refuses to start while a
+//!    `StreamSource` has subscribers: a camera sending video is not the moment
+//!    to ask it for ten XML blocks. What the guard cannot see is a session
+//!    opened by **another process** — subscriber counts are in-process — so
+//!    anything that takes the camera from outside this binary is not held off
+//!    by this rule, and no code here pretends otherwise.
 //! 4. **A high bound on commands, logged.** [`COMMAND_BUDGET`] is the
 //!    maximum spend of a burst, evaluated before leaving ([`build_plan`])
 //!    and written in the log together with what it dropped. An expensive family
-//!    (`chime`, five commands) does not eat the whole window without that
-//!    voie.
+//!    (`chime`, five commands) cannot eat the whole window unnoticed.
 //!
 //! # What happens when the camera refuses
 //!

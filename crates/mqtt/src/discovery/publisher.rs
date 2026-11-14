@@ -736,7 +736,7 @@ mod tests {
 		}
 		assert!(
 			rows.len() >= 50,
-			"the renaming table was read as {} rows — the file moved, the header changed, \
+			"the renaming table was read as {} rows: the file moved, the header changed, \
 			 or the table was emptied: check the parser before believing the number",
 			rows.len()
 		);
