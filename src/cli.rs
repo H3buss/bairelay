@@ -1200,7 +1200,8 @@ mod tests {
 			"siren",
 			"abilities",
 			"webhook",
-			"miroir",
+			"reglages-audio",
+			"reglages-carillon",
 		] {
 			assert!(
 				help.contains(cmd),
