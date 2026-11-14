@@ -61,10 +61,10 @@ const TAG_VISITEUR: &str = "visitorLoudspeaker";
 #[derive(Debug, Default, Clone)]
 pub struct Edit {
 	pub volume: Option<u8>,
-	pub interphone: Option<u8>,
-	pub messages: Option<u8>,
+	pub talk: Option<u8>,
+	pub visitor_volume: Option<u8>,
 	/// `visitorLoudspeaker`: 0 or 1.
-	pub visiteur: Option<u8>,
+	pub loudspeaker: Option<u8>,
 	/// Let the advertised abilities veto the command (off by default).
 	pub gate: bool,
 }
@@ -73,9 +73,9 @@ impl Edit {
 	/// True when nothing was asked for, i.e. a plain read.
 	pub fn is_empty(&self) -> bool {
 		self.volume.is_none()
-			&& self.interphone.is_none()
-			&& self.messages.is_none()
-			&& self.visiteur.is_none()
+			&& self.talk.is_none()
+			&& self.visitor_volume.is_none()
+			&& self.loudspeaker.is_none()
 	}
 
 	/// Reject an out-of-range value **before the camera is woken**: a battery
@@ -85,8 +85,8 @@ impl Edit {
 	pub fn check(&self) -> Result<()> {
 		for (flag, value) in [
 			("--volume", self.volume),
-			("--interphone", self.interphone),
-			("--messages", self.messages),
+			("--talk", self.talk),
+			("--visitor-volume", self.visitor_volume),
 		] {
 			if let Some(v) = value {
 				if v > 100 {
@@ -97,10 +97,10 @@ impl Edit {
 				}
 			}
 		}
-		if let Some(v) = self.visiteur {
+		if let Some(v) = self.loudspeaker {
 			if v > 1 {
 				return Err(UsageError::new(format!(
-					"--visiteur is a switch: pass 0 or 1, got {v}"
+					"--loudspeaker is a switch: pass 0 or 1, got {v}"
 				))
 				.into());
 			}
@@ -136,29 +136,29 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 		asked.push((TAG_VOLUME, patched.volume.clone(), v.to_string()));
 		patched.volume = v.to_string();
 	}
-	if let Some(v) = edit.interphone {
+	if let Some(v) = edit.talk {
 		let from = present(
 			patched.talk_and_reply_volume.as_deref(),
 			TAG_INTERPHONE,
-			"--interphone",
+			"--talk",
 		)?;
 		asked.push((TAG_INTERPHONE, from, v.to_string()));
 		patched.talk_and_reply_volume = Some(v.to_string());
 	}
-	if let Some(v) = edit.messages {
+	if let Some(v) = edit.visitor_volume {
 		let from = present(
 			patched.visitor_volume.as_deref(),
 			TAG_MESSAGES,
-			"--messages",
+			"--visitor-volume",
 		)?;
 		asked.push((TAG_MESSAGES, from, v.to_string()));
 		patched.visitor_volume = Some(v.to_string());
 	}
-	if let Some(v) = edit.visiteur {
+	if let Some(v) = edit.loudspeaker {
 		let from = present(
 			patched.visitor_loudspeaker.as_deref(),
 			TAG_VISITEUR,
-			"--visiteur",
+			"--loudspeaker",
 		)?;
 		asked.push((TAG_VISITEUR, from, v.to_string()));
 		patched.visitor_loudspeaker = Some(v.to_string());
@@ -271,7 +271,7 @@ mod tests {
 			"--gate on its own must stay read-only"
 		);
 		assert!(!Edit {
-			interphone: Some(0),
+			talk: Some(0),
 			..Default::default()
 		}
 		.is_empty());
@@ -294,16 +294,16 @@ mod tests {
 				},
 			),
 			(
-				"--interphone",
+				"--talk",
 				Edit {
-					interphone: Some(200),
+					talk: Some(200),
 					..Default::default()
 				},
 			),
 			(
-				"--messages",
+				"--visitor-volume",
 				Edit {
-					messages: Some(101),
+					visitor_volume: Some(101),
 					..Default::default()
 				},
 			),
@@ -317,17 +317,17 @@ mod tests {
 			);
 		}
 		let err = Edit {
-			visiteur: Some(2),
+			loudspeaker: Some(2),
 			..Default::default()
 		}
 		.check()
-		.expect_err("--visiteur 2 is not a switch value");
-		assert!(format!("{:#}", err).contains("--visiteur"));
+		.expect_err("--loudspeaker 2 is not a switch value");
+		assert!(format!("{:#}", err).contains("--loudspeaker"));
 		// The edges of the documented range are fine.
 		Edit {
 			volume: Some(0),
-			interphone: Some(100),
-			visiteur: Some(0),
+			talk: Some(100),
+			loudspeaker: Some(0),
 			..Default::default()
 		}
 		.check()
@@ -355,14 +355,14 @@ mod tests {
 		let err = present(
 			cfg.talk_and_reply_volume.as_deref(),
 			TAG_INTERPHONE,
-			"--interphone",
+			"--talk",
 		)
 		.expect_err("a tag the camera didn't print may not be invented");
 		let msg = format!("{:#}", err);
 		assert!(msg.contains(TAG_INTERPHONE), "{msg}");
-		assert!(msg.contains("--interphone"), "{msg}");
+		assert!(msg.contains("--talk"), "{msg}");
 		// A tag that is present is copied out verbatim, including an empty one.
-		assert_eq!(present(Some(""), TAG_MESSAGES, "--messages").unwrap(), "");
+		assert_eq!(present(Some(""), TAG_MESSAGES, "--visitor-volume").unwrap(), "");
 	}
 
 	#[test]

@@ -207,12 +207,23 @@ Renamed on this branch, with the breaking ones called out:
 | --- | --- |
 | `bairelay reglages-audio` | `bairelay audio-settings` |
 | `bairelay reglages-carillon` | `bairelay chime-settings` |
+| `--interphone` | `--talk` (writes `<talkAndReplyVolume>`) |
+| `--messages` | `--visitor-volume` (writes `<visitorVolume>`) |
+| `--visiteur` | `--loudspeaker` (writes `<visitorLoudspeaker>`) |
+| `--melodie` | `--melody` |
+| `--silencieux` | `--silent` |
+| `--sonner` | `--ring` |
 | `{prefix}/{cam}/query/reglages[/{family}]` | `…/query/settings[/{family}]` |
 | `{prefix}/{cam}/status/evenement` | `…/status/event` |
 | `{prefix}/{cam}/status/salve` | `…/status/burst` |
 | `config-familles-lues.json` | `config-families-read.json` |
 | `[annonces] interroger` / `tenue_secs` / `intervalle_secs` | removed — see below |
 | `[carnet] …` | removed — see below |
+
+The flag names follow the tag each one writes, so `--loudspeaker` is the
+visitor loudspeaker switch and `--visitor-volume` is the volume of the pre-set
+message clips — the two are easy to confuse from the camera's XML, where both
+tags start with `visitor`.
 
 `Config` uses `deny_unknown_fields`, so an old `[annonces]` or `[carnet]` block
 is a startup error naming the key. Delete the block: both tables configured

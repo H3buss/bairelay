@@ -307,15 +307,15 @@ pub enum Command {
 		#[arg(long = "volume", value_name = "N")]
 		volume: Option<u8>,
 		/// talkAndReplyVolume — the intercom volume, 0-100.
-		#[arg(long = "interphone", value_name = "N")]
-		interphone: Option<u8>,
+		#[arg(long = "talk", value_name = "N")]
+		talk: Option<u8>,
 		/// visitorVolume — how loud the pre-set message clips play, 0-100.
-		#[arg(long = "messages", value_name = "N")]
-		messages: Option<u8>,
+		#[arg(long = "visitor-volume", value_name = "N")]
+		visitor_volume: Option<u8>,
 		/// visitorLoudspeaker — whether the loudspeaker is live for a visitor
 		/// (0 or 1).
-		#[arg(long = "visiteur", value_name = "0|1")]
-		visiteur: Option<u8>,
+		#[arg(long = "loudspeaker", value_name = "0|1")]
+		loudspeaker: Option<u8>,
 		/// Let the camera's advertised abilities veto the command before it is
 		/// sent. Off by default: this doorbell's `abilityInfo` under-reports,
 		/// so the answer to cmd 264 is the only proof of support that counts.
@@ -354,17 +354,17 @@ pub enum Command {
 		led: Option<u8>,
 		/// musicId — the melody for every event whose block printed one
 		/// (integer; no melody list is documented, so read 486 first).
-		#[arg(long = "melodie", value_name = "ID")]
-		melodie: Option<u32>,
+		#[arg(long = "melody", value_name = "ID")]
+		melody: Option<u32>,
 		/// Mute the chime for N (unit undocumented; the reference client sends
 		/// seconds). 0 unmutes.
-		#[arg(long = "silencieux", value_name = "N")]
-		silencieux: Option<u32>,
+		#[arg(long = "silent", value_name = "N")]
+		silent: Option<u32>,
 		/// Ring the chime once after the read (and after the write, if any):
 		/// the live test — hearing it is the only proof of life the protocol
 		/// cannot give. It makes noise, on purpose, because you asked.
-		#[arg(long = "sonner")]
-		sonner: bool,
+		#[arg(long = "ring")]
+		ring: bool,
 	},
 
 	/// Query or set the PIR sensor.
@@ -1028,9 +1028,9 @@ mod tests {
 		let Command::AudioSettings {
 			common,
 			volume,
-			interphone,
-			messages,
-			visiteur,
+			talk,
+			visitor_volume,
+			loudspeaker,
 			gate,
 		} = &cli.command
 		else {
@@ -1038,9 +1038,9 @@ mod tests {
 		};
 		assert_eq!(common.camera, "Sonnette");
 		assert_eq!(volume, &None);
-		assert_eq!(interphone, &None);
-		assert_eq!(messages, &None);
-		assert_eq!(visiteur, &None);
+		assert_eq!(talk, &None);
+		assert_eq!(visitor_volume, &None);
+		assert_eq!(loudspeaker, &None);
 		assert!(!*gate, "the gate is opt-in");
 		assert!(cli.is_oneshot());
 		assert_eq!(cli.camera_name(), Some("Sonnette"));
@@ -1052,20 +1052,20 @@ mod tests {
 			"Sonnette",
 			"--volume",
 			"80",
-			"--interphone",
+			"--talk",
 			"90",
-			"--messages",
+			"--visitor-volume",
 			"60",
-			"--visiteur",
+			"--loudspeaker",
 			"0",
 			"--gate",
 		])
 		.unwrap();
 		let Command::AudioSettings {
 			volume,
-			interphone,
-			messages,
-			visiteur,
+			talk,
+			visitor_volume,
+			loudspeaker,
 			gate,
 			..
 		} = &cli.command
@@ -1074,23 +1074,23 @@ mod tests {
 		};
 		assert_eq!(volume, &Some(80));
 		assert_eq!(
-			interphone,
+			talk,
 			&Some(90),
 			"the intercom volume is the setting this command exists for"
 		);
-		assert_eq!(messages, &Some(60));
+		assert_eq!(visitor_volume, &Some(60));
 		assert_eq!(
-			*visiteur,
+			*loudspeaker,
 			Some(0),
 			"a switch set to 0 must not read as 'not passed'"
 		);
 		assert!(*gate);
 
 		let cloned = crate::cli_convert::clone_command(&cli.command);
-		let Command::AudioSettings { interphone, .. } = &cloned else {
+		let Command::AudioSettings { talk, .. } = &cloned else {
 			panic!("clone_command must preserve the variant")
 		};
-		assert_eq!(interphone, &Some(90));
+		assert_eq!(talk, &Some(90));
 	}
 
 	/// `chime-settings` must parse as a bare read (every option `None`,
@@ -1103,9 +1103,9 @@ mod tests {
 			common,
 			volume,
 			led,
-			melodie,
-			silencieux,
-			sonner,
+			melody,
+			silent,
+			ring,
 		} = &cli.command
 		else {
 			panic!("wrong variant")
@@ -1113,9 +1113,9 @@ mod tests {
 		assert_eq!(common.camera, "Sonnette");
 		assert_eq!(volume, &None);
 		assert_eq!(led, &None);
-		assert_eq!(melodie, &None);
-		assert_eq!(silencieux, &None);
-		assert!(!*sonner, "a command that makes noise must never be the default");
+		assert_eq!(melody, &None);
+		assert_eq!(silent, &None);
+		assert!(!*ring, "a command that makes noise must never be the default");
 		assert!(cli.is_oneshot());
 		assert_eq!(cli.camera_name(), Some("Sonnette"));
 		assert!(cli.dump_bcmedia_path().is_none());
@@ -1128,19 +1128,19 @@ mod tests {
 			"4",
 			"--led",
 			"0",
-			"--melodie",
+			"--melody",
 			"2",
-			"--silencieux",
+			"--silent",
 			"0",
-			"--sonner",
+			"--ring",
 		])
 		.unwrap();
 		let Command::ChimeSettings {
 			volume,
 			led,
-			melodie,
-			silencieux,
-			sonner,
+			melody,
+			silent,
+			ring,
 			..
 		} = &cli.command
 		else {
@@ -1152,20 +1152,20 @@ mod tests {
 			Some(0),
 			"a switch set to 0 must not read as 'not passed'"
 		);
-		assert_eq!(melodie, &Some(2));
+		assert_eq!(melody, &Some(2));
 		assert_eq!(
-			*silencieux,
+			*silent,
 			Some(0),
-			"silencieux 0 means unmute: a value, not an absence"
+			"silent 0 means unmute: a value, not an absence"
 		);
-		assert!(*sonner);
+		assert!(*ring);
 
 		let cloned = crate::cli_convert::clone_command(&cli.command);
-		let Command::ChimeSettings { melodie, sonner, .. } = &cloned else {
+		let Command::ChimeSettings { melody, ring, .. } = &cloned else {
 			panic!("clone_command must preserve the variant")
 		};
-		assert_eq!(melodie, &Some(2));
-		assert!(*sonner);
+		assert_eq!(melody, &Some(2));
+		assert!(*ring);
 	}
 
 	#[test]

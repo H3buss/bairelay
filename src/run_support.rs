@@ -415,18 +415,18 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 		// cost a wake-up to be refused.
 		if let Command::AudioSettings {
 			volume,
-			interphone,
-			messages,
-			visiteur,
+			talk,
+			visitor_volume,
+			loudspeaker,
 			gate,
 			..
 		} = &cli.command
 		{
 			let edit = audio_settings::Edit {
 				volume: *volume,
-				interphone: *interphone,
-				messages: *messages,
-				visiteur: *visiteur,
+				talk: *talk,
+				visitor_volume: *visitor_volume,
+				loudspeaker: *loudspeaker,
 				gate: *gate,
 			};
 			edit.check()?;
@@ -445,18 +445,18 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 		if let Command::ChimeSettings {
 			volume,
 			led,
-			melodie,
-			silencieux,
-			sonner,
+			melody,
+			silent,
+			ring,
 			..
 		} = &cli.command
 		{
 			let edit = chime_settings::Edit {
 				volume: *volume,
 				led: *led,
-				melodie: *melodie,
-				silencieux: *silencieux,
-				sonner: *sonner,
+				melody: *melody,
+				silent: *silent,
+				ring: *ring,
 			};
 			edit.check()?;
 			return runner::run(&cam_cfg, cancel, move |cam| {
@@ -1191,9 +1191,9 @@ on_motion = true
 		assert_eq!(lu["block"]["volume"], "100", "<volume> est le volume général");
 		assert_eq!(
 			lu["block"]["talk_and_reply_volume"], "90",
-			"<talkAndReplyVolume> est le volume d'interphone"
+			"<talkAndReplyVolume> is the intercom volume"
 		);
-		assert_eq!(lu["block"]["visitor_volume"], "38", "<visitorVolume> visiteur");
+		assert_eq!(lu["block"]["visitor_volume"], "38", "<visitorVolume> is what the visitor hears");
 	}
 
 	/// Extraire la décision n'a pas adouci les échecs : une erreur reste

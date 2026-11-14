@@ -94,12 +94,12 @@ pub struct Edit {
 	pub led: Option<u8>,
 	/// `musicId`: melody for every event whose block the camera printed a
 	/// melody on. Any integer — no melody list is documented anywhere.
-	pub melodie: Option<u32>,
+	pub melody: Option<u32>,
 	/// `<time>` of the silent-mode block: mute the chime for `N` (the unit is
 	/// undocumented; the reference client sends seconds). `0` unmutes.
-	pub silencieux: Option<u32>,
+	pub silent: Option<u32>,
 	/// Ring once (`ringWithMusic`) after the rest, as the live test.
-	pub sonner: bool,
+	pub ring: bool,
 }
 
 impl Edit {
@@ -108,8 +108,8 @@ impl Edit {
 	pub fn is_empty(&self) -> bool {
 		self.volume.is_none()
 			&& self.led.is_none()
-			&& self.melodie.is_none()
-			&& self.silencieux.is_none()
+			&& self.melody.is_none()
+			&& self.silent.is_none()
 	}
 
 	/// Reject an out-of-range value **before the camera is woken**: a battery
@@ -188,10 +188,10 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 			asked.push((Asked::LedState, "ledState".into(), from, v.to_string()));
 			params.led_state = Some(v.to_string());
 		}
-		if let Some(v) = edit.melodie {
+		if let Some(v) = edit.melody {
 			let events = patched.events.as_mut().ok_or_else(|| {
 				UsageError::new(
-					"the camera did not answer the 486 events question, so --melodie has no block to change",
+					"the camera did not answer the 486 events question, so --melody has no block to change",
 				)
 			})?;
 			let mut touched = 0;
@@ -218,20 +218,20 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 			}
 			if touched == 0 {
 				return Err(UsageError::new(
-					"no <alarminCfg> entry printed a <musicId>, so --melodie cannot change one; \
+					"no <alarminCfg> entry printed a <musicId>, so --melody cannot change one; \
 					 refusing to add a tag the firmware did not send",
 				)
 				.into());
 			}
 		}
-		if let Some(v) = edit.silencieux {
+		if let Some(v) = edit.silent {
 			let silent = patched.silent.as_mut().ok_or_else(|| {
 				UsageError::new(
-					"the camera did not answer the 609 silent-mode question, so --silencieux \
+					"the camera did not answer the 609 silent-mode question, so --silent \
 					 has no block to change",
 				)
 			})?;
-			let from = present(silent.time.as_deref(), "time", "--silencieux")?;
+			let from = present(silent.time.as_deref(), "time", "--silent")?;
 			asked.push((Asked::SilentTime, "silentTime".into(), from, v.to_string()));
 			silent.time = Some(v.to_string());
 		}
@@ -265,13 +265,13 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 		.collect::<Vec<_>>();
 
 	// The live test last: if a write happened, the ring reflects it.
-	let ring = if edit.sonner {
+	let ring = if edit.ring {
 		let chime_id = after.chime_id.as_deref().ok_or_else(|| {
 			UsageError::new(
-				"the 484 list printed no addressable chime id, so --sonner has no chime to ring",
+				"the 484 list printed no addressable chime id, so --ring has no chime to ring",
 			)
 		})?;
-		let music_id = edit.melodie.unwrap_or(0).to_string();
+		let music_id = edit.melody.unwrap_or(0).to_string();
 		cam.ring_ding_dong(chime_id, &music_id).await.map_err(|e| {
 			let e = anyhow::Error::from(e);
 			if changes.is_empty() {
@@ -469,15 +469,15 @@ mod tests {
 		// `--sonner` alone makes noise but stores nothing: still "no write".
 		assert!(
 			Edit {
-				sonner: true,
+				ring: true,
 				..Default::default()
 			}
 			.is_empty(),
-			"--sonner on its own must not turn the read into a write"
+			"--ring on its own must not turn the read into a write"
 		);
 		// `0` is a value, not an absence: silencing for 0 (unmute) is a write.
 		assert!(!Edit {
-			silencieux: Some(0),
+			silent: Some(0),
 			..Default::default()
 		}
 		.is_empty());
@@ -510,9 +510,9 @@ mod tests {
 		Edit {
 			volume: Some(0),
 			led: Some(1),
-			melodie: Some(9999),
-			silencieux: Some(u32::MAX),
-			sonner: true,
+			melody: Some(9999),
+			silent: Some(u32::MAX),
+			ring: true,
 		}
 		.check()
 		.expect("documented edges and unbounded options pass");
@@ -525,7 +525,7 @@ mod tests {
 		let msg = format!("{:#}", err);
 		assert!(msg.contains("volLevel"), "{msg}");
 		assert!(msg.contains("--volume"), "{msg}");
-		assert_eq!(present(Some(""), "time", "--silencieux").unwrap(), "");
+		assert_eq!(present(Some(""), "time", "--silent").unwrap(), "");
 	}
 
 	#[test]
