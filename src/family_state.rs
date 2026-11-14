@@ -25,7 +25,7 @@
 //!
 //! À côté du fichier de configuration, sous le nom [`FAMILIES_READ_FILE`] — le
 //! même emplacement que [`crate::config::CLOUD_AUTH_FILE`], précédent explicite.
-//! Dans le complément Home Assistant, c'est `/config/sonnette/` : un répertoire
+//! Dans le complément Home Assistant, c'est `/config/bairelay/` : un répertoire
 //! déjà monté en lecture/écriture, qui survit aux mises à jour de l'image, et
 //! qui n'est **pas** le dépôt. Rien n'est écrit dans l'arborescence du code.
 //!
@@ -57,7 +57,7 @@ use bairelay_mqtt::settings::Family;
 /// Nom du fichier d'état, posé à côté du fichier de configuration.
 ///
 /// Le préfixe `config-` est celui du voisin [`crate::config::CLOUD_AUTH_FILE`] :
-/// dans `/config/sonnette/`, ces fichiers se repèrent d'un coup d'œil, et le
+/// dans `/config/bairelay/`, ces fichiers se repèrent d'un coup d'œil, et le
 /// nom dit ce qu'il contient sans avoir à l'ouvrir.
 pub const FAMILIES_READ_FILE: &str = "config-families-read.json";
 
@@ -382,10 +382,10 @@ mod tests {
 	fn definir_chemin_se_pose_a_cote_de_la_configuration() {
 		// La règle d'emplacement est vérifiée sans toucher au global : même
 		// répertoire, nom propre, et le fichier de config lui-même intact.
-		let config = Path::new("/config/sonnette/bairelay.toml");
+		let config = Path::new("/config/bairelay/bairelay.toml");
 		assert_eq!(
 			config.with_file_name(FAMILIES_READ_FILE),
-			PathBuf::from("/config/sonnette/config-families-read.json")
+			PathBuf::from("/config/bairelay/config-families-read.json")
 		);
 	}
 }

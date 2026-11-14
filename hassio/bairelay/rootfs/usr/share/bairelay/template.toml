@@ -95,6 +95,9 @@ bind = "0.0.0.0"
 # name = "Cam1"                      # must match the form's `name`
 # channel_id = 0
 # stream = "all"                     # none | all | main | sub | extern
+#   Which streams this camera may serve, whatever the URL suffix asks
+#   for. "sub" still answers /extern (on the substream); "main" refuses
+#   it. A refused request never wakes the camera.
 # discovery = "local"                # local | remote | map | relay | cellular
 # max_encryption = "aes"             # none | aes | bcencrypt
 # idle_disconnect_timeout_secs = 45  # grace period before sleep

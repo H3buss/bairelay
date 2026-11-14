@@ -72,3 +72,14 @@ tests/scripts/ha-config/.storage/http
 # Cobertura XML is uploaded as a workflow artifact instead.
 cobertura.xml
 tarpaulin-report.html
+
+# measurement artefacts: frame journals, captures, wake logs, audio dumps.
+# They are written by the diagnostic runs and are never part of the code.
+*.log
+*.pcap
+*.jsonl
+*.pcm
+*.opus
+*.wav
+/out/
+/notes/
