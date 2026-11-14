@@ -25,7 +25,7 @@
 //!    [`crate::family_state::proven_families`] is enough to publish the discovery
 //!    without radio. The module's only `sleep` is the session-wait probe
 //!    ([`await_session`]), bounded, which emits no command at all.
-//! 3. **Never during a stream.** [`CameraHandle::stream_in_progress`] refuses the
+//! 3. **Never during a stream.** The burst refuses to start while a live
 //!    burst while a `StreamSource` has subscribers: a camera sending
 //!    video is not the moment to ask it for ten XML blocks. The audio
 //!    dialogue, on its side, is a **separate process** (`bairelay parler`,
@@ -207,7 +207,7 @@ impl Stop {
 
 /// What a camera already knows how to do, between two bursts.
 ///
-/// One instance per camera, sitting on the [`CameraHandle`]: it is the object
+/// One instance per camera, sitting on the [`crate::camera::CameraHandle`]: it is the object
 /// that answers "did I already pay a burst for this wake?", a question asked
 /// simultaneously from the session, the webhook and the push.
 #[derive(Debug)]

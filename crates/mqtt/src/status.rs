@@ -375,7 +375,7 @@ impl<'a> StatusPublisher<'a> {
 	/// Une famille dont les états sont effacés est silencieuse : Home Assistant
 	/// affiche « inconnu » et rien ne dit si la caméra a refusé, n'a pas répondu,
 	/// ou n'imprime pas la balise. Ce topic porte la phrase. Il est assaini par
-	/// [`publishable_reason`] — une ligne, sans XML, sans secret — parce qu'un
+	/// [`crate::status::publishable_reason`] — une ligne, sans XML, sans secret — parce qu'un
 	/// topic conservé est relu des années plus tard.
 	pub async fn publish_family_reason(
 		&self,
@@ -426,7 +426,7 @@ pub fn publishable_reason(reason: &str) -> String {
 
 /// Same cleaning, with the bound chosen by the caller.
 ///
-/// [`publishable_reason`] caps at 160 characters because its sentences land on
+/// [`crate::status::publishable_reason`] caps at 160 characters because its sentences land on
 /// **retained** topics that Home Assistant replays on every start: one line, not
 /// a dump. The wider bound is for the opposite case — reading the camera's own
 /// answer back, where the body worth seeing is longer than that cap leaves

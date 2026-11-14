@@ -15,7 +15,7 @@
 //! # Why the read is five questions
 //!
 //! The chime is spread over five commands (see
-//! [`bairelay-neolink_core::bc_protocol::BcCamera::get_ding_dong_cfg`]): the
+//! [`bairelay_neolink_core::bc_protocol::BcCamera::get_ding_dong_cfg`]): the
 //! wired block (483), the paired-chime list (484), the per-chime parameters
 //! (485), the silent mode (609) and the per-event melodies (486). Each part a
 //! camera doesn't have **refuses its question**, so the report distinguishes

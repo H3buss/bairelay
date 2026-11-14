@@ -190,7 +190,7 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 }
 
 /// Trait-object route: see the module docs — this command cannot run through
-/// [`CameraDriver`]. Mirrors [`crate::oneshot::talk_abilite::run_via_driver`].
+/// [`CameraDriver`]. Mirrors [`crate::oneshot::chime_settings::run_via_driver`].
 pub async fn run_via_driver(_cam: &dyn CameraDriver) -> Result<Outcome> {
 	anyhow::bail!(
 		"audio-settings requires a concrete BcCamera; not supported through CameraDriver"

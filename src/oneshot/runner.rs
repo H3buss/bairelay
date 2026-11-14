@@ -76,8 +76,9 @@ where
 /// The op deadline is the only backstop, so an op using this entry point must
 /// watch the token. That is a real trade, stated plainly: a bridge that ignored
 /// cancellation would run until `op_timeout`, which is why
-/// [`super::pont_audio`] caps itself at a finite (if generous) budget rather
-/// than no deadline at all.
+/// cancellation would run until `op_timeout`, which is why the long ops of
+/// this bridge ([`crate::burst`]) carry their own finite (if generous) time
+/// budget rather than relying on no deadline at all.
 pub async fn run_graceful<F, T>(
 	cfg: &CameraConfig,
 	cancel: CancellationToken,
