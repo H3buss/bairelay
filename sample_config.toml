@@ -94,6 +94,12 @@ address = "192.168.1.187:9000"   # ip or hostname, optional :port
 # uid = "ABCDEF1234567890"
 # channel_id = 0
 # stream = "all"              # none | all | main | sub | extern
+#                             # Which streams this camera may serve, whatever the
+#                             # URL suffix asks for: main/sub/extern answer that
+#                             # one only, all (the default) answers every one, none
+#                             # answers none. A /extern request on a camera set to
+#                             # "sub" is served the substream; on one set to "main"
+#                             # it fails. A refused request never wakes the camera.
 # discovery = "relay"         # local | remote | map | relay | cellular | cloud
 # max_encryption = "aes"      # none | aes | bcencrypt
 # idle_disconnect = false     # true for battery cams
