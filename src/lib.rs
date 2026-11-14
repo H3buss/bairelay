@@ -20,6 +20,7 @@ pub mod hassio;
 /// costs, the 249 s a held wake lock left the camera awake against 19 s without
 /// it — were measured here and belong to this engine, so it waits here for its
 /// caller instead of being rewritten over there.
+#[allow(dead_code)]
 pub(crate) mod polling;
 pub mod local_time;
 pub mod mqtt_dispatch;

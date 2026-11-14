@@ -53,7 +53,7 @@ use tokio_util::sync::CancellationToken;
 use crate::camera::CameraHandle;
 
 /// Rythme de la sonde qui regarde si la session est là.
-const SONDE: Duration = Duration::from_millis(250);
+const POLL_STEP: Duration = Duration::from_millis(250);
 
 /// Temps pendant lequel le verrou reste tenu **après** que la session est
 /// apparue : c'est celui de l'abonnement aux alarmes et de la première poussée.
@@ -68,18 +68,18 @@ const HOLD_AFTER_SESSION: Duration = Duration::from_secs(8);
 pub(crate) struct Guard {
 	/// Une tâche tient déjà le verrou de cette caméra. Partagée avec la tâche
 	/// lancée, qui la rend en finissant — y compris si elle est annulée.
-	en_cours: Arc<AtomicBool>,
+	in_flight: Arc<AtomicBool>,
 	/// Instant de la dernière interrogation **qui a obtenu une session**. Une
 	/// tentative manquée n'y écrit pas : elle n'a rien coûté, elle ne doit
 	/// donc rien interdire.
-	derniere_payee: Mutex<Option<Instant>>,
+	last_paid: Mutex<Option<Instant>>,
 }
 
 impl Guard {
-	pub(crate) fn nouvelle() -> Self {
+	pub(crate) fn new() -> Self {
 		Self {
-			en_cours: Arc::new(AtomicBool::new(false)),
-			derniere_payee: Mutex::new(None),
+			in_flight: Arc::new(AtomicBool::new(false)),
+			last_paid: Mutex::new(None),
 		}
 	}
 
@@ -89,19 +89,19 @@ impl Guard {
 	/// pas acheter deux sessions.
 	///
 	/// Un refus ne consomme rien : ni la date, ni le drapeau.
-	fn reserver(&self, intervalle: Duration, maintenant: Instant) -> bool {
-		if self.en_cours.swap(true, Ordering::SeqCst) {
+	fn reserve(&self, interval: Duration, now: Instant) -> bool {
+		if self.in_flight.swap(true, Ordering::SeqCst) {
 			return false;
 		}
-		let derniere = self
-			.derniere_payee
+		let last = self
+			.last_paid
 			.lock()
-			.unwrap_or_else(|empoisonnee| empoisonnee.into_inner());
-		if let Some(quand) = *derniere {
-			if maintenant - quand < intervalle {
+			.unwrap_or_else(|poisoned| poisoned.into_inner());
+		if let Some(at) = *last {
+			if now - at < interval {
 				// Le drapeau n'était pas pris : on le rend tel qu'il était.
-				drop(derniere);
-				self.en_cours.store(false, Ordering::SeqCst);
+				drop(last);
+				self.in_flight.store(false, Ordering::SeqCst);
 				return false;
 			}
 		}
@@ -110,16 +110,16 @@ impl Guard {
 
 	/// La session est là : cette interrogation a payé une session, elle a donc
 	/// droit à son intervalle avant la suivante.
-	fn marquer_payee(&self, quand: Instant) {
-		*self.derniere_payee
+	fn mark_paid(&self, at: Instant) {
+		*self.last_paid
 			.lock()
-			.unwrap_or_else(|empoisonnee| empoisonnee.into_inner()) = Some(quand);
+			.unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(at);
 	}
 
 	/// La tâche est terminée : elle rend le drapeau. Appelé par le garde‑fou
 	/// `Drop` de la tâche, donc aussi quand elle est annulée en plein `await`.
-	fn rendre(&self) {
-		self.en_cours.store(false, Ordering::SeqCst);
+	fn release(&self) {
+		self.in_flight.store(false, Ordering::SeqCst);
 	}
 }
 
@@ -131,38 +131,38 @@ impl Guard {
 /// moment‑là, sauf si la session arrive si tard que [`HOLD_AFTER_SESSION`]
 /// serait écrasé — auquel cas la fenêtre est allongée d'autant, sans dépasser
 /// `tenue + HOLD_AFTER_SESSION`.
-pub(crate) fn tenter(
-	garde: &Arc<Guard>,
+pub(crate) fn try_once(
+	guard: &Arc<Guard>,
 	handle: Arc<CameraHandle>,
-	tenue: Duration,
-	intervalle: Duration,
+	hold: Duration,
+	interval: Duration,
 	cancel: &CancellationToken,
 ) -> bool {
-	if !garde.reserver(intervalle, Instant::now()) {
-		tracing::debug!("interrogation : pas de depart camera={} (une tourne, ou la derniere session a moins de {} s)",
+	if !guard.reserve(interval, Instant::now()) {
+		tracing::debug!("poll: no start cam={} (one is running, or the last session is younger than {} s)",
 			handle.name(),
-			intervalle.as_secs());
+			interval.as_secs());
 		return false;
 	}
 	let cancel = cancel.clone();
-	tokio::spawn(tache(Arc::clone(garde), handle, tenue, cancel));
+	tokio::spawn(run_task(Arc::clone(guard), handle, hold, cancel));
 	true
 }
 
 /// Le corps de l'interrogation, une fois la garde réservée.
-async fn tache(garde: Arc<Guard>, handle: Arc<CameraHandle>, tenue: Duration, cancel: CancellationToken) {
+async fn run_task(guard: Arc<Guard>, handle: Arc<CameraHandle>, hold: Duration, cancel: CancellationToken) {
 	/// Le drapeau se rend quoi qu'il arrive : une tâche annulée au milieu d'un
 	/// `await` ne doit pas verrouiller la caméra pour toujours.
 	struct Release(Arc<Guard>);
 	impl Drop for Release {
 		fn drop(&mut self) {
-			self.0.rendre();
+			self.0.release();
 		}
 	}
-	let _rendu = Release(Arc::clone(&garde));
+	let _release = Release(Arc::clone(&guard));
 
-	let nom = handle.name().to_owned();
-	let debut = tokio::time::Instant::now();
+	let cam = handle.name().to_owned();
+	let start = tokio::time::Instant::now();
 
 	// Le geste entier : tenir le verrou. C'est lui qui fait la session, et
 	// `idle_disconnect` rend la caméra dès qu'on le lâche.
@@ -171,55 +171,55 @@ async fn tache(garde: Arc<Guard>, handle: Arc<CameraHandle>, tenue: Duration, ca
 	// pris alors qu'il en existe deja un veut dire qu'une session est ouverte ou
 	// en train de se monter ailleurs. C'est exactement ce qu'on veut voir quand
 	// une séance dure quatre minutes au lieu de trente secondes.
-	let verrou = handle.wake_lock().acquire();
-	tracing::debug!("interrogation : verrou de reveil pris camera={nom} verrous={}",
+	let wake_guard = handle.wake_lock().acquire();
+	tracing::debug!("poll: wake lock taken cam={cam} locks={}",
 		handle.wake_lock().count());
 
-	let plafond = debut + tenue + HOLD_AFTER_SESSION;
-	let mut echeance = debut + tenue;
-	let mut vue = None;
+	let ceiling = start + hold + HOLD_AFTER_SESSION;
+	let mut deadline = start + hold;
+	let mut seen = None;
 	loop {
-		let maintenant = tokio::time::Instant::now();
-		if maintenant >= echeance {
+		let now = tokio::time::Instant::now();
+		if now >= deadline {
 			break;
 		}
-		if vue.is_none() && handle.bc_camera_concrete().is_some() {
-			let quand = maintenant;
-			vue = Some(quand);
-			garde.marquer_payee(quand);
+		if seen.is_none() && handle.bc_camera_concrete().is_some() {
+			let at = now;
+			seen = Some(at);
+			guard.mark_paid(at);
 			// La session vient d'arriver : lui laisser le temps de l'abonnement.
-			echeance = (quand + HOLD_AFTER_SESSION).min(plafond);
-			tracing::debug!("interrogation : session etablie apres {} ms camera={} — l'ecouteur d'alarmes a la main, verrou garde encore {} s",
-				duree_ms(debut, quand),
-				nom,
-				(echeance - quand).as_secs());
+			deadline = (at + HOLD_AFTER_SESSION).min(ceiling);
+			tracing::debug!("poll: session established after {} ms cam={} — the alarm listener holds the lane, lock kept for {} more s",
+				elapsed_ms(start, at),
+				cam,
+				(deadline - at).as_secs());
 		}
-		let reste = echeance - tokio::time::Instant::now();
+		let remaining = deadline - tokio::time::Instant::now();
 		tokio::select! {
 			_ = cancel.cancelled() => break,
 			_ = handle.cancel_token().cancelled() => break,
-			_ = tokio::time::sleep(reste.min(SONDE)) => {}
+			_ = tokio::time::sleep(remaining.min(POLL_STEP)) => {}
 		}
 	}
 
 	// Le verrou rendu avant la ligne de carnet : le compte qui suit est celui
 	// qui reste, donc celui qui dit si la caméra va vraiment se rendormir.
-	drop(verrou);
-	let verrous_restants = handle.wake_lock().count();
-	match vue {
-		Some(quand) => tracing::debug!("interrogation : verrou rendu apres {} ms camera={} (session vue a {} ms) verrous={}",
-			duree_ms(debut, tokio::time::Instant::now()),
-			nom,
-			duree_ms(debut, quand),
-			verrous_restants),
-		None => tracing::debug!("interrogation : aucune session apres {} ms camera={} verrous={} — rien interroge, la voie lente garde la main"
-			, duree_ms(debut, tokio::time::Instant::now()), nom, verrous_restants),
+	drop(wake_guard);
+	let locks_left = handle.wake_lock().count();
+	match seen {
+		Some(at) => tracing::debug!("poll: lock released after {} ms cam={} (session seen at {} ms) locks={}",
+			elapsed_ms(start, tokio::time::Instant::now()),
+			cam,
+			elapsed_ms(start, at),
+			locks_left),
+		None => tracing::debug!("poll: no session after {} ms cam={} locks={} — nothing polled, the slow path keeps the lane"
+			, elapsed_ms(start, tokio::time::Instant::now()), cam, locks_left),
 	}
 }
 
 /// Millisecondes écoulées entre deux instants, pour les lignes du carnet.
-fn duree_ms(debut: Instant, maintenant: Instant) -> u128 {
-	maintenant.saturating_duration_since(debut).as_millis()
+fn elapsed_ms(start: Instant, now: Instant) -> u128 {
+	now.saturating_duration_since(start).as_millis()
 }
 
 #[cfg(test)]
@@ -227,51 +227,51 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn la_premiere_demande_passe_toujours() {
-		let garde = Guard::nouvelle();
-		assert!(garde.reserver(Duration::from_secs(30), Instant::now()));
+	fn the_first_request_always_passes() {
+		let guard = Guard::new();
+		assert!(guard.reserve(Duration::from_secs(30), Instant::now()));
 	}
 
 	#[test]
-	fn une_seule_interrogation_a_la_fois() {
+	fn only_one_poll_at_a_time() {
 		// La seconde demande tombe pendant que la première tient le verrou :
 		// refusée, sans même regarder l'intervalle.
-		let garde = Guard::nouvelle();
-		let maintenant = Instant::now();
-		assert!(garde.reserver(Duration::from_secs(30), maintenant));
+		let guard = Guard::new();
+		let now = Instant::now();
+		assert!(guard.reserve(Duration::from_secs(30), now));
 		assert!(
-			!garde.reserver(Duration::from_secs(0), maintenant),
-			"une interrogation en cours bloque la suivante, intervalle nul ou non"
+			!guard.reserve(Duration::from_secs(0), now),
+			"a poll in flight blocks the next one, zero interval or not"
 		);
 	}
 
 	#[test]
-	fn l_intervalle_ne_punit_qu_une_session_obtenue() {
+	fn the_interval_only_punishes_a_won_session() {
 		// Le coeur de la politique : une tentative qui n'a pas eu de session
 		// n'écrit rien, la prochaine annonce de réveil repart donc.
-		let garde = Guard::nouvelle();
-		let maintenant = Instant::now();
-		assert!(garde.reserver(Duration::from_secs(30), maintenant));
-		garde.rendre();
+		let guard = Guard::new();
+		let now = Instant::now();
+		assert!(guard.reserve(Duration::from_secs(30), now));
+		guard.release();
 		assert!(
-			garde.reserver(Duration::from_secs(30), maintenant + Duration::from_secs(2)),
-			"rien n'a ete paye : rien n'est interdit"
+			guard.reserve(Duration::from_secs(30), now + Duration::from_secs(2)),
+			"nothing was paid for, so nothing is forbidden"
 		);
-		garde.rendre();
+		guard.release();
 		// Là, la session est venue : l'intervalle s'applique.
-		garde.marquer_payee(maintenant + Duration::from_secs(4));
-		assert!(!garde.reserver(Duration::from_secs(30), maintenant + Duration::from_secs(10)));
-		assert!(garde.reserver(Duration::from_secs(30), maintenant + Duration::from_secs(35)));
+		guard.mark_paid(now + Duration::from_secs(4));
+		assert!(!guard.reserve(Duration::from_secs(30), now + Duration::from_secs(10)));
+		assert!(guard.reserve(Duration::from_secs(30), now + Duration::from_secs(35)));
 	}
 
 	#[test]
-	fn un_refus_sur_intervalle_ne_consomme_rien() {
+	fn an_interval_refusal_costs_nothing() {
 		// Un refus ne doit pas repousser la date de la prochaine tentative
 		// autorisée : sinon une annonce de bruit en ferait rater une bonne.
-		let garde = Guard::nouvelle();
-		let maintenant = Instant::now();
-		garde.marquer_payee(maintenant);
-		assert!(!garde.reserver(Duration::from_secs(30), maintenant + Duration::from_secs(1)));
-		assert!(garde.reserver(Duration::from_secs(30), maintenant + Duration::from_secs(31)));
+		let guard = Guard::new();
+		let now = Instant::now();
+		guard.mark_paid(now);
+		assert!(!guard.reserve(Duration::from_secs(30), now + Duration::from_secs(1)));
+		assert!(guard.reserve(Duration::from_secs(30), now + Duration::from_secs(31)));
 	}
 }
