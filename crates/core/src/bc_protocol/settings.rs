@@ -1,30 +1,30 @@
-//! Les réglages de la caméra, bloc par bloc — `docs/protocole-reglages.md`
-//! est le cahier des charges de ce module.
+//! The camera's settings, block by block — `docs/protocole-reglages.md`
+//! is this module's specification.
 //!
-//! Chaque famille suit la même loi, héritée de la lecture de la lib de
-//! référence (`Api.ts` : `setAudioCfg`, `setImage`, `setMask`, `setNtp`,
-//! `setDst`, `setAutoReboot`…) et rappelée au §1 du doc :
+//! Every family follows the same law, taken from reading the reference
+//! library (`Api.ts`: `setAudioCfg`, `setImage`, `setMask`, `setNtp`,
+//! `setDst`, `setAutoReboot`…) and recalled in §1 of that document:
 //!
-//! 1. **Le SET est la réponse de la GET patchée.** Toutes les balises que la
-//!    caméra a imprimées repartent ; on ne touche que celles venues changer.
-//!    Le firmware « rejette (ou annule silencieusement) un bloc qui omet des
-//!    champs qu'il a envoyés » — un `Ok(())` sur un bloc amputé est donc un
-//!    **faux succès**, pire qu'une erreur.
-//! 2. **Une balise que la caméra n'a jamais imprimée n'est pas inventée.**
-//!    C'est pour ça que tous les champs sont `Option` avec
-//!    `skip_serializing_if` : une caméra sans interphone n'est pas poussée à
-//!    croire qu'elle en a un.
-//! 3. **Les valeurs restent du texte caméra.** Un réglage qui repasse par un
-//!    entier peut revenir formaté autrement (`01`, `+01`) ; le texte, lui,
-//!    round-trip à l'octet près.
-//! 4. **Toute écriture est suivie d'une relecture**, et c'est la relecture
-//!    qui est retournée — jamais la valeur demandée. Un `SET` acquitté en 200
-//!    n'est pas la preuve que la valeur est stockée.
+//! 1. **The SET is the patched answer of the GET.** Every tag the
+//!    camera printed goes back out; only the ones that changed are touched.
+//!    The firmware "rejects (or silently cancels) a block that omits
+//!    fields it sent itself" — an `Ok(())` on an amputated block is therefore a
+//!    **false success**, worse than an error.
+//! 2. **A tag the camera never printed is not invented.**
+//!    That is why every field is an `Option` with
+//!    `skip_serializing_if`: a camera with no intercom is not pushed into
+//!    believing it has one.
+//! 3. **Values stay camera-side text.** A setting that passes back through an
+//!    integer may come out formatted differently (`01`, `+01`); text,
+//!    on the contrary, round-trips to the byte.
+//! 4. **Every write is followed by a re-read**, and it is the re-read
+//!    that is returned — never the requested value. A `SET` acked with 200
+//!    is not proof that the value was stored.
 //!
-//! Pas de garde d'aptitude ici, volontairement (comme pour la famille carillon) :
-//! le `abilityInfo` de ce firmware **sous-déclare** — la même famille répond
-//! `405` sur `<HaCfg>` tout en acceptant `<Email>`. Une aptitude absente ne dit
-//! rien de ce que la commande renvoie ; seule la caméra fait foi.
+//! No ability guard here, deliberately (as for the chime family): this firmware's
+//! `abilityInfo` **under-declares** — the same family answers
+//! `405` on `<HaCfg>` while accepting `<Email>`. An absent ability says
+//! nothing about what the command returns; only the camera is evidence.
 
 use std::sync::Arc;
 
@@ -39,48 +39,48 @@ use crate::bc_protocol::connection::mock::{
 	reply_200_empty, reply_200_xml, reply_err_code, inspect_xml, MockConnection,
 };
 
-/// Les deux blocs que la réponse image (26) apporte ensemble, et que le
-/// setter 25 redemande ensemble : écrire `bright` sans renvoyer
-/// `<InputAdvanceCfg>` est l'amputation que le firmware avale en silence.
+/// The two blocks the image answer (26) brings together, and that setter
+/// 25 asks for together: writing `bright` without sending `<InputAdvanceCfg>`
+/// back is the amputation the firmware swallows in silence.
 #[derive(PartialEq, Eq, Default, Debug, Clone, Serialize)]
 pub struct ImageCfg {
-	/// `<VideoInput>` : les cinq curseurs 0-255 et le jour/nuit.
+	/// `<VideoInput>`: the five 0-255 sliders and day/night.
 	pub video_input: VideoInput,
-	/// `<InputAdvanceCfg>` : exposition, scène, fréquence secteur. `None`
-	/// quand la caméra n'a imprimé que `<VideoInput>` — auquel cas seul ce
-	/// bloc repart au 25.
+	/// `<InputAdvanceCfg>`: exposure, scene, mains frequency. `None`
+	/// when the camera only printed `<VideoInput>` — in which case only that
+/// block goes back to the 25.
 	pub advance: Option<InputAdvanceCfg>,
 }
 
-/// Les deux blocs que la réponse OSD (44) apporte ensemble, et que le setter
-/// 45 redemande ensemble.
+/// The two blocks the OSD answer (44) brings together, and that the setter
+/// 45 asks for together.
 #[derive(PartialEq, Eq, Default, Debug, Clone, Serialize)]
 pub struct OsdCfg {
-	/// `<OsdDatetime>` : l'horodatage à l'écran.
+	/// `<OsdDatetime>`: the timestamp on screen.
 	pub datetime: OsdDatetime,
-	/// `<OsdChannelName>` : le nom à l'écran et son filigrane.
+	/// `<OsdChannelName>`: the name on screen and its watermark.
 	pub channel_name: Option<OsdChannelName>,
 }
 
-/// Le bloc détection de mouvement, sous **la forme que la caméra a imprimée**.
+/// The motion-detection block, in **the shape the camera printed**.
 ///
-/// Le doc (§4.1) documente une GET 46 en `<MdAlarm>` et un SET 47 en
-/// `<MD version="1.1">`. Les deux existent ; une firmware donnée imprime
-/// l'une ou l'autre. On ne peut patcher et renvoyer **que** ce qu'elle a
-/// imprimé : `<MdAlarm>` possède des « champs libres » que personne n'a
-/// énumérés, donc le reconstruire amputerait le bloc — d'où le refus de
-/// [`set_motion_cfg`](Self::set_motion_cfg), qui rend l'écriture refusée au
-/// lieu de la rendre faussement réussie.
+/// The document (§4.1) describes a GET 46 as `<MdAlarm>` and a SET 47 as
+/// `<MD version="1.1">`. Both exist; a given firmware prints
+/// one or the other. One can only patch and send back **what** it
+/// printed: `<MdAlarm>` has "free fields" nobody has
+/// enumerated, so rebuilding it would amputate the block — hence the refusal of
+/// [`set_motion_cfg`](Self::set_motion_cfg), which returns the write refused
+/// instead of returning it falsely successful.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum MotionCfg {
-	/// La forme du setter 47 : écriture possible.
+	/// The shape of setter 47: writing is possible.
 	Md(MdCfg),
-	/// La forme plate du getter 46 : lecture seule.
+	/// The flat shape of getter 46: read-only.
 	MdAlarm(MdAlarm),
 }
 
 impl MotionCfg {
-	/// L'état d'activation tel que la caméra l'a imprimé.
+	/// The activation state as the camera printed it.
 	pub fn enable(&self) -> Option<&str> {
 		match self {
 			MotionCfg::Md(m) => m.enable.as_deref(),
@@ -88,8 +88,8 @@ impl MotionCfg {
 		}
 	}
 
-	/// La sensibilité telle que la caméra l'a imprimée (0-50, plus haut =
-	/// plus sensible, sur les firmwares qui documentent une plage).
+	/// The sensitivity as the camera printed it (0-50, higher =
+	/// more sensitive, on firmwares that document a range).
 	pub fn sensitivity(&self) -> Option<&str> {
 		match self {
 			MotionCfg::Md(m) => m.sensitivity_default.as_deref(),
@@ -100,7 +100,7 @@ impl MotionCfg {
 		}
 	}
 
-	/// Patche l'activation en place, sur le porteur lu.
+	/// Patches the activation in place, on the carrier that was read.
 	pub fn set_enable(&mut self, value: impl Into<String>) {
 		let value = Some(value.into());
 		match self {
@@ -113,7 +113,7 @@ impl MotionCfg {
 		}
 	}
 
-	/// Patche la sensibilité en place, sur le porteur lu.
+	/// Patches the sensitivity in place, on the carrier that was read.
 	pub fn set_sensitivity(&mut self, value: impl Into<String>) {
 		let value = Some(value.into());
 		match self {
@@ -128,27 +128,27 @@ impl MotionCfg {
 }
 
 impl BcCamera {
-	// ── Plomberie partagée ──────────────────────────────────────────────
+	// ── Shared plumbing ─────────────────────────────────────────────────
 
-	/// GET d'un bloc de réglages : corps vide (le doc note « aucune requête »
-	/// pour ces familles), un aller simple, et un non-200 qui devient
-	/// [`Error::CameraRefused`] — « la caméra refuse cette commande » n'est
-	/// jamais « le réglage est vide ». La variante, et non le jumeau sans texte,
-	/// parce que ce refus-là arrive **avec** une réponse de la caméra : c'est la
-	/// seule fois où le dialecte explique son non.
+	/// GET of a settings block: empty body (the document notes "no request"
+	/// for these families), a one-way trip, and a non-200 that becomes
+	/// [`Error::CameraRefused`] — "the camera refuses this command" is
+	/// never "the setting is empty". The variant, and not its textless twin,
+	/// because that refusal arrives **with** an answer from the camera: it is the
+	/// one time the dialect explains its no.
 	async fn raw_get(&self, msg_id: u32) -> Result<Bc> {
 		let connection = self.get_connection();
 		let msg_num = self.new_message_num();
 		let mut sub = connection.subscribe(msg_id, msg_num).await?;
-		// La forme de la demande n'est plus uniforme : voir
-		// [`forme_de_trame`], mesurée à la sonde MQTT le 13/11 sur cette
-		// sonnette. Quatre lectures changeaient d'avis rien qu'en ajoutant
-		// l'extension qui nomme le channel.
-		let (canal_entete, canal_extension) = frame_shape(msg_id, self.channel_id);
+		// The shape of the request is no longer uniform: see
+		// [`frame_shape`], measured with the MQTT probe on 13/11 on this
+		// doorbell. Four reads changed their mind just from adding
+		// the extension that names the channel.
+		let (header_channel, canal_extension) = frame_shape(msg_id, self.channel_id);
 		let req = Bc {
 			meta: BcMeta {
 				msg_id,
-				channel_id: canal_entete,
+				channel_id: header_channel,
 				msg_num,
 				response_code: 0,
 				stream_type: 0,
@@ -166,17 +166,17 @@ impl BcCamera {
 		sub.send(req).await?;
 		let msg = sub.recv().await?;
 		if msg.meta.response_code != 200 {
-			// Le refus passe par ici, et le corps que la caméra a écrit **en
-			// réponse au refus** repartait dans le vide : `CameraServiceUnavailable`
-			// ne porte que le code. Sur cette sonnette, quatre familles meurent
-			// à cette ligne et personne n'a jamais lu ce qu'elles reçoivent en
-			// retour — mesuré le 13/11, après installation d'un récepteur `log`
-			// qui a révélé que le pont n'en imprimait aucun.
+			// The refusal comes through here, and the body the camera wrote **in
+			// answer to the refusal** went back into the void: `CameraServiceUnavailable`
+			// carries only the code. On this doorbell, four families die
+			// at this line and nobody had ever read what they get
+			// back — measured on 13/11, after installing a `log` receiver
+			// which revealed that the bridge printed none of it.
 			//
-			// Une ligne par refus, au niveau `warn` : c'est le seul indice qui
-			// distingue « forme de requête mauvaise » de « famille absente de ce
-			// firmware » de « caméra pas wakelée ». Le texte est celui que la
-			// caméra a envoyé, pas une paraphrase.
+			// One line per refusal, at `warn` level: it is the only clue that
+			// distinguishes "wrong request shape" from "family absent from this
+			// firmware" from "camera not woken up". The text is the one the
+			// camera sent, not a paraphrase.
 			let returned = match &msg.body {
 				BcBody::ModernMsg(moderne) => {
 					let extension = moderne
@@ -187,21 +187,21 @@ impl BcCamera {
 					let body = match &moderne.payload {
 						Some(BcPayloads::BcXml(bloc)) => text_xml(bloc),
 						Some(BcPayloads::Binary(bytes)) => format!("<{} octets>", bytes.len()),
-						None => "<pas de corps>".to_string(),
+						None => "<no body>".to_string(),
 					};
 					format!("{extension} {body}")
 				}
 				other => format!("{other:?}"),
 			};
 			log::warn!(
-				"msg {} refusé en {} — réponse de la caméra : {}",
+				"msg {} refused in {} — camera answer: {}",
 				msg.meta.msg_id,
 				msg.meta.response_code,
 				cut(&returned, 400)
 			);
-			// Le texte voyage avec l'erreur, et pas seulement dans le journal :
-			// c'est lui que l'opératrice lira sur `status/<famille>/reason`,
-			// nettoyé et borné une seconde fois plus haut par `publishable_reason`.
+			// The text travels with the error, and not only in the log:
+			// it is what the operator will read on `status/<family>/reason`,
+			// cleaned and bounded a second time further up by `publishable_reason`.
 			return Err(Error::CameraRefused {
 				id: msg.meta.msg_id,
 				code: msg.meta.response_code,
@@ -211,33 +211,33 @@ impl BcCamera {
 		Ok(msg)
 	}
 
-	// ── La sonde à 400 ──────────────────────────────────────────────────
+	// ── The 400 probe ───────────────────────────────────────────────────
 
-	/// Demande de lecture **fabriquée à la main**, pour l'expertise des `400`.
+	/// A read request **hand-built**, for the forensics of the `400`s.
 	///
-	/// [`raw_get`](Self::raw_get) n'a qu'une forme : en-tête de 24
-	/// octets, ni extension ni corps. Quand une famille refuse, cette forme
-	/// unique est la seule variable qu'on ait jamais variée — c'est-à-dire
-	/// aucune. Cette sonde varie précisément ce qui n'a jamais dst mesuré :
+	/// [`raw_get`](Self::raw_get) has one shape only: a 24-byte
+	/// header, no extension and no body. When a family refuses, that single
+	/// shape is the only variable we ever varied — that is to say
+	/// none. This probe varies precisely what had never been measured:
 	///
 	/// * [`RawRequest::extension_channel`] — `<Extension><channelId>0</channelId></Extension>`,
-	///   la forme qu'envoient **toutes** les commandes que cette caméra sert
-	///   (audio 264, PIR 212, carillon, AbilityInfo 151) et qu'aucune des
+	///   the shape **every** command this camera serves sends
+	///   (audio 264, PIR 212, chime, AbilityInfo 151) and that none of the
 	///   quatre familles en 400 n'envoie ;
-	/// * [`RawRequest::extension_rf`] — `<rfId>`, l'autre adressage connu de
-	///   ce firmware (celui du PIR) ;
-	/// * [`RawRequest::corps`] — un corps qui **nomme le bloc demandé**, la
-	///   forme que la doc prête à d'autres firmwares ;
-	/// * [`RawRequest::canal_entete`] — l'octet 12 de l'en-tête, pour les
+	/// * [`RawRequest::extension_rf`] — `<rfId>`, the other addressing this
+	///   firmware knows (the PIR's);
+	/// * [`RawRequest::body`] — a body that **names the block asked for**, the
+	///   shape the documentation attributes to other firmwares;
+	/// * [`RawRequest::header_channel`] — byte 12 of the header, for the
 	///   variantes NVR.
 	///
-	/// Le corps passe par [`BcXml`], donc par le chiffrement normal : une
-	/// variante envoyée en `BcPayloads::Binary` partirait **en clair**
-	/// (`bc::ser::bc_payload_bytes` ne chiffre que les payloads XML) et
-	/// confondrait « mauvaise forme de requête » et « corps non chiffré ».
+	/// The body goes through [`BcXml`], therefore through the normal encryption: a
+	/// variant sent as `BcPayloads::Binary` would leave **in clear**
+	/// (`bc::ser::bc_payload_bytes` only encrypts XML payloads) and
+	/// would confuse "wrong request shape" with "unencrypted body".
 	///
-	/// Rien ici ne re-tente ni ne juge : la sonde rend le code et ce que la
-	/// caméra a écrit, et c'est à l'opératrice de lire.
+	/// Nothing here retries or judges: the probe returns the code and what the
+	/// camera wrote, and it is the operator who reads.
 	pub async fn raw_exchange(&self, msg_id: u32, d: RawRequest) -> Result<RawResponse> {
 		let connection = self.get_connection();
 		let msg_num = self.new_message_num();
@@ -247,11 +247,11 @@ impl BcCamera {
 		ext.rf_id = d.extension_rf;
 		let meta = BcMeta {
 			msg_id,
-			channel_id: d.canal_entete.unwrap_or(self.channel_id),
+			channel_id: d.header_channel.unwrap_or(self.channel_id),
 			msg_num,
 			response_code: 0,
 			stream_type: 0,
-			class: d.classe.unwrap_or(0x6414),
+			class: d.header_class.unwrap_or(0x6414),
 		};
 		let req = match (ext.channel_id.is_some() || ext.rf_id.is_some(), d.body) {
 			(true, Some(xml)) => Bc::new_from_ext_xml(meta, ext, xml),
@@ -284,9 +284,9 @@ impl BcCamera {
 		Ok(brut)
 	}
 
-	/// Sort le bloc demandé d'une réponse. Le `Bc` est rendu tel quel quand il
-	/// n'y est pas, pour que l'appelant l'utilise comme ancre d'erreur sans
-	/// avoir à le cloner.
+	/// Pulls the requested block out of an answer. The `Bc` is returned as is when the
+	/// block is not in it, so the caller can use it as an error anchor without
+	/// having to clone it.
 	fn settings_block<T>(
 		msg: Bc,
 		extract: impl FnOnce(&BcXml) -> Option<T>,
@@ -303,21 +303,21 @@ impl BcCamera {
 		}
 	}
 
-	/// SET d'un bloc de réglages, avec la quirk « certaines firmwares ne
-	/// répondent pas sur les SET » : un non-200 est un refus, l'absence de
-	/// réponse dans la fenêtre est un succès **à vérifier par la relecture**
-	/// que l'appelant fait juste après.
+	/// SET of a settings block, with the quirk "some firmwares do not
+	/// answer SETs": a non-200 is a refusal, the absence of an
+	/// answer inside the window is a success **to be verified by the re-read**
+	/// the caller performs right after.
 	async fn raw_set(&self, msg_id: u32, xml: BcXml) -> Result<()> {
 		let connection = self.get_connection();
 		let msg_num = self.new_message_num();
 		let mut sub = connection.subscribe(msg_id, msg_num).await?;
-		// Même règle que la lecture ([`forme_de_trame`]) : le SET partait avec
-		// la trame d'avant et la caméra répondait `400`, mesuré le 13/11 au
-		// soir en basculant la détection de mouvement depuis Home Assistant.
-		let (canal_entete, canal_extension) = frame_shape(msg_id, self.channel_id);
+		// Same rule as for the read ([`frame_shape`]): the SET left with
+		// the previous frame and the camera answered `400`, measured on 13/11 in
+		// the evening by toggling motion detection from Home Assistant.
+		let (header_channel, canal_extension) = frame_shape(msg_id, self.channel_id);
 		let meta = BcMeta {
 			msg_id,
-			channel_id: canal_entete,
+			channel_id: header_channel,
 			msg_num,
 			response_code: 0,
 			stream_type: 0,
@@ -337,7 +337,7 @@ impl BcCamera {
 
 	// ── NTP (38 / 39) ───────────────────────────────────────────────────
 
-	/// Lit `<Ntp>` (msg 38) : activation, serveur, port et période de
+	/// Reads `<Ntp>` (msg 38): activation, server, port and sync period.
 	/// resynchronisation **en minutes**.
 	pub async fn get_ntp(&self) -> Result<Ntp> {
 		let msg = self.raw_get(MSG_ID_GET_NTP).await?;
@@ -347,9 +347,9 @@ impl BcCamera {
 		})
 	}
 
-	/// Écrit `<Ntp>` (msg 39) puis relit le bloc (38) et renvoie **ce que la
-	/// caméra a stocké après**. `cfg` doit venir de [`get_ntp`](Self::get_ntp)
-	/// avec seulement les balises voulues touchées.
+	/// Writes `<Ntp>` (msg 39) then re-reads the block (38) and returns **what the
+	/// camera stored afterwards**. `cfg` must come from [`get_ntp`](Self::get_ntp)
+	/// with only the intended tags touched.
 	pub async fn set_ntp(&self, cfg: &Ntp) -> Result<Ntp> {
 		self.raw_set(
 			MSG_ID_SET_NTP,
@@ -362,10 +362,10 @@ impl BcCamera {
 		self.get_ntp().await
 	}
 
-	// ── Redémarrage automatique (101 / 100) ─────────────────────────────
+	// ── Automatic reboot (101 / 100) ────────────────────────────────────
 
-	/// Lit `<AutoReboot>` (msg 101). Attention à l'asymétrie des ids : ici le
-	/// setter est le plus **petit** des deux.
+	/// Reads `<AutoReboot>` (msg 101). Mind the asymmetry of the ids: here the
+	/// setter is the **smaller** of the two.
 	pub async fn get_auto_reboot(&self) -> Result<AutoReboot> {
 		let msg = self.raw_get(MSG_ID_GET_AUTO_REBOOT).await?;
 		Self::settings_block(msg, |xml| xml.auto_reboot.clone())
@@ -375,9 +375,9 @@ impl BcCamera {
 			})
 	}
 
-	/// Écrit `<AutoReboot>` (msg 100) puis relit (101). Un `weekDay` hors de
-	/// `Sunday`…`Saturday` / `everyday` n'est pas validé ici : c'est le texte
-	/// que la caméra a imprimé qui repart, et c'est elle qui tranche.
+	/// Writes `<AutoReboot>` (msg 100) then re-reads (101). A `weekDay` outside
+	/// `Sunday`…`Saturday` / `everyday` is not validated here: it is the text
+	/// the camera printed that goes back, and it is the camera that decides.
 	pub async fn set_auto_reboot(&self, cfg: &AutoReboot) -> Result<AutoReboot> {
 		self.raw_set(
 			MSG_ID_SET_AUTO_REBOOT,
@@ -390,11 +390,11 @@ impl BcCamera {
 		self.get_auto_reboot().await
 	}
 
-	// ── Débruitage du micro (439 / 440) ─────────────────────────────────
+	// ── Microphone denoise (439 / 440) ──────────────────────────────────
 
-	/// Lit `<aiDenoise>` (msg 439) : activation et force `1`-`100` du
-	/// débruiteur appliqué au micro. Le protocole n'a **aucun** gain micro ni
-	/// coupure micro ; c'est ce qui s'en rapproche le plus.
+	/// Reads `<aiDenoise>` (msg 439): activation and `1`-`100` force of the
+	/// denoiser applied to the microphone. The protocol has **no** microphone gain nor
+	/// microphone mute; this is the closest thing to it.
 	pub async fn get_ai_denoise(&self) -> Result<AiDenoise> {
 		let msg = self.raw_get(MSG_ID_GET_AI_DENOISE).await?;
 		Self::settings_block(msg, |xml| xml.ai_denoise.clone())
@@ -404,9 +404,9 @@ impl BcCamera {
 			})
 	}
 
-	/// Écrit `<aiDenoise>` (msg 440) puis relit (439). La casse de l'attribut
-	/// de version repart telle qu'elle est arrivée — `Version` majuscule comme
-	/// le documente la lib de référence, ou `version` minuscule.
+	/// Writes `<aiDenoise>` (msg 440) then re-reads (439). The case of the version
+	/// attribute goes back as it arrived — capital `Version` as the reference
+	/// library documents it, or lowercase `version`.
 	pub async fn set_ai_denoise(&self, cfg: &AiDenoise) -> Result<AiDenoise> {
 		self.raw_set(
 			MSG_ID_SET_AI_DENOISE,
@@ -419,13 +419,13 @@ impl BcCamera {
 		self.get_ai_denoise().await
 	}
 
-	// ── Veille (574) et signal Wi-Fi (115) — lecture seule ──────────────
+	// ── Sleep (574) and Wi-Fi signal (115) — read-only ──────────────────
 
-	/// Lit `<sleepState>` (msg 574) : la caméra sur battery dort-elle ?
+	/// Reads `<sleepState>` (msg 574): is the battery camera asleep?
 	///
-	/// Verdict seule : aucun setter n'est documenté, et endormir un appareil
-	/// sur battery par une écriture de réglage n'est pas le rôle de ce pont.
-	/// C'est aussi la seule façon de le savoir **sans le wakeler**.
+	/// Read-only verdict: no setter is documented, and putting a battery device
+	/// to sleep through a settings write is not this bridge's role.
+	/// It is also the only way to know **without waking it up**.
 	pub async fn get_sleep_state(&self) -> Result<SleepState> {
 		let msg = self.raw_get(MSG_ID_GET_SLEEP_STATE).await?;
 		Self::settings_block(msg, |xml| xml.sleep_state.clone())
@@ -435,12 +435,12 @@ impl BcCamera {
 			})
 	}
 
-	/// Lit `<WifiSignal>` (msg 115). L'unité de `<signal>` n'est documentée
-	/// nulle part (dBm ou %), donc le texte est relayé tel quel et aucune
-	/// unité n'est revendiquée vers Home Assistant.
+	/// Reads `<WifiSignal>` (msg 115). The unit of `<signal>` is documented
+	/// nowhere (dBm or %), so the text is relayed as is and no
+	/// unit is claimed towards Home Assistant.
 	///
-	/// `<Wifi>` (116) n'est **pas** exposé : le firmware peut y renvoyer la
-	/// clé du point d'accès, et un état MQTT est lisible par tout le broker.
+	/// `<Wifi>` (116) is **not** exposed: the firmware may return the access
+	/// point's key in it, and an MQTT state is readable by the whole broker.
 	pub async fn get_wifi_signal(&self) -> Result<WifiSignal> {
 		let msg = self.raw_get(MSG_ID_GET_WIFI_SIGNAL).await?;
 		Self::settings_block(msg, |xml| xml.wifi_signal.clone())
@@ -452,12 +452,12 @@ impl BcCamera {
 
 	// ── Image (26 / 25) ─────────────────────────────────────────────────
 
-	/// Lit les blocs image (msg 26) : `<VideoInput>` et, le plus souvent dans
-	/// la même réponse, `<InputAdvanceCfg>`.
+	/// Reads the image blocks (msg 26): `<VideoInput>` and, most often in
+	/// the same answer, `<InputAdvanceCfg>`.
 	///
-	/// Une réponse 200 qui n'apporte **aucun** des deux est
-	/// [`Error::UnintelligibleReply`] : « la caméra n'a rien dit » ne doit
-	/// jamais se lire comme « les curseurs sont à zéro ».
+	/// A 200 answer that brings **neither** of the two is
+	/// [`Error::UnintelligibleReply`]: "the camera said nothing" must
+	/// never be read as "the sliders are at zero".
 	pub async fn get_image_cfg(&self) -> Result<ImageCfg> {
 		let msg = self.raw_get(MSG_ID_GET_IMAGE).await?;
 		let (video_input, advance) = match &msg.body {
@@ -476,8 +476,8 @@ impl BcCamera {
 		})
 	}
 
-	/// Écrit les blocs image (msg 25) — **les deux**, puis relit (26) et
-	/// renvoie la relecture.
+	/// Writes the image blocks (msg 25) — **both of them**, then re-reads (26) and
+	/// returns the re-read.
 	pub async fn set_image_cfg(&self, cfg: &ImageCfg) -> Result<ImageCfg> {
 		self.raw_set(
 			MSG_ID_SET_IMAGE,
@@ -493,11 +493,11 @@ impl BcCamera {
 
 	// ── OSD (44 / 45) ───────────────────────────────────────────────────
 
-	/// Lit les blocs OSD (msg 44) : `<OsdDatetime>` et `<OsdChannelName>`.
+	/// Reads the OSD blocks (msg 44): `<OsdDatetime>` and `<OsdChannelName>`.
 	///
-	/// L'OSD n'existe **que** là : le bug historique de la lib de référence
-	/// (lire l'OSD sur le 26, écrire `<Osd>` sur le 25) produisait des écritures
-	/// jamais appliquées — il n'est pas rejoué ici.
+	/// The OSD exists **only** there: the reference library's historical bug
+	/// (reading the OSD on 26, writing `<Osd>` on 25) produced writes
+	/// that were never applied — it is not replayed here.
 	pub async fn get_osd_cfg(&self) -> Result<OsdCfg> {
 		let msg = self.raw_get(MSG_ID_GET_OSD).await?;
 		let (datetime, channel_name) = match &msg.body {
@@ -516,9 +516,9 @@ impl BcCamera {
 		})
 	}
 
-	/// Écrit les blocs OSD (msg 45), les deux ensemble, puis relit (44).
-	/// `<topLeftX>`/`<topLeftY>` sont des 16.16 normalisés : ils repartent
-	/// comme ils sont arrivés, jamais recalculés.
+	/// Writes the OSD blocks (msg 45), the two together, then re-reads (44).
+	/// `<topLeftX>`/`<topLeftY>` are normalised 16.16 values: they go back
+	/// as they arrived, never recomputed.
 	pub async fn set_osd_cfg(&self, cfg: &OsdCfg) -> Result<OsdCfg> {
 		self.raw_set(
 			MSG_ID_SET_OSD,
@@ -532,11 +532,11 @@ impl BcCamera {
 		self.get_osd_cfg().await
 	}
 
-	// ── Détection de mouvement (46 / 47) ────────────────────────────────
+	// ── Motion detection (46 / 47) ──────────────────────────────────────
 
-	/// Lit la détection de mouvement (msg 46), sous la forme que la caméra a
-	/// imprimée : [`MotionCfg::Md`] si elle a répondu `<MD>`,
-	/// [`MotionCfg::MdAlarm`] si elle a répondu `<MdAlarm>`.
+	/// Reads motion detection (msg 46), in the shape the camera
+	/// printed: [`MotionCfg::Md`] if it answered `<MD>`,
+	/// [`MotionCfg::MdAlarm`] if it answered `<MdAlarm>`.
 	pub async fn get_motion_cfg(&self) -> Result<MotionCfg> {
 		let msg = self.raw_get(MSG_ID_GET_MOTION_DETECT).await?;
 		let (md, md_alarm) = match &msg.body {
@@ -558,12 +558,12 @@ impl BcCamera {
 		})
 	}
 
-	/// Écrit la détection de mouvement (msg 47) puis relit (46).
+	/// Writes motion detection (msg 47) then re-reads (46).
 	///
-	/// N'écrit que le porteur `<MD>` : c'est la forme que le setter documente.
-	/// Sur un porteur `<MdAlarm>`, renvoie [`Error::Usage`] **sans envoyer une
-	/// octave** — reconstruire ce bloc dropperait ses « champs libres », et le
-	/// firmware encaisserait ça en silence.
+	/// Only writes the `<MD>` carrier: that is the shape the setter documents.
+	/// On a `<MdAlarm>` carrier, returns [`Error::Usage`] **without sending an
+	/// octet of radio** — rebuilding that block would drop its "free fields", and the
+	/// firmware would take that in silence.
 	pub async fn set_motion_cfg(&self, cfg: &MotionCfg) -> Result<MotionCfg> {
 		match cfg {
 			MotionCfg::Md(m) => {
@@ -585,16 +585,16 @@ impl BcCamera {
 		}
 	}
 
-	// ── Masques de confidentialité (52) — lecture seule ─────────────────
+	// ── Privacy masks (52) — read-only ──────────────────────────────────
 
-	/// Lit `<Shelter>` (msg 52) : l'activation du masquage et le nombre
-	/// d'emplacements que le modèle offre.
+	/// Reads `<Shelter>` (msg 52): whether masking is on and how many
+	/// slots the model offers.
 	///
-	/// **Pas de setter 53** : les balises enfants de `shelterList` (et le
-	/// codage `pixel << 16 | canvas` des coordonnées) n'ont aucune capture
-	/// locale, et renvoyer un `<Shelter>` amputé de ses masques est précisément
-	/// l'écriture que le firmware avale sans rien dire. Le refus est donc dans
-	/// la conception, pas dans l'appel.
+	/// **No setter 53**: the child tags of `shelterList` (and the
+	/// `pixel << 16 | canvas` encoding of the coordinates) have no local
+	/// capture, and returning a `<Shelter>` amputated of its masks is exactly the
+	/// write the firmware swallows without a word. The refusal is therefore in
+	/// the design, not in the call.
 	pub async fn get_privacy_masks(&self) -> Result<Shelter> {
 		let msg = self.raw_get(MSG_ID_GET_PRIVACY_MASK).await?;
 		Self::settings_block(msg, |xml| xml.shelter.clone())
@@ -604,13 +604,13 @@ impl BcCamera {
 			})
 	}
 
-	// ── Heure d'dst (106 / 107) ─────────────────────────────────────────
+	// ── Daylight saving (106 / 107) ─────────────────────────────────────
 
-	/// Écrit `<Dst>` (msg 107) puis relit (106) et renvoie la relecture.
+	/// Writes `<Dst>` (msg 107) then re-reads (106) and returns the re-read.
 	///
-	/// `cfg` doit venir de [`get_dst`](Self::get_dst) : le calendrier
-	/// (`startMonth`, `startWeekIndex`, `startWeekday`, …) repart intact, seule
-	/// la balise touchée change.
+	/// `cfg` must come from [`get_dst`](Self::get_dst): the calendar
+/// (`startMonth`, `startWeekIndex`, `startWeekday`, …) goes back intact, only
+/// the touched tag changes.
 	pub async fn set_dst(&self, cfg: &Dst) -> Result<Dst> {
 		self.raw_set(
 			MSG_ID_SET_DST,
@@ -623,14 +623,14 @@ impl BcCamera {
 		self.get_dst().await
 	}
 
-	// ── Système (104 / 105) ─────────────────────────────────────────────
+	// ── System (104 / 105) ──────────────────────────────────────────────
 
 	/// Lit `<SystemGeneral>` (msg 104) : fuseau, formats d'affichage, langue,
-	/// nom système de l'appareil.
+	/// the device's system name.
 	///
-	/// Le nom système n'est **pas** le nom à l'écran
-	/// (`<OsdChannelName><name>`, msg 45) ni le nom MQTT de la caméra : ce sont
-	/// trois choses distinctes.
+	/// The system name is **not** the name on screen
+	/// (`<OsdChannelName><name>`, msg 45) nor the camera's MQTT name: those are
+	/// three different things.
 	pub async fn get_general(&self) -> Result<SystemGeneral> {
 		let msg = self.raw_get(MSG_ID_GET_GENERAL).await?;
 		Self::settings_block(msg, |xml| xml.system_general.clone())
@@ -640,19 +640,19 @@ impl BcCamera {
 			})
 	}
 
-	/// Écrit `<SystemGeneral>` (msg 105) **sans toucher l'horloge**, puis relit
-	/// (104) et renvoie la relecture.
+	/// Writes `<SystemGeneral>` (msg 105) **without touching the clock**, then re-reads
+	/// (104) and returns the re-read.
 	///
-	/// Deux marqueurs imposés par le firmware (`docs/protocole-reglages.md`
-	/// §6.2, payloads confirmés par pcap) sont posés ici et pas ailleurs :
+	/// Two markers imposed by the firmware (`docs/protocole-reglages.md`
+	/// §6.2, payloads confirmed by pcap) are set here and nowhere else:
 	///
-	/// * `<year>0</year>` = « ne pas recaler l'heure manuelle ». Sans lui la
-	///   caméra recale l'horloge sur les champs `year…second` du bloc, ce
-	///   qu'un changement de langue ou de nom n'a pas à faire.
-	/// * `<deviceNameOnly>1</deviceNameOnly>` = « seul le nom change », requis
-	///   quand le patch ne touche que `deviceName`. Il n'est **pas** posé quand
-	///   le patch touche aussi autre chose, parce que ce serait mentir au
-	///   firmware sur le contenu du payload.
+	/// * `<year>0</year>` = "do not re-set the manual time". Without it the
+	///   camera re-sets the clock from the block's `year…second` fields, which
+	///   a language or name change has no business doing.
+	/// * `<deviceNameOnly>1</deviceNameOnly>` = "only the name changes", required
+	///   when the patch touches `deviceName` alone. It is **not** set when
+	///   the patch also touches something else, because that would lie to the
+	///   firmware about the payload's contents.
 	pub async fn set_general(&self, cfg: &SystemGeneral) -> Result<SystemGeneral> {
 		let mut out = cfg.clone();
 		out.year = Some(0);
@@ -680,8 +680,8 @@ impl BcCamera {
 mod tests {
 	use super::*;
 
-	/// Un bloc `<aiDenoise>` tel que la lib de référence l'imprime : attribut
-	/// de version **majuscule**, `level` entre 1 et 100.
+	/// An `<aiDenoise>` block as the reference library prints it: version attribute
+	/// **capital**, `level` between 1 and 100.
 	fn denoise_block() -> AiDenoise {
 		AiDenoise {
 			version_caps: Some("1.1".into()),
@@ -746,13 +746,13 @@ mod tests {
 				Error::CameraRefused { code: 400, .. }
 					| Error::CameraServiceUnavailable { code: 400, .. }
 			),
-			"un refus doit rester un refus, pas un bloc vide : {err:?}"
+			"a refusal must stay a refusal, not an empty block: {err:?}"
 		);
-		// Et depuis le 13/11, une lecture de réglage refusée porte le texte que
-		// la caméra a écrit sous son code — c'est la seule trace qui dise
-		// « mauvaise forme » ou « famille absente ».
+		// And since 13/11, a refused settings read carries the text the
+		// camera wrote under its code — it is the only trace that says
+		// "wrong shape" or "family absent".
 		if let Error::CameraRefused { detail, .. } = &err {
-			assert!(!detail.is_empty(), "le refus de lecture doit porter la réponse caméra");
+			assert!(!detail.is_empty(), "the read refusal must carry the camera answer");
 		}
 	}
 
@@ -772,22 +772,22 @@ mod tests {
 
 	#[tokio::test]
 	async fn set_ntp_returns_the_reread_not_the_request() {
-		// Caméra têtue : elle acquitte le 39 mais garde son serveur. La valeur
-		// retournée doit être celle de la relecture.
+		// Stubborn camera: it acks the 39 but keeps its server. The value
+		// returned must be the re-read's.
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_NTP)
 			.reply_with(|req| {
 				let sent = inspect_xml(req);
-				let ntp = sent.ntp.as_ref().expect("le SET porte <Ntp>");
+				let ntp = sent.ntp.as_ref().expect("the SET carries <Ntp>");
 				assert_eq!(
 					ntp.server.as_deref(),
 					Some("time.nist.gov"),
-					"la balise patchée doit repartir"
+					"the patched tag must go back out"
 				);
 				assert_eq!(
 					ntp.synchronize_interval.as_deref(),
 					Some("1440"),
-					"une balise non touchée doit repartir telle quelle"
+					"an untouched tag must go back out as it stands"
 				);
 				reply_200_empty(req)
 			})
@@ -802,15 +802,15 @@ mod tests {
 		assert_eq!(
 			after.server.as_deref(),
 			Some("pool.ntp.org"),
-			"la relecture fait foi, jamais la demande"
+			"the re-read is the evidence, never the request"
 		);
 	}
 
 	#[tokio::test]
 	async fn a_rejected_ntp_set_does_not_reread() {
-		// Le script ne prévoit délibérément aucun 38 : une relecture après un
-		// refus échouerait le mock — c'est l'assertion voulue (une octave de
-		// radio économisée sur un appareil sur battery).
+		// The script deliberately plans no 38: a re-read after a
+		// refusal would fail the mock — that is the intended assertion (an octet of
+		// radio saved on a battery device).
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_NTP)
 			.reply_with(|req| reply_err_code(req, 409))
@@ -824,7 +824,7 @@ mod tests {
 		);
 	}
 
-	// ── Débruitage micro ────────────────────────────────────────────────
+	// ── Microphone denoise ──────────────────────────────────────────────
 
 	#[tokio::test]
 	async fn get_ai_denoise_accepts_the_capitalised_version() {
@@ -857,7 +857,7 @@ mod tests {
 				assert_eq!(d.version_caps.as_deref(), Some("1.1"));
 				assert!(
 					d.version.is_none(),
-					"le casier de version non utilisé ne doit pas être inventé"
+					"the unused version slot must not be invented"
 				);
 				assert_eq!(d.level.as_deref(), Some("80"));
 				reply_200_empty(req)
@@ -878,11 +878,11 @@ mod tests {
 		let mut want = denoise_block();
 		want.enable = Some("0".into());
 		let after = cam.set_ai_denoise(&want).await.expect("ok");
-		// La caméra du script n'a pas bougé : c'est bien sa relecture.
+		// The scripted camera did not move: this is indeed its re-read.
 		assert_eq!(after.enable.as_deref(), Some("1"));
 	}
 
-	// ── Image : les deux blocs ensemble ─────────────────────────────────
+	// ── Image: the two blocks together ──────────────────────────────────
 
 	fn video_input_block() -> VideoInput {
 		VideoInput {
@@ -952,14 +952,14 @@ mod tests {
 				let sent = inspect_xml(req);
 				assert!(
 					sent.video_input.is_some() && sent.input_advance_cfg.is_some(),
-					"le 25 doit recevoir VideoInput ET InputAdvanceCfg"
+					"25 must receive VideoInput AND InputAdvanceCfg"
 				);
 				let v = sent.video_input.as_ref().expect("<VideoInput>");
-				assert_eq!(v.sharpen.as_deref(), Some("90"), "le curseur patché repart");
-				assert_eq!(v.bright.as_deref(), Some("128"), "les autres repartent");
+				assert_eq!(v.sharpen.as_deref(), Some("90"), "the patched slider goes back");
+				assert_eq!(v.bright.as_deref(), Some("128"), "the others go back");
 				assert!(
 					v.corridor_mode.is_none(),
-					"une balise absente de la GET n'est pas inventée"
+					"a tag absent from the GET is not invented"
 				);
 				reply_200_empty(req)
 			})
@@ -977,7 +977,7 @@ mod tests {
 		assert_eq!(
 			after.video_input.sharpen.as_deref(),
 			Some("60"),
-			"la relecture fait foi"
+			"the re-read is the evidence"
 		);
 	}
 
@@ -1012,7 +1012,7 @@ mod tests {
 			channel_name: Some(OsdChannelName {
 				version: "1.1".into(),
 				channel_id: Some("0".into()),
-				name: Some("Porche".into()),
+				name: Some("Porch".into()),
 				enable: Some("0".into()),
 				top_left_x: Some("1".into()),
 				top_left_y: Some("65535".into()),
@@ -1046,7 +1046,7 @@ mod tests {
 		assert_eq!(cfg.datetime.enable.as_deref(), Some("1"));
 		assert_eq!(
 			cfg.channel_name.as_ref().and_then(|c| c.name.as_deref()),
-			Some("Porche")
+			Some("Porch")
 		);
 	}
 
@@ -1059,16 +1059,16 @@ mod tests {
 				let dn = sent
 					.osd_datetime
 					.as_ref()
-					.expect("le 45 recoit <OsdDatetime>");
+					.expect("45 receives <OsdDatetime>");
 				let cn = sent
 					.osd_channel_name
 					.as_ref()
-					.expect("le 45 recoit <OsdChannelName>");
-				assert_eq!(dn.enable.as_deref(), Some("0"), "la balise patchée");
+					.expect("45 receives <OsdChannelName>");
+				assert_eq!(dn.enable.as_deref(), Some("0"), "the patched tag");
 				assert_eq!(dn.top_left_x.as_deref(), Some("1"));
 				assert_eq!(dn.top_left_y.as_deref(), Some("1"));
-				assert_eq!(cn.top_left_y.as_deref(), Some("65535"), "les 16.16 repartent");
-				assert_eq!(cn.name.as_deref(), Some("Porche"), "le nom repart");
+				assert_eq!(cn.top_left_y.as_deref(), Some("65535"), "the 16.16 values go back");
+				assert_eq!(cn.name.as_deref(), Some("Porch"), "the name goes back");
 				reply_200_empty(req)
 			})
 			.expect_msg(MSG_ID_GET_OSD)
@@ -1082,7 +1082,7 @@ mod tests {
 		assert_eq!(after.datetime.enable.as_deref(), Some("1"));
 	}
 
-	// ── Détection de mouvement : les deux porteurs ──────────────────────
+	// ── Motion detection: the two carriers ──────────────────────────────
 
 	fn md_block() -> MdCfg {
 		MdCfg {
@@ -1119,12 +1119,12 @@ mod tests {
 			.expect_msg(MSG_ID_SET_MOTION_DETECT)
 			.reply_with(|req| {
 				let sent = inspect_xml(req);
-				let m = sent.md.as_ref().expect("le 47 recoit <MD>");
+				let m = sent.md.as_ref().expect("47 receives <MD>");
 				assert_eq!(m.enable.as_deref(), Some("0"));
 				assert_eq!(
 					m.scope.as_ref().and_then(|s| s.value_table.as_deref()),
 					Some("AAAA"),
-					"le bitmap de zones ne doit pas être abîmé"
+					"the zones bitmap must not be damaged"
 				);
 				reply_200_empty(req)
 			})
@@ -1138,14 +1138,14 @@ mod tests {
 		assert_eq!(cfg.sensitivity(), Some("30"));
 		cfg.set_enable("0");
 		let after = cam.set_motion_cfg(&cfg).await.expect("ok");
-		assert_eq!(after.enable(), Some("1"), "la relecture fait foi");
+		assert_eq!(after.enable(), Some("1"), "the re-read is the evidence");
 	}
 
 	#[test]
 	fn the_frame_shape_is_bounded_to_the_four_measured_families() {
-		// Ces quatre familles refusaient sans rien dire ; la mesure du 13/11 dit
-		// qu'il leur faut le channel, dans l'extension et dans l'en-tête — en
-		// lecture, et en écriture par symétrie (le `47` refuse sans lui).
+		// These four families refused without saying anything; the 13/11 measurement says
+		// they need the channel, in the extension and in the header — in
+		// read, and in write by symmetry (the `47` refuses without it).
 		for id in [
 			MSG_ID_GET_IMAGE,
 			MSG_ID_SET_IMAGE,
@@ -1159,11 +1159,11 @@ mod tests {
 			assert_eq!(
 				frame_shape(id, 7),
 				(0, Some(0)),
-				"le msg {id} doit partir avec le channel 0 partout"
+				"msg {id} must leave with channel 0 everywhere"
 			);
 		}
-		// Et ce qui répond déjà ne bouge pas : aucune mesure ne dit que ces
-		// familles-là accepteraient la nouvelle trame.
+		// And what already answers does not move: no measurement says these
+		// families would accept the new frame.
 		for id in [
 			MSG_ID_GET_NTP,
 			MSG_ID_SET_NTP,
@@ -1173,29 +1173,29 @@ mod tests {
 			assert_eq!(
 				frame_shape(id, 7),
 				(7, None),
-				"le msg {id} doit garder sa trame d'aujourd'hui"
+				"msg {id} must keep today's frame"
 			);
 		}
 	}
 
 	#[tokio::test]
 	async fn writing_motion_carries_the_channel_like_the_read() {
-		// Home Assistant basculait l'interrupteur sans effet : le `47` partait
-		// sans l'extension et la caméra répondait `400`. Le SET doit donc partir
-		// avec la même forme que le GET — et c'est la relecture, déjà dans
-		// `set_motion_cfg`, qui dira si l'écriture a porté.
+		// Home Assistant used to flip the switch with no effect: the `47` left
+		// without the extension and the camera answered `400`. The SET must therefore leave
+		// with the same shape as the GET — and it is the re-read, already in
+		// `set_motion_cfg`, that will say whether the write took.
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_MOTION_DETECT)
 			.reply_with(md_reply)
 			.expect_msg(MSG_ID_SET_MOTION_DETECT)
 			.reply_with(|req| {
 				let BcBody::ModernMsg(msg) = &req.body else {
-					panic!("la sonnette est en trame moderne");
+					panic!("the doorbell is on the modern frame");
 				};
 				assert_eq!(
 					msg.extension.as_ref().and_then(|e| e.channel_id),
 					Some(0),
-					"le 47 sans extension est refusé 400 : l'interrupteur ne bascule pas"
+					"the 47 without extension is refused 400: the switch does not flip"
 				);
 				reply_200_empty(req)
 			})
@@ -1206,27 +1206,27 @@ mod tests {
 		let cam = BcCamera::from_mock_connection(mock).await;
 		let mut cfg = cam.get_motion_cfg().await.expect("lu");
 		cfg.set_enable("0");
-		cam.set_motion_cfg(&cfg).await.expect("écrit");
+		cam.set_motion_cfg(&cfg).await.expect("written");
 	}
 
 	#[tokio::test]
 	async fn motion_46_replies_only_on_the_channel_asked() {
-		// Le 46 répond 400 **sans corps** tant que la demande ne nomme pas le
-		// channel. Ce test porte la forme sur la vraie chaîne d'envoi, pas
-		// seulement sur la table : une table juste mal appliquée ne se verrait
-		// pas, la caméra ne disant jamais pourquoi elle refuse.
+		// The 46 answers 400 **with no body** as long as the request does not name
+		// the channel. This test carries the shape on the real sending chain, not
+		// only on the table: a correct table applied wrongly would not be seen,
+		// the camera never saying why it refuses.
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_MOTION_DETECT)
 			.reply_with(|req| {
 				let BcBody::ModernMsg(msg) = &req.body else {
-					panic!("la sonnette est en trame moderne");
+					panic!("the doorbell is on the modern frame");
 				};
 				assert_eq!(
 					msg.extension.as_ref().and_then(|e| e.channel_id),
 					Some(0),
-					"sans le channel dans l'extension, la caméra répond 400 sans corps"
+					"without the channel in the extension, the camera answers 400 with no body"
 				);
-				assert_eq!(req.meta.channel_id, 0, "l'en-tête doit porter le même channel");
+				assert_eq!(req.meta.channel_id, 0, "the header must carry the same channel");
 				md_reply(req)
 			})
 			.build()
@@ -1238,8 +1238,8 @@ mod tests {
 
 	#[tokio::test]
 	async fn motion_on_md_alarm_refusal_sends_nothing() {
-		// Le script ne prévoit QUE le 46 : l'envoi d'un 47 ferait échouer le
-		// mock, ce qui est exactement l'assertion voulue.
+		// The script plans ONLY the 46: sending a 47 would fail the
+		// mock, which is exactly the intended assertion.
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_MOTION_DETECT)
 			.reply_with(|req| {
@@ -1266,10 +1266,10 @@ mod tests {
 		assert!(matches!(cfg, MotionCfg::MdAlarm(_)));
 		assert_eq!(cfg.sensitivity(), Some("3"));
 		cfg.set_enable("0");
-		let err = cam.set_motion_cfg(&cfg).await.expect_err("refus");
+		let err = cam.set_motion_cfg(&cfg).await.expect_err("refused");
 		match err {
 			Error::Usage(msg) => {
-				assert!(msg.contains("MdAlarm"), "le refus nomme la balise lue : {msg}")
+				assert!(msg.contains("MdAlarm"), "the refusal names the tag read: {msg}")
 			}
 			other => panic!("attendu Usage, obtenu {other:?}"),
 		}
@@ -1365,7 +1365,7 @@ mod tests {
 		assert_eq!(s.enable.as_deref(), Some("0"));
 	}
 
-	// ── Redémarrage automatique ─────────────────────────────────────────
+	// ── Automatic reboot ────────────────────────────────────────────────
 
 	fn reboot_block() -> AutoReboot {
 		AutoReboot {
@@ -1399,9 +1399,9 @@ mod tests {
 				let a = sent
 					.auto_reboot
 					.as_ref()
-					.expect("le 100 recoit <AutoReboot>");
+					.expect("100 receives <AutoReboot>");
 				assert_eq!(a.enable.as_deref(), Some("0"));
-				assert_eq!(a.hour.as_deref(), Some("3"), "l'heure non touchée repart");
+				assert_eq!(a.hour.as_deref(), Some("3"), "the untouched hour goes back");
 				reply_200_empty(req)
 			})
 			.expect_msg(MSG_ID_GET_AUTO_REBOOT)
@@ -1416,7 +1416,7 @@ mod tests {
 		assert_eq!(after.week_day.as_deref(), Some("everyday"));
 	}
 
-	// ── Heure d'dst ─────────────────────────────────────────────────────
+	// ── Daylight saving ─────────────────────────────────────────────────
 
 	#[tokio::test]
 	async fn set_dst_rereads_the_106_after_the_107() {
@@ -1432,9 +1432,9 @@ mod tests {
 			.expect_msg(MSG_ID_SET_DST)
 			.reply_with(|req| {
 				let sent = inspect_xml(req);
-				let d = sent.dst.as_ref().expect("le 107 recoit <Dst>");
-				assert_eq!(d.enable, Some(0), "la bascule patchée repart");
-				assert_eq!(d.start_month, Some(3), "le calendrier repart");
+				let d = sent.dst.as_ref().expect("107 receives <Dst>");
+				assert_eq!(d.enable, Some(0), "the patched switch goes back");
+				assert_eq!(d.start_month, Some(3), "the calendar goes back");
 				reply_200_empty(req)
 			})
 			.expect_msg(MSG_ID_GET_DST)
@@ -1453,10 +1453,10 @@ mod tests {
 		let mut want = dst.clone();
 		want.enable = Some(0);
 		let after = cam.set_dst(&want).await.expect("ok");
-		assert_eq!(after.enable, Some(1), "la caméra a gardé son activation");
+		assert_eq!(after.enable, Some(1), "the camera kept its activation");
 	}
 
-	// ── Système ─────────────────────────────────────────────────────────
+	// ── System ──────────────────────────────────────────────────────────
 
 	fn general_block() -> SystemGeneral {
 		SystemGeneral {
@@ -1471,7 +1471,7 @@ mod tests {
 			osd_format: Some("DMY".into()),
 			time_format: Some(0),
 			language: Some("English".into()),
-			device_name: Some("Porche".into()),
+			device_name: Some("Porch".into()),
 			..Default::default()
 		}
 	}
@@ -1495,15 +1495,15 @@ mod tests {
 				let g = sent
 					.system_general
 					.as_ref()
-					.expect("le 105 recoit <SystemGeneral>");
-				assert_eq!(g.year, Some(0), "<year>0</year> est obligatoire");
+					.expect("105 receives <SystemGeneral>");
+				assert_eq!(g.year, Some(0), "<year>0</year> is mandatory");
 				assert_eq!(
 					g.device_name_only,
 					Some(1),
-					"un renommage seul porte <deviceNameOnly>1</deviceNameOnly>"
+					"a rename alone carries <deviceNameOnly>1</deviceNameOnly>"
 				);
-				assert_eq!(g.device_name.as_deref(), Some("Entrée"));
-				assert_eq!(g.language.as_deref(), None, "rien d'autre n'est ajouté");
+				assert_eq!(g.device_name.as_deref(), Some("Entrance"));
+				assert_eq!(g.language.as_deref(), None, "nothing else is added");
 				reply_200_empty(req)
 			})
 			.expect_msg(MSG_ID_GET_GENERAL)
@@ -1513,11 +1513,11 @@ mod tests {
 		let cam = BcCamera::from_mock_connection(mock).await;
 		let want = SystemGeneral {
 			version: "1.1".into(),
-			device_name: Some("Entrée".into()),
+			device_name: Some("Entrance".into()),
 			..Default::default()
 		};
 		let after = cam.set_general(&want).await.expect("ok");
-		assert_eq!(after.device_name.as_deref(), Some("Porche"), "relecture");
+		assert_eq!(after.device_name.as_deref(), Some("Porch"), "re-read");
 		assert_eq!(after.time_zone, Some(-3600));
 	}
 
@@ -1529,7 +1529,7 @@ mod tests {
 				let g = sent.system_general.as_ref().expect("<SystemGeneral>");
 				assert_eq!(
 					g.device_name_only, None,
-					"marquer « nom seul » alors que la langue change aussi ment au firmware"
+					"marking 'name only' while the language changes too lies to the firmware"
 				);
 				assert_eq!(g.year, Some(0));
 				assert_eq!(g.language.as_deref(), Some("French"));
@@ -1542,18 +1542,18 @@ mod tests {
 		let cam = BcCamera::from_mock_connection(mock).await;
 		let want = SystemGeneral {
 			version: "1.1".into(),
-			device_name: Some("Entrée".into()),
+			device_name: Some("Entrance".into()),
 			language: Some("French".into()),
 			..Default::default()
 		};
 		cam.set_general(&want).await.expect("ok");
 	}
 
-	/// Ce que le wire contient vraiment. Les tests ci-dessus relisent le XML
-	/// désérialisé ; celui-ci regarde l'**octet stream**, parce que c'est lui
-	/// que le firmware jugera : casse des balises (`<MD>` pas `<Md>`,
-	/// `<aiDenoise Version>` majuscule), et surtout l'absence totale de balise
-	/// qu'une caméra n'a pas imprimée.
+	/// What the wire really contains. The tests above re-read the XML
+	/// deserialised; this one looks at the **octet stream**, because it is he
+	/// the firmware will judge: tag case (`<MD>` not `<Md>`,
+	/// `<aiDenoise Version>` capital), and above all the total absence of any tag
+	/// the camera did not print.
 	#[test]
 	fn the_wire_invents_no_tag() {
 		let xml = BcXml {
@@ -1563,156 +1563,156 @@ mod tests {
 			..Default::default()
 		};
 		let wire = quick_xml::se::to_string(&xml).expect("infaillible");
-		assert!(wire.starts_with("<body"), "corps enveloppé : {wire}");
-		assert!(wire.contains(r#"<Ntp version="1.1">"#), "casse de <Ntp> : {wire}");
+		assert!(wire.starts_with("<body"), "body wrapped: {wire}");
+		assert!(wire.contains(r#"<Ntp version="1.1">"#), "case of <Ntp>: {wire}");
 		assert!(
 			wire.contains(r#"<aiDenoise Version="1.1">"#),
-			"l'attribut de version majuscule doit repartir tel quel : {wire}"
+			"the capital version attribute must go back as it stands: {wire}"
 		);
 		assert!(
 			wire.contains(r#"<MD version="1.1">"#),
-			"<MD> garde sa casse : {wire}"
+			"<MD> keeps its case: {wire}"
 		);
 		assert!(wire.contains("<sensitivityDefault>30</sensitivityDefault>"));
 		assert!(
 			!wire.contains("MdAlarm"),
-			"le porteur non lu n'est pas sérialisé : {wire}"
+			"the carrier not read is not serialised: {wire}"
 		);
-		for absente in ["<Shelter", "<sleepState", "<WifiSignal", "<VideoInput"] {
+		for absent in ["<Shelter", "<sleepState", "<WifiSignal", "<VideoInput"] {
 			assert!(
-				!wire.contains(absente),
-				"{absente} n'a pas dst lu donc ne doit pas être écrit : {wire}"
+				!wire.contains(absent),
+				"{absent} was not read so it must not be written: {wire}"
 			);
 		}
 	}
 }
 
-/// Ce que la caméra a répondu à une [`RawRequest`] : le code, et les deux
-/// moitiés du corps **telles qu'elles ont dst comprises**.
+/// What the camera answered a [`RawRequest`]: the code, and the two
+/// halves of the body **as they were understood**.
 #[derive(Debug, Default, Clone)]
 pub struct RawResponse {
-	/// Le `response_code` de l'en-tête : 200, 400, 405…
+	/// The header's `response_code`: 200, 400, 405…
 	pub code: u16,
-	/// Le `msg_id` rendu par la caméra (le nôtre, d'habitude).
+	/// The `msg_id` the camera returned (usually ours).
 	pub msg_id: u32,
-	/// La `class` de l'en-tête reçu. Utile autant que le code : une caméra qui
-	/// répondrait dans une autre classe que celle demandée parle un autre
-	/// dialecte, et ça ne se voit nulle part ailleurs.
+	/// The `class` of the header received. As useful as the code: a camera
+	/// answering in a class other than the one asked for speaks another
+	/// dialect, and that shows up nowhere else.
 	pub classe_recue: u16,
-	/// De quelle varidst était le corps reçu : `modern`, `herite`, ou `rien`.
+	/// Which variant the received body was: `modern`, `legacy`, or `none`.
 	///
-	/// Sans ce champ, une réponse **héritée** se lirait comme un corps vide —
-	/// le décodage ci-dessous ne regarde que `ModernMsg`. La mesure du 13/11
-	/// (« pas de corps ») n'a de sens que parce que cette varidst-là était bien
-	/// `modern` : en-tête moderne, aucun bloc derrière.
+	/// Without this field, a **legacy** answer would read as an empty body —
+	/// the decoding below only looks at `ModernMsg`. The 13/11 measurement
+	/// ("no body") only means something because that variant really was
+	/// `modern`: modern header, no block behind it.
 	pub kind: String,
-	/// L'`<Extension>` décryptée, en XML.
+	/// The decrypted `<Extension>`, rendered as XML.
 	pub extension: Option<String>,
-	/// Le corps décrypté, rendu en XML.
+	/// The decrypted body, rendered as XML.
 	///
-	/// **Ce texte n'est pas la capture brute** : il est resérialisé depuis le
-	/// `BcXml` parsé, donc les balises que ce dépôt ne modélise pas y sont
-	/// absentes. Un 400 dont le corps ne dirait que `<result>notSupport</result>`
-	/// se lira ici comme un corps vide — le texte intégral de la caméra ne sort
-	/// que de la trace `Payload Txt`, et c'est justement ce que cette sonde est
-	/// là pour rendre inutile de payer deux fois.
+	/// **This text is not the raw capture**: it is re-serialised from the
+	/// parsed `BcXml`, so tags this repository does not model are absent from it.
+	/// A 400 whose body only said `<result>notSupport</result>`
+	/// reads here as an empty body — the camera's full text only comes out of
+	/// the `Payload Txt` trace, and that is exactly what this probe is
+	/// here to make it unnecessary to pay for twice.
 	pub body: Option<String>,
 }
 
-/// Une variante de la demande de lecture. Tout à `None` = exactement la trame
-/// d'aujourd'hui, ce qui sert de témoin dans la série. Consommée par l'appel :
-/// `BcXml` n'est pas `Clone`, et le corps part tel quel sur le câble.
+/// A variant of the read request. All `None` = exactly today's
+/// frame, which serves as the control in the series. Consumed by the call:
+/// `BcXml` is not `Clone`, and the body goes out as is on the cable.
 #[derive(Debug, Default)]
 pub struct RawRequest {
-	/// `channelId` **d'en-tête** (octet 12). `None` = celui de la caméra.
-	pub canal_entete: Option<u8>,
-	/// `Some(n)` : ajoute `<channelId>n</channelId>` à l'extension.
+	/// The **header** `channelId` (byte 12). `None` = the camera's.
+	pub header_channel: Option<u8>,
+	/// `Some(n)`: adds `<channelId>n</channelId>` to the extension.
 	pub extension_channel: Option<u8>,
-	/// `Some(n)` : ajoute `<rfId>n</rfId>` à l'extension.
+	/// `Some(n)`: adds `<rfId>n</rfId>` to the extension.
 	pub extension_rf: Option<u8>,
-	/// `Some(xml)` : le corps à envoyer, typé donc chiffré.
+	/// `Some(xml)`: the body to send, typed therefore encrypted.
 	pub body: Option<BcXml>,
-	/// `class` de l'en-tête. `None` = `0x6414`, la classe XML moderne.
+	/// The header's `class`. `None` = `0x6414`, the modern XML class.
 	///
-	/// La variable qui restait à varier après la mesure du 13/11 : les quatre
-	/// familles en 400 répondent **sans aucun corps**, alors que des lectures
-	/// envoyées à l'identique — `ntp` 38, `denoise` 439, `sleep` 574 — rendent
-	/// 200. La forme du corps n'est donc pas la seule différence possible entre
-	/// une commande servie et une commande refusée ; la classe déclarée de la
-	/// requête en est une autre, et elle ne coûtait rien à exposer.
-	pub classe: Option<u16>,
+	/// The variable that remained to be varied after the 13/11 measurement: the four
+	/// families in 400 answer **with no body at all**, while reads
+	/// sent identically — `ntp` 38, `denoise` 439, `sleep` 574 — return
+	/// 200. The body's shape is therefore not the only possible difference between
+	/// a served command and a refused one; the request's declared class is
+	/// another, and it cost nothing to expose.
+	pub header_class: Option<u16>,
 }
 
 impl RawRequest {
-	/// Le témoin : la trame que la bibliothèque envoie aujourd'hui.
+	/// The control: the frame the library sends today.
 	pub fn flag() -> Self {
 		Self::default()
 	}
 
-	/// Extension avec `<channelId>`, la forme des commandes qui passent.
+	/// Extension with `<channelId>`, the shape of the commands that do pass.
 	pub fn channel(n: u8) -> Self {
 		Self { extension_channel: Some(n), ..Default::default() }
 	}
 
-	/// Extension avec `<rfId>`, l'adressage du PIR.
+	/// Extension with `<rfId>`, the PIR's addressing.
 	pub fn rf(n: u8) -> Self {
 		Self { extension_rf: Some(n), ..Default::default() }
 	}
 
-	/// Un corps qui nomme le bloc, sans extension.
+	/// A body that names the block, without an extension.
 	pub fn body(xml: BcXml) -> Self {
 		Self { body: Some(xml), ..Default::default() }
 	}
 
-	/// La forme complète attendue par les clients de référence : extension
-	/// **et** corps.
+	/// The full shape the reference clients expect: extension
+	/// **and** body.
 	pub fn channel_and_body(n: u8, xml: BcXml) -> Self {
 		Self { extension_channel: Some(n), body: Some(xml), ..Default::default() }
 	}
 }
 
-/// La forme que **ce** micrologiciel attend pour une trame de réglage — lecture
-/// **et** écriture —, mesurée le 13/11/2026 avec la sonde MQTT
-/// ([`super::settings_brut`], pilotée depuis
+/// The shape **this** firmware expects for a settings frame — read
+/// **and** write —, measured on 13/11/2026 with the MQTT probe
+/// (the `RawRequest` series below, driven from
 /// `bairelay/<cam>/control/sonde/<serial>`).
 ///
-/// Quatre familles refusaient `400` sans jamais écrire de réponse. La variable
-/// n'était ni l'éveil, ni le corps : c'est l'absence d'`<Extension>` nommant le
-/// channel. Séance du 13/11, caméra éveillée, session unique tenue par le pont :
+/// Four families refused `400` without ever writing an answer. The variable
+/// was neither the wake nor the body: it is the absence of an `<Extension>` naming the
+/// channel. Session of 13/11, camera awake, single session held by the bridge:
 ///
-/// | demande | réponse |
+/// | request | answer |
 /// |---|---|
-/// | `msg 46` seul | `400`, aucun corps |
+/// | `msg 46` alone | `400`, no body |
 /// | `msg 46` + `<channelId>0</channelId>` | `200` — `<MD version="1.1">…` |
-/// | `msg 46` + un corps `<MD>`, sans extension | `400` |
+/// | `msg 46` + a `<MD>` body, no extension | `400` |
 /// | `msg 26` + `<channelId>0</channelId>` | `200` — `<Shelter>…` |
 /// | `msg 44` + extension seule | `400` |
-/// | `msg 44` + extension **et** `channelId` d'en‑tête à `0` | `200` — `<OsdDatetime>…` |
+/// | `msg 44` + extension **and** header `channelId` at `0` | `200` — `<OsdDatetime>…` |
 /// | `msg 52` + extension seule | `400` |
-/// | `msg 52` + extension et en‑tête à `0` | `200` — `<OsdDatetime>…` |
-/// | `msg 38` (ntp) et `104` (general) dans la même forme | `200` — la forme ne casse pas ce qui marchait |
-/// | `msg 44` avec `<channelId>1</channelId>` | `421` — le micrologiciel lit le channel et le refuse |
-/// | `msg 47` (SET mouvement) **sans** extension, depuis Home Assistant | `400` — l'interrupteur reste à `on` |
+/// | `msg 52` + extension and header at `0` | `200` — `<OsdDatetime>…` |
+/// | `msg 38` (ntp) and `104` (general) in the same shape | `200` — the shape does not break what worked |
+/// | `msg 44` with `<channelId>1</channelId>` | `421` — the firmware reads the channel and refuses it |
+/// | `msg 47` (SET motion) **without** extension, from Home Assistant | `400` — the switch stays at `on` |
 ///
-/// La règle appliquée est donc **restreinte à ces quatre familles**, en lecture
+/// The rule applied is therefore **restricted to those four families**, in read
 /// comme en écriture, et non rendue générale : `ntp`, `general`, `battery` et
-/// les autres répondent déjà avec la trame d'avant, et aucune mesure ne dit
-/// qu'ils accepteraient celle‑ci. Une règle générale non mesurée sur les
-/// familles qui marchent aujourd'hui serait troquer quatre pannes connues
-/// contre dix pannes éventuelles.
+/// the others already answer with the previous frame, and no measurement says
+/// they would accept this one. A general rule never measured on the
+/// families that work today would be trading four known failures
+/// for ten possible ones.
 ///
-/// Côté écriture, la table porte les identifiants `SET` par symétrie avec la
-/// lecture : c'est une **inférence**, pas une mesure — ce qu'on a mesuré, c'est
-/// que le `47` refuse `400` sans l'extension. L'inférence reste contrôlable sur
-/// le terrain parce que chaque `set_*` relit le bloc après avoir écrit : une
-/// écriture avalée sans effet y laisse une trace, et c'est la relecture qui fait
-/// foi jusque dans les tests.
+/// On the write side the table carries the `SET` ids by symmetry with the
+/// read: that is an **inference**, not a measurement — what was measured is
+/// that the `47` refuses `400` without the extension. The inference stays checkable in
+/// the field because every `set_*` re-reads the block after writing: an
+/// write swallowed without effect leaves a trace there, and it is the re-read that
+/// is the evidence, even in the tests.
 ///
-/// Deux choses que cette table ne dit **pas** : les créneaux de ce micrologiciel
-/// ne suivent pas la table usuelle — le `26` répond `<Shelter>` (les masques) et
-/// le `52` répond `<OsdDatetime>`, là où la bibliothèque attendait
-/// `<VideoInput>` et `<Shelter>` ; et rien ici ne dit où ce micrologiciel sert
-/// les réglages d'image.
+/// Two things this table does **not** say: this firmware's slots do not follow
+/// the usual table — `26` answers `<Shelter>` (the masks) and
+/// `52` answers `<OsdDatetime>`, where the library expected
+/// `<VideoInput>` and `<Shelter>`; and nothing here says where this firmware serves
+/// the image settings.
 fn frame_shape(msg_id: u32, canal_camera: u8) -> (u8, Option<u8>) {
 	match msg_id {
 		MSG_ID_GET_IMAGE
@@ -1727,14 +1727,14 @@ fn frame_shape(msg_id: u32, canal_camera: u8) -> (u8, Option<u8>) {
 	}
 }
 
-/// Rend le XML d'un bloc reçu. `pub(crate)` : la sonde est la seule à en avoir
-/// besoin, et le texte de la caméra n'a rien à faire dans les API de plus haut
-/// niveau (mêmes précautions que `publishable_reason` côté MQTT).
+/// Renders the XML of a received block. `pub(crate)`: the probe is the only thing
+/// that needs it, and the camera's text has no business in higher-level
+/// APIs (same precautions as `publishable_reason` on the MQTT side).
 fn text_xml(xml: &BcXml) -> String {
 	let mut tampon = Vec::new();
 	match xml.serialize(&mut tampon) {
 		Ok(_) => String::from_utf8_lossy(&tampon).into_owned(),
-		Err(e) => format!("<bloc reçu mais non resérialisable : {e}>"),
+		Err(e) => format!("<block received but not re-serialisable: {e}>"),
 	}
 }
 
@@ -1742,18 +1742,18 @@ fn text_extension(ext: &Extension) -> String {
 	let mut tampon = Vec::new();
 	match ext.serialize(&mut tampon) {
 		Ok(_) => String::from_utf8_lossy(&tampon).into_owned(),
-		Err(e) => format!("<extension non resérialisable : {e}>"),
+		Err(e) => format!("<extension not re-serialisable: {e}>"),
 	}
 }
 
-/// Couper un texte rendu **par caractères**, jamais par octets : une réponse de
-/// caméra peut porter de l'UTF-8 et un `&t[..400]` sur un octet au milieu d'un
-/// accent panique. Le journal est fait pour être lu, pas pour être exhaustif.
-fn cut(texte: &str, caracteres: usize) -> String {
-	if texte.chars().count() <= caracteres {
-		return texte.to_string();
+/// Cutting a rendered text **by characters**, never by bytes: a camera
+/// answer can carry UTF-8 and a `&t[..400]` landing on a byte in the middle of an
+/// accent panics. The log is meant to be read, not to be exhaustive.
+fn cut(text: &str, max_chars: usize) -> String {
+	if text.chars().count() <= max_chars {
+		return text.to_string();
 	}
-	let mut coupe: String = texte.chars().take(caracteres).collect();
-	coupe.push_str(" […]");
-	coupe
+	let mut kept: String = text.chars().take(max_chars).collect();
+	kept.push_str(" […]");
+	kept
 }
