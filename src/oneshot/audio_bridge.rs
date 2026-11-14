@@ -633,7 +633,9 @@ mod tests {
 		assert_eq!(rx.len(), 0, "1000 samples < one 1024-sample block");
 		pump.feed(&[0x10; 2200], &tx).unwrap();
 		assert_eq!(rx.len(), 2, "2100 samples = 2 blocks, 52 left over");
-		assert!(rx.iter().all(|b| b.len() == 516));
+		// `try_iter`: `rx.iter()` would block waiting for a sender that is
+		// still alive; everything to check is already queued.
+		assert!(rx.try_iter().all(|b| b.len() == 516));
 
 		pump.finish_burst(&tx);
 		assert_eq!(rx.len(), 3, "the 52-sample tail becomes one padded block");

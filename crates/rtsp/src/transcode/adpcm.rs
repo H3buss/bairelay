@@ -833,10 +833,11 @@ mod encoder_tests {
 		let decoded = d.decode_block(&wire).unwrap();
 		assert_eq!(decoded[0], 1000, "the header sample survives exactly");
 		assert!(
-			decoded[1..].iter().all(|&s| s.abs() <= 8),
-			"the pad walks to the bottom of the step table and stops there; the last \
-			 16 were {:?}",
-			&decoded[decoded.len() - 16..]
+			decoded[decoded.len() / 2..].iter().all(|&s| s.abs() <= 8),
+			"the pad encodes silence: the walk from the header's 1000 comes to rest \
+			 within a few dozen nibbles, so by the half of the block it must sit at the \
+			 bottom of the step table; the half-block sample was {}",
+			decoded[decoded.len() / 2]
 		);
 		assert!(
 			decoded.last().unwrap().abs() < 1000,
