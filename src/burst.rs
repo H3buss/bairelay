@@ -2,9 +2,9 @@
 //!
 //! # Pourquoi ce module existe
 //!
-//! La batterie est l'urgence du terrain : plus aucun minuteur ne lit la caméra
+//! La battery est l'urgence du terrain : plus aucun minuteur ne lit la caméra
 //! (`idle_disconnect = true`, `battery_update` réglé sur « jamais »), donc le
-//! niveau de batterie ne remontait plus que si une personne demandait
+//! niveau de battery ne remontait plus que si une personne demandait
 //! `query/settings`. Or la caméra, elle, se wakele toute seule : appui sur le
 //! bouton, remontée de mouvement, enregistrement poussé sur le channel du faux
 //! cloud. Chaque wake est une fenêtre où l'on peut lire **gratuitement** — la
@@ -22,7 +22,7 @@
 //! 2. **Jamais périodique, jamais au démarrage.** Ce module n'a aucune
 //!    `interval`, aucune `sleep` de cadencement, et n'est appelé d'aucun
 //!    path de démarrage : la mémoire de
-//!    [`crate::family_state::families_prouvees`] suffit à publier la discovery
+//!    [`crate::family_state::proven_families`] suffit à publier la discovery
 //!    sans radio. La seule `sleep` du module est la sonde d'attente de session
 //!    ([`await_session`]), bornée, qui n'émet aucune commande.
 //! 3. **Jamais pendant un flux.** [`CameraHandle::flux_en_cours`] refuse la
@@ -48,7 +48,7 @@
 //! * **La caméra a répondu « non »** ([`Verdict::Transient`] : un `400`, un
 //!   délai, un bloc inexploitable) : la salve **continue**. Mesuré le 13/11 sur
 //!   cette sonnette : `image` (26), `osd` (44), `motion` (46) et `mask` (52)
-//!   rendent `400` y compris caméra **bien éveillée**, alors que batterie (253),
+//!   rendent `400` y compris caméra **bien éveillée**, alors que battery (253),
 //!   PIR (212) et carillon répondent dans la même session. Le refus de l'une
 //!   n'apprend donc rien sur la suivante, et l'ancienne règle — s'arrêter au
 //!   premier `400` — a privé le carillon de sa lecture pendant des semaines :
@@ -129,7 +129,7 @@ const BATTERY_MAX_REFUSALS: usize = 3;
 ///
 /// Trois, et non un : le terrain montre des `400` qui s'effacent d'un wake à
 /// l'autre (`image` a déjà rendu son bloc après un refus). Trois ratés d'affilée
-/// en revanche, sur une caméra qu'on sait en forme puisque la batterie et le PIR
+/// en revanche, sur une caméra qu'on sait en forme puisque la battery et le PIR
 /// répondent, est une porte fermée : chaque nouvelle tentative est une seconde
 /// de radio et rien d'autre.
 const FAMILY_MAX_REFUSALS: usize = 3;
@@ -144,7 +144,7 @@ const MAX_CONSECUTIVE_REFUSALS: usize = 2;
 
 /// Ce qui a wakelé la caméra. Publié avec l'état de la salve : « est-ce que
 /// l'appui du bouton me coûte une salve ? » est la première question de
-/// l'opératrice qui soupçonne la batterie de partir vite.
+/// l'opératrice qui soupçonne la battery de partir vite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Wake {
 	/// Appui sur le bouton de la sonnette.
@@ -249,7 +249,7 @@ impl BurstGuard {
 	/// instants près et qu'un test ne peut attendre vingt secondes. Le refus
 	/// rend la garde disponible (`en_cours` remis à `false`) : c'est l'appelant
 	/// qui n'a pas le droit de tourner, pas la caméra.
-	pub(crate) fn prendre(&self, now: Instant) -> bool {
+	pub(crate) fn take(&self, now: Instant) -> bool {
 		if self.in_flight.swap(true, Ordering::SeqCst) {
 			return false;
 		}
@@ -268,19 +268,19 @@ impl BurstGuard {
 
 	/// Une salve vient de se terminer : la garde redevient disponible, mais la
 	/// fenêtre, elle, court toujours.
-	pub(crate) fn liberer(&self) {
+	pub(crate) fn release_guard(&self) {
 		self.in_flight.store(false, Ordering::SeqCst);
 	}
 
 	/// Une salve tourne-t-elle ? Observé par les tests : la production décide
-	/// avec [`BurstGuard::prendre`], qui réserve et répond dans le même élan.
+	/// avec [`BurstGuard::take`], qui réserve et répond dans le même élan.
 	#[cfg(test)]
 	pub(crate) fn in_flight(&self) -> bool {
 		self.in_flight.load(Ordering::SeqCst)
 	}
 
 	/// Faut-il cesser de payer la trame 253 ?
-	pub(crate) fn batterie_epuisee(&self) -> bool {
+	pub(crate) fn battery_depleted(&self) -> bool {
 		self.batterie_refus.load(Ordering::SeqCst) >= BATTERY_MAX_REFUSALS
 	}
 
@@ -329,12 +329,12 @@ impl BurstGuard {
 ///
 /// Sans cela, une panique dans une lecture de réglage condamnerait toutes les
 /// salves suivantes de cette caméra — le pire silence qui soit sur une sonnette
-/// dont on surveille justement la batterie.
+/// dont on surveille justement la battery.
 struct BurstRelease(Arc<BurstGuard>);
 
 impl Drop for BurstRelease {
 	fn drop(&mut self) {
-		self.0.liberer();
+		self.0.release_guard();
 	}
 }
 
@@ -428,12 +428,12 @@ pub(crate) fn build_plan(families: &[Family], budget: usize) -> BurstPlan {
 	plan
 }
 
-/// Les familles que la mémoire dit prouvées, moins la batterie.
+/// Les familles que la mémoire dit prouvées, moins la battery.
 ///
-/// La batterie est lue à part, en premier : c'est pour elle que la salve existe,
+/// La battery est lue à part, en premier : c'est pour elle que la salve existe,
 /// et son niveau se publie sur un topic que `sync_family` ne remplit pas.
 pub(crate) fn families_to_read(camera: &str) -> Vec<Family> {
-	crate::family_state::families_prouvees(camera)
+	crate::family_state::proven_families(camera)
 		.into_iter()
 		.filter(|f| *f != Family::Battery)
 		.collect()
@@ -450,7 +450,7 @@ pub(crate) fn families_to_read(camera: &str) -> Vec<Family> {
 /// Rend la poignée de la tâche pour les tests ; les appelants de production
 /// l'ignorent : la salve est détachée par construction.
 pub(crate) fn trigger(handle: Arc<CameraHandle>, reason: Wake) -> Option<JoinHandle<()>> {
-	if !handle.burst().prendre(Instant::now()) {
+	if !handle.burst().take(Instant::now()) {
 		tracing::debug!(
 			camera = %handle.name(),
 			reason = reason.slug(),
@@ -486,7 +486,7 @@ async fn task(handle: Arc<CameraHandle>, reason: Wake) {
 	let publisher = StatusPublisher::new(&mqtt, &prefix, handle.name());
 
 	// Règle 3 : jamais pendant un flux.
-	if handle.flux_in_flight() {
+	if handle.stream_in_flight() {
 		tracing::info!(
 			camera = %handle.name(),
 			reason = reason.slug(),
@@ -567,7 +567,7 @@ async fn task(handle: Arc<CameraHandle>, reason: Wake) {
 	// `_verrou` et `_fin` se libèrent ici : la caméra peut se rendormir.
 }
 
-/// La tournée de lecture elle-même : la batterie, puis les familles du plan.
+/// La tournée de lecture elle-même : la battery, puis les familles du plan.
 ///
 /// S'arrête au premier refus, borne atteinte, ou annulation. Le compteur de
 /// commandes est un paramètre et non une valeur de retour, comme pour
@@ -583,20 +583,20 @@ async fn burst(
 ) -> Stop {
 	let guard = handle.burst();
 
-	// La batterie d'abord : c'est la trame 253, celle qui ne wakele pas la
+	// La battery d'abord : c'est la trame 253, celle qui ne wakele pas la
 	// caméra, et la raison pour laquelle la salve existe.
-	if guard.batterie_epuisee() {
+	if guard.battery_depleted() {
 		tracing::debug!(
 			camera = %handle.name(),
 			refused = BATTERY_MAX_REFUSALS,
-			"salve sans trame 253 : la batterie n'a pas répondu depuis assez de wakes pour arrêter de la payer"
+			"salve sans trame 253 : la battery n'a pas répondu depuis assez de wakes pour arrêter de la payer"
 		);
 	} else {
 		let issu = bc.battery_info().await;
 		if let Ok(infos) = &issu {
 			let niveau = infos.battery_percent.min(100) as u8;
 			if let Err(e) = publ.publish_battery_level(niveau).await {
-				tracing::debug!(camera = %handle.name(), error = %e, "publication du niveau de batterie ratée");
+				tracing::debug!(camera = %handle.name(), error = %e, "publication du niveau de battery ratée");
 			}
 			handle.status_cache().set_battery_level(niveau);
 		}
@@ -605,7 +605,7 @@ async fn burst(
 		read.push((family, verdict));
 		*commands += 1;
 		// Un `400` sur la trame 253 ne doit pas éteindre la tournée non plus :
-		// c'est exactement le cas mesuré où la batterie refuse et où le carillon,
+		// c'est exactement le cas mesuré où la battery refuse et où le carillon,
 		// juste derrière, aurait répondu. Le « stopper » de la trame 253 a déjà
 		// son propre garde-fou ([`BATTERY_MAX_REFUSALS`], compté par
 		// [`BurstGuard::note_battery`]).
@@ -613,7 +613,7 @@ async fn burst(
 			tracing::info!(
 				camera = %handle.name(),
 				family = family.slug(),
-				"salve arrêtée sur la batterie : rien n'a répondu, la session est rendue"
+				"salve arrêtée sur la battery : rien n'a répondu, la session est rendue"
 			);
 			return Stop::Refused;
 		}
@@ -769,8 +769,8 @@ mod tests {
 	use std::sync::{Arc, Mutex};
 	use tokio_util::sync::CancellationToken;
 
-	/// Une sonnette dont la batterie répond 63 %.
-	fn batterie(answer: u32) -> BcXml {
+	/// Une sonnette dont la battery répond 63 %.
+	fn battery(answer: u32) -> BcXml {
 		BcXml {
 			battery_info: Some(bairelay_neolink_core::bc::xml::BatteryInfo {
 				battery_percent: answer,
@@ -809,11 +809,11 @@ mod tests {
 
 	/// Règle 1, et le cœur du lot : deux wakes, une seule salve.
 	#[test]
-	fn a_wake_triggers_a_seule_burst() {
-		on_worker(|| Box::pin(a_seule_burst()));
+	fn a_wake_triggers_a_single_burst() {
+		on_worker(|| Box::pin(a_single_burst()));
 	}
 
-	async fn a_seule_burst() {
+	async fn a_single_burst() {
 		let trace = Arc::new(Mutex::new(Vec::new()));
 		let trace_cmd = Arc::clone(&trace);
 		// Deux commandes scriptées de plus que nécessaire : si une seconde salve
@@ -822,12 +822,12 @@ mod tests {
 			.expect_msg(MSG_ID_BATTERY_INFO)
 			.reply_with(move |req| {
 				trace_cmd.lock().unwrap().push(req.meta.msg_id);
-				reply_200_xml(req, batterie(63))
+				reply_200_xml(req, battery(63))
 			})
 			.expect_msg(MSG_ID_BATTERY_INFO)
-			.reply_with(|req| reply_200_xml(req, batterie(63)))
+			.reply_with(|req| reply_200_xml(req, battery(63)))
 			.expect_msg(MSG_ID_BATTERY_INFO)
-			.reply_with(|req| reply_200_xml(req, batterie(63)))
+			.reply_with(|req| reply_200_xml(req, battery(63)))
 			.build()
 			.await;
 		let (mqtt, capture) = mock_client();
@@ -860,10 +860,10 @@ mod tests {
 		assert!(!state.contains("\"state\":\"refus\""), "{state}");
 	}
 
-	/// Pas de wake = pas une commande. C'est la propridst que la batterie
+	/// Pas de wake = pas une commande. C'est la propridst que la battery
 	/// réclame : sans elle, le pont est juste un sondeur de plus.
 	#[test]
-	fn no_wake_not_sends_no_command() {
+	fn no_wake_sends_no_command() {
 		on_worker(|| Box::pin(no_wake()));
 	}
 
@@ -874,7 +874,7 @@ mod tests {
 			.expect_msg(MSG_ID_BATTERY_INFO)
 			.reply_with(move |req| {
 				trace_cmd.lock().unwrap().push(req.meta.msg_id);
-				reply_200_xml(req, batterie(63))
+				reply_200_xml(req, battery(63))
 			})
 			.build()
 			.await;
@@ -896,11 +896,11 @@ mod tests {
 	/// sinon l'automatisation de l'opératrice découvre l'appui avec le retard de
 	/// toute la lecture.
 	#[test]
-	fn the_press_part_before_the_first_command() {
-		on_worker(|| Box::pin(press_of_abord()));
+	fn the_press_starts_before_the_first_command() {
+		on_worker(|| Box::pin(press_first()));
 	}
 
-	async fn press_of_abord() {
+	async fn press_first() {
 		let vus_a_la_commande: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 		let (mqtt, capture) = mock_client();
 		let capture_a_la_commande = capture.clone();
@@ -914,7 +914,7 @@ mod tests {
 					.lock()
 					.unwrap()
 					.extend(capture_a_la_commande.published_topics());
-				reply_200_xml(req, batterie(63))
+				reply_200_xml(req, battery(63))
 			})
 			.build()
 			.await;
@@ -966,12 +966,12 @@ mod tests {
 	/// Une famille qui refuse ne condamne pas la tournée ; deux refus d'affilée
 	/// rendent la session, et les motifs sont publiés.
 	#[test]
-	fn burst_interrupted_publishes_and_releases_the_session() {
+	fn an_interrupted_burst_publishes_and_releases_the_session() {
 		on_worker(|| Box::pin(burst_interrupted()));
 	}
 
 	async fn burst_interrupted() {
-		// La batterie répond, puis **deux** familles sont refusées d'un `400` —
+		// La battery répond, puis **deux** familles sont refusées d'un `400` —
 		// le code que ce dialecte lit « pas maintenant », pas « pas ça ».
 		// `read_family` en tente deux par famille : **les quatre sont
 		// scriptées**, sans quoi la mock ne répond plus rien et `raw_get`,
@@ -979,7 +979,7 @@ mod tests {
 		// jusqu'à la fin du test.
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_BATTERY_INFO)
-			.reply_with(|req| reply_200_xml(req, batterie(20)))
+			.reply_with(|req| reply_200_xml(req, battery(20)))
 			.expect_msg(MSG_ID_GET_MOTION_DETECT)
 			.reply_with(|req| reply_err_code(req, 400))
 			.expect_msg(MSG_ID_GET_MOTION_DETECT)
@@ -1051,7 +1051,7 @@ mod tests {
 		// mock épuisée ne répond plus, ce qui n'apprendrait rien.
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_BATTERY_INFO)
-			.reply_with(|req| reply_200_xml(req, batterie(35)))
+			.reply_with(|req| reply_200_xml(req, battery(35)))
 			.build()
 			.await;
 		handle.set_bc_camera_for_test(Arc::new(BcCamera::from_mock_connection(mock).await));
@@ -1075,24 +1075,24 @@ mod tests {
 	fn the_guard_holds_the_window() {
 		let guard = BurstGuard::new(Duration::from_millis(500));
 		let start = Instant::now();
-		assert!(guard.prendre(start));
-		assert!(!guard.prendre(start + Duration::from_millis(10)), "la fenêtre court");
-		guard.liberer();
+		assert!(guard.take(start));
+		assert!(!guard.take(start + Duration::from_millis(10)), "la fenêtre court");
+		guard.release_guard();
 		assert!(
-			!guard.prendre(start + Duration::from_millis(60)),
+			!guard.take(start + Duration::from_millis(60)),
 			"une salve terminée dans la fenêtre ne relance rien"
 		);
-		assert!(guard.prendre(start + Duration::from_millis(600)), "fenêtre passée");
+		assert!(guard.take(start + Duration::from_millis(600)), "fenêtre passée");
 	}
 
 	/// Une famille que la caméra refuse depuis [`FAMILY_MAX_REFUSALS`] wakes ne
 	/// repart plus au budget ; une famille qui répond efface sa dette.
 	///
-	/// C'est la moitié qui protège la batterie : sans elle, « continuer après un
+	/// C'est la moitié qui protège la battery : sans elle, « continuer après un
 	/// `400` » signifierait racheter quatre portes fermées à chaque appui, tous
 	/// les jours, sur une sonnette sur pile.
 	#[test]
-	fn a_family_refused_trois_fois_sort_of_plan() {
+	fn a_family_refused_three_times_stays_out_of_the_plan() {
 		let guard = BurstGuard::new(Duration::from_millis(500));
 		assert!(!guard.family_saturated(Family::Image), "neuve, elle est dans le plan");
 		assert_eq!(guard.note_family_refused(Family::Image), 1);
@@ -1130,7 +1130,7 @@ mod tests {
 	/// session, et `image` — qui répond un bloc inconnu et efface ses valeurs —
 	/// doit être la dernière à partir, ou la première à rester sur le quai.
 	#[test]
-	fn motion_and_osd_pass_before_the_stays_and_image_after() {
+	fn motion_and_osd_pass_before_masks_and_image_after() {
 		let entries = [
 			Family::Audio,
 			Family::Image,
@@ -1163,7 +1163,7 @@ mod tests {
 	/// La borne est **haute** : aucun plan ne la dépasse, et une famille chère en
 	/// tête n'affame pas les autres.
 	#[test]
-	fn the_plan_not_exceeds_never_the_bound() {
+	fn the_plan_never_exceeds_the_bound() {
 		let toutes: Vec<Family> = Family::ALL.to_vec();
 		let plan = build_plan(&toutes, COMMAND_BUDGET);
 		assert!(
@@ -1197,7 +1197,7 @@ mod tests {
 
 	/// Une caméra sans MQTT ne lance rien : personne n'attend la lecture.
 	#[test]
-	fn without_mqtt_the_burst_not_part_not() {
+	fn without_mqtt_the_burst_does_not_start() {
 		on_worker(|| Box::pin(without_mqtt()));
 	}
 
@@ -1207,7 +1207,7 @@ mod tests {
 			CancellationToken::new(),
 			None,
 		));
-		let t = trigger(Arc::clone(&handle), Wake::Press).expect("la garde s'ouvre quand même");
+		let t = trigger(Arc::clone(&handle), Wake::Press).expect("the guard opens all the same");
 		t.await.expect("pas de panique");
 		assert_eq!(handle.wake_lock().count(), 0);
 	}

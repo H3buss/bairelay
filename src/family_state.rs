@@ -110,7 +110,7 @@ fn path() -> Option<&'static Path> {
 /// avec un avertissement quand le fichier était bien là mais ne se laisse pas
 /// lire. Un état impossible à lire doit se confondre avec « on ne sait pas
 /// encore », jamais empêcher le pont de démarrer.
-fn charger(path: &Path, camera: &str) -> Vec<Family> {
+fn load_saved(path: &Path, camera: &str) -> Vec<Family> {
 	let brut = match std::fs::read_to_string(path) {
 		Ok(brut) => brut,
 		// Absent : le cas normal au premier démarrage, et après une
@@ -160,17 +160,17 @@ fn charger(path: &Path, camera: &str) -> Vec<Family> {
 ///
 /// `Vec` vide quand [`set_path`] n'a pas dst appelé, quand le fichier est
 /// absent, ou quand cette caméra n'y figure pas encore : la salve ne lit alors
-/// que la batterie. C'est voulu — rien ici ne devine une famille, et une famille
+/// que la battery. C'est voulu — rien ici ne devine une famille, et une famille
 /// qu'on n'a jamais lue n'a rien à faire dans une salve payée en radio.
-pub(crate) fn families_prouvees(camera: &str) -> Vec<Family> {
+pub(crate) fn proven_families(camera: &str) -> Vec<Family> {
 	let Some(path) = path() else {
 		return Vec::new();
 	};
-	let connues = charger(path, camera);
+	let connues = load_saved(path, camera);
 	if connues.is_empty() {
 		return Vec::new();
 	}
-	// L'ordre du protocole plutôt que celui du fichier : `charger` rend les slugs
+	// L'ordre du protocole plutôt que celui du fichier : `load_saved` rend les slugs
 	// dans l'ordre où le JSON les a écrits, et la salve doit partir des familles
 	// dont l'opératrice se soucie en premier, pas de l'ordre alphabétique.
 	Family::ALL
@@ -186,7 +186,7 @@ pub(crate) fn families_prouvees(camera: &str) -> Vec<Family> {
 /// puis renommage. Le renommage par-dessus un fichier existant échoue sur
 /// Windows, d'où le retrait juste avant — la fenêtre entre les deux n'expose
 /// qu'à lire « absent », ce qui est déjà un cas traité.
-fn sauver(path: &Path, camera: &str, families: &[Family]) -> io::Result<()> {
+fn save(path: &Path, camera: &str, families: &[Family]) -> io::Result<()> {
 	let mut state = std::fs::read_to_string(path)
 		.ok()
 		.and_then(|brut| serde_json::from_str::<ReadFamilies>(&brut).ok())
@@ -239,12 +239,12 @@ pub fn prime(publisher: &DiscoveryPublisher, camera: &str) {
 	if deja {
 		return;
 	}
-	prime_in(path, publisher, camera);
+	prime_wakes_nothing(path, publisher, camera);
 }
 
 /// Même chose, emplacement explicite — la forme que testent les tests.
-fn prime_in(path: &Path, publisher: &DiscoveryPublisher, camera: &str) {
-	let families = charger(path, camera);
+fn prime_wakes_nothing(path: &Path, publisher: &DiscoveryPublisher, camera: &str) {
+	let families = load_saved(path, camera);
 	if families.is_empty() {
 		return;
 	}
@@ -264,10 +264,10 @@ fn prime_in(path: &Path, publisher: &DiscoveryPublisher, camera: &str) {
 
 /// Mémorise l'état d'une caméra, avec l'emplacement retenu. Ne fait rien si
 /// aucun emplacement n'est résolu.
-pub fn enregistrer(publisher: &DiscoveryPublisher, camera: &str) {
+pub fn record(publisher: &DiscoveryPublisher, camera: &str) {
 	let Some(path) = path() else { return };
 	let families: Vec<Family> = publisher.writable_families(camera).into_iter().collect();
-	if let Err(e) = sauver(path, camera, &families) {
+	if let Err(e) = save(path, camera, &families) {
 		tracing::warn!(
 			camera,
 			path = %path.display(),
@@ -284,7 +284,7 @@ mod tests {
 	/// Un path unique par test, dans le répertoire temporaire : ces tests
 	/// écrivent vraiment sur le disque (c'est ce qu'ils testent), mais jamais
 	/// dans le dépôt et jamais au même endroit.
-	fn path_test(nom: &str) -> PathBuf {
+	fn a_path_setting_test(nom: &str) -> PathBuf {
 		let mut path = std::env::temp_dir();
 		path.push(format!(
 			"bairelay-families-read-{}-{}.json",
@@ -295,12 +295,12 @@ mod tests {
 	}
 
 	#[test]
-	fn a_family_prouvee_retrouve_its_place_without_the_camera() {
-		let path = path_test("aller-retour");
+	fn a_proven_family_is_found_again_without_the_camera() {
+		let path = a_path_setting_test("aller-retour");
 		let _ = std::fs::remove_file(&path);
 
 		// Ce que le pont a appris : image et audio sont modifiables.
-		sauver(&path, "Sonnette", &[Family::Image, Family::Audio, Family::Image])
+		save(&path, "Sonnette", &[Family::Image, Family::Audio, Family::Image])
 			.expect("écriture de l'état");
 		assert!(
 			!path.with_file_name(format!("{}.tmp", std::process::id())).exists(),
@@ -309,38 +309,38 @@ mod tests {
 
 		// Ce que le redémarrage en conclut, sans caméra.
 		assert_eq!(
-			charger(&path, "Sonnette"),
+			load_saved(&path, "Sonnette"),
 			vec![Family::Audio, Family::Image],
 			"l'ordre vient du fichier, les doublons sont tombés"
 		);
-		assert!(charger(&path, "Autre camera").is_empty(), "une autre caméra ne voit rien");
+		assert!(load_saved(&path, "Autre camera").is_empty(), "une autre caméra ne voit rien");
 
 		let _ = std::fs::remove_file(&path);
 	}
 
 	#[test]
-	fn a_fichier_corrompu_not_freine_nothing_and_itself_repriture() {
-		let path = path_test("corrompu");
+	fn a_corrupt_file_blocks_nothing_and_is_repaired() {
+		let path = a_path_setting_test("corrompu");
 		std::fs::write(&path, "{ ce n'est pas du json").expect("fixture");
-		assert!(charger(&path, "Sonnette").is_empty(), "corrompu = on ne sait pas encore");
+		assert!(load_saved(&path, "Sonnette").is_empty(), "corrompu = on ne sait pas encore");
 
 		// Et la première écriture qui suit reprend la main sur le fichier.
-		sauver(&path, "Sonnette", &[Family::Pir]).expect("réécriture");
-		assert_eq!(charger(&path, "Sonnette"), vec![Family::Pir]);
+		save(&path, "Sonnette", &[Family::Pir]).expect("réécriture");
+		assert_eq!(load_saved(&path, "Sonnette"), vec![Family::Pir]);
 
 		let _ = std::fs::remove_file(&path);
 	}
 
 	#[test]
-	fn a_slug_inconnu_not_passes_not() {
-		let path = path_test("slug");
+	fn an_unknown_slug_does_not_pass() {
+		let path = a_path_setting_test("slug");
 		std::fs::write(
 			&path,
 			r#"{"version":1,"cameras":{"Sonnette":["audio","family-inventee"]}}"#,
 		)
 		.expect("fixture");
 		assert_eq!(
-			charger(&path, "Sonnette"),
+			load_saved(&path, "Sonnette"),
 			vec![Family::Audio],
 			"un slug que le pont ne connaît pas n'invente pas une famille"
 		);
@@ -348,29 +348,29 @@ mod tests {
 	}
 
 	#[test]
-	fn a_version_unknown_is_ignored() {
-		let path = path_test("version");
+	fn an_unknown_version_is_ignored() {
+		let path = a_path_setting_test("version");
 		std::fs::write(&path, r#"{"version":99,"cameras":{"Sonnette":["audio"]}}"#)
 			.expect("fixture");
-		assert!(charger(&path, "Sonnette").is_empty(), "un format inconnu ne se devine pas");
+		assert!(load_saved(&path, "Sonnette").is_empty(), "un format inconnu ne se devine pas");
 		let _ = std::fs::remove_file(&path);
 	}
 
 	#[test]
-	fn the_other_cameras_sont_preservees() {
-		let path = path_test("voisines");
+	fn the_other_cameras_are_preserved() {
+		let path = a_path_setting_test("voisines");
 		let _ = std::fs::remove_file(&path);
-		sauver(&path, "Sonnette", &[Family::Audio]).expect("première caméra");
-		sauver(&path, "Garage", &[Family::Image]).expect("seconde caméra");
-		assert_eq!(charger(&path, "Sonnette"), vec![Family::Audio]);
-		assert_eq!(charger(&path, "Garage"), vec![Family::Image]);
+		save(&path, "Sonnette", &[Family::Audio]).expect("première caméra");
+		save(&path, "Garage", &[Family::Image]).expect("seconde caméra");
+		assert_eq!(load_saved(&path, "Sonnette"), vec![Family::Audio]);
+		assert_eq!(load_saved(&path, "Garage"), vec![Family::Image]);
 
 		// Une famille qui retombe en lecture seule sort du fichier — sinon le
 		// pont repartirait modifiable sur une preuve qu'il vient de retirer.
-		sauver(&path, "Sonnette", &[]).expect("retrait");
-		assert!(charger(&path, "Sonnette").is_empty());
+		save(&path, "Sonnette", &[]).expect("retrait");
+		assert!(load_saved(&path, "Sonnette").is_empty());
 		assert_eq!(
-			charger(&path, "Garage"),
+			load_saved(&path, "Garage"),
 			vec![Family::Image],
 			"retirer une caméra n'efface pas les autres"
 		);
@@ -379,7 +379,7 @@ mod tests {
 	}
 
 	#[test]
-	fn definir_path_itself_lands_a_side_of_the_config() {
+	fn a_defined_path_lands_next_to_the_config() {
 		// La règle d'emplacement est vérifiée sans toucher au global : même
 		// répertoire, nom propre, et le fichier de config lui-même intact.
 		let config = Path::new("/config/bairelay/bairelay.toml");

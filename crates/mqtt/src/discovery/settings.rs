@@ -72,7 +72,7 @@ pub struct DiscoveryText {
 
 /// Un capteur d'état dont l'unité peut être absente.
 ///
-/// `DiscoverySensor` (le struct historique, pour la batterie) impose une
+/// `DiscoverySensor` (le struct historique, pour la battery) impose une
 /// unité. Plusieurs états de réglages n'en ont **aucune** de documentée — le
 /// `<signal>` du Wi-Fi est un nombre dont personne ne sait s'il est en dBm ou
 /// en pourcents. Leur rendre une unité serait un mensonge affiché dans HA,
@@ -219,7 +219,7 @@ impl EntitySpec {
 	/// il n'y a rien à afficher, seulement quelque chose à déclencher. Le publier
 	/// avant que la caméra ait confirmé le carillon, ce serait promettre un bouton
 	/// qui ne sonne pas — exactement le reproche fait à la version d'origine.
-	pub fn build_selon(
+	pub fn build_from(
 		&self,
 		ctx: &DiscoveryContext,
 		friendly: &str,
@@ -919,7 +919,7 @@ pub fn build_feature_entities(
 			// cas ne se présente pas.
 			let writable =
 				Family::from_slug(spec.family).is_some_and(|f| writable.contains(&f));
-			spec.build_selon(ctx, &friendly, writable)
+			spec.build_from(ctx, &friendly, writable)
 		})
 		.collect()
 }
@@ -968,7 +968,7 @@ mod tests {
 	}
 
 	#[test]
-	fn family_and_leaf_sont_the_slugs_ascii() {
+	fn family_and_leaf_are_ascii_slugs() {
 		for spec in SPECS {
 			for slug in [spec.family, spec.leaf] {
 				assert!(
@@ -983,7 +983,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_topics_of_control_correspondent_au_parsing() {
+	fn the_control_topics_match_the_parsing() {
 		// Le pont `control/<famille>/<feuille>` n'est accepté que pour les
 		// familles/feuilles que `crate::settings` sait parser : une spec qui
 		// diverge créerait une entité HA dont la commande est ignorée.
@@ -1020,7 +1020,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_numbers_sont_bounds_and_coherents() {
+	fn the_numbers_are_bounded_and_coherent() {
 		for spec in SPECS {
 			if let EntityKind::Number { min, max, step, .. } = spec.kind {
 				assert!(
@@ -1034,7 +1034,7 @@ mod tests {
 	}
 
 	#[test]
-	fn payload_number_serialise_the_champs_ha() {
+	fn payload_number_serialises_the_ha_fields() {
 		let c = ctx();
 		let spec = SPECS
 			.iter()
@@ -1080,7 +1080,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_sensor_en_read_seule_a_not_of_command_topic() {
+	fn a_read_only_sensor_has_no_command_topic() {
 		let c = ctx();
 		let mut vus = 0;
 		for spec in SPECS {
@@ -1103,7 +1103,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_sensor_wifi_affiche_no_unite() {
+	fn the_wifi_sensor_shows_no_unit() {
 		let c = ctx();
 		let spec = SPECS
 			.iter()
@@ -1118,7 +1118,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_button_chime_publishes_a_id_of_melody() {
+	fn the_chime_button_publishes_a_melody_id() {
 		let c = ctx();
 		let spec = SPECS
 			.iter()
@@ -1132,7 +1132,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_options_of_select_sont_the_textes_camera() {
+	fn the_select_options_are_the_camera_texts() {
 		let c = ctx();
 		let spec = SPECS
 			.iter()
@@ -1150,7 +1150,7 @@ mod tests {
 	/// entité, et « Volume interphone » écrivait `<talkAndReplyVolume>` sans le
 	/// dire à personne.
 	#[test]
-	fn the_trois_volumes_sont_trois_entities_distinctes() {
+	fn the_three_volumes_are_three_separate_entities() {
 		let c = ctx();
 		let audio: Vec<&EntitySpec> = specs_for(Feature::Audio).collect();
 		let attendus = [
@@ -1191,7 +1191,7 @@ mod tests {
 	/// bouton n'est pas publié du tout. Relue, la même famille retrouve ses
 	/// commandes **sans changer d'identifiant**.
 	#[test]
-	fn a_family_not_reread_itself_publishes_without_no_command() {
+	fn a_family_not_reread_publishes_without_a_command() {
 		let c = ctx();
 		let non_read: HashSet<Family> = HashSet::new();
 		let read: HashSet<Family> = [Family::Audio].into_iter().collect();
@@ -1235,13 +1235,13 @@ mod tests {
 	/// l'état compréhensible (l'unité) et perd ce qui serait un mensonge (les
 	/// bornes d'écriture, et un `state_class` sur du texte).
 	#[test]
-	fn the_copie_lisible_kept_the_unite_and_perd_the_bounds() {
+	fn the_readable_copy_keeps_the_unit_and_drops_the_bounds() {
 		let c = ctx();
 		let spec = SPECS
 			.iter()
 			.find(|s| s.family == "audio" && s.leaf == "general_volume")
 			.expect("spec audio/general_volume");
-		let (topic, payload) = spec.build_selon(&c, "Porche", false).expect("jumeau lisible");
+		let (topic, payload) = spec.build_from(&c, "Porche", false).expect("jumeau lisible");
 		assert_eq!(
 			topic,
 			"homeassistant/sensor/bairelay_cam1_audio_general_volume/config",
@@ -1260,7 +1260,7 @@ mod tests {
 			.iter()
 			.find(|s| s.family == "audio" && s.leaf == "visitor_loudspeaker")
 			.expect("spec audio/visitor_loudspeaker");
-		let (topic, payload) = switch.build_selon(&c, "Porche", false).expect("jumeau lisible");
+		let (topic, payload) = switch.build_from(&c, "Porche", false).expect("jumeau lisible");
 		assert_eq!(
 			topic,
 			"homeassistant/binary_sensor/bairelay_cam1_audio_visitor_loudspeaker/config"
@@ -1274,7 +1274,7 @@ mod tests {
 			.iter()
 			.find(|s| matches!(s.kind, EntityKind::Button { .. }))
 			.expect("une spec button");
-		assert!(bouton.build_selon(&c, "Porche", false).is_none());
+		assert!(bouton.build_from(&c, "Porche", false).is_none());
 		assert_eq!(bouton.read_only_platform(), None);
 	}
 
@@ -1282,7 +1282,7 @@ mod tests {
 	/// `state_class: measurement` sur une langue ou un jour de la semaine
 	/// remplirait le journal de Home Assistant d'avertissements d'incompatibilité.
 	#[test]
-	fn a_state_textual_is_never_marks_mesure() {
+	fn a_textual_state_is_never_marked_measured() {
 		let c = ctx();
 		let mut vus = 0;
 		for spec in SPECS {
@@ -1290,7 +1290,7 @@ mod tests {
 				continue;
 			}
 			vus += 1;
-			let (_, payload) = spec.build_selon(&c, "Porche", false).expect("jumeau lisible");
+			let (_, payload) = spec.build_from(&c, "Porche", false).expect("jumeau lisible");
 			let v: serde_json::Value = serde_json::from_slice(&payload).expect("json");
 			let ou = format!("{}/{}", spec.family, spec.leaf);
 			assert!(v.get("state_class").is_none(), "{ou} mesuré alors que c'est du texte");
@@ -1308,9 +1308,9 @@ mod tests {
 	/// les deux blocs, le pont puis la présence, comme les entités historiques.
 	/// Un oubli ici se répéterait sur toutes les entités du tableau.
 	#[test]
-	fn each_entity_of_setting_carries_the_deux_blocks_of_availability() {
+	fn each_setting_entity_carries_both_availability_blocks() {
 		let c = ctx();
-		let mut vues = 0;
+		let mut seen = 0;
 		for spec in SPECS {
 			let (_, payload) = spec.build(&c, "Porche");
 			let v: serde_json::Value = serde_json::from_slice(&payload).expect("json");
@@ -1339,8 +1339,8 @@ mod tests {
 				"{}.{}",
 				spec.family, spec.leaf
 			);
-			vues += 1;
+			seen += 1;
 		}
-		assert!(vues > 0, "aucune spec de réglage n'a dst vérifiée");
+		assert!(seen > 0, "aucune spec de réglage n'a dst vérifiée");
 	}
 }

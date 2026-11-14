@@ -544,7 +544,7 @@ impl CameraHandle {
 	///
 	/// Appelé après une écriture avec relecture, après `query/settings` (une
 	/// entrée par famille relue) et après un aperçu. Jamais sur minuterie : la
-	/// batterie de la sonnette est la raison pour laquelle le pont n'interroge
+	/// battery de la sonnette est la raison pour laquelle le pont n'interroge
 	/// pas la caméra tout seul.
 	// `pub(crate)` : le verdict voyage dans une signature, et [`crate::settings::Verdict`]
 	// reste interne au bin — une méthode `pub` qui le montrerait exposerait une
@@ -576,7 +576,7 @@ impl CameraHandle {
 		// Persist the verdicts that just moved. This is the only place the bridge
 		// learns a family became (or stopped being) modifiable, and the next boot
 		// should not have to re-prove it over the radio.
-		crate::family_state::enregistrer(publisher, &self.config.name);
+		crate::family_state::record(publisher, &self.config.name);
 		true
 	}
 
@@ -780,7 +780,7 @@ impl CameraHandle {
 	/// demander dix blocs XML. Les sources sans abonné (créées puis laissées
 	/// vide par un lecteur RTSP parti) ne comptent pas : elles ne font plus
 	/// rouler la radio.
-	pub(crate) fn flux_in_flight(&self) -> bool {
+	pub(crate) fn stream_in_flight(&self) -> bool {
 		self.stream_sources
 			.read_recover()
 			.values()
@@ -1395,7 +1395,7 @@ impl CameraHandle {
 					self.held_press_window(),
 					// Un wake entendu sur l'alarme de session (appui,
 					// mouvement) ouvre la fenêtre de lecture de la salve :
-					// c'est la seule batterie qu'on puisse lire sans wake
+					// c'est la seule battery qu'on puisse lire sans wake
 					// payé. La poignée est la caméra elle-même ; la garde
 					// d'une salve par wake est dans `crate::burst`.
 					Some(Arc::clone(self)),

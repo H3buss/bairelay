@@ -560,7 +560,7 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn the_families_ronde_tripent_en_slugs() {
+	fn the_families_round_trip_as_slugs() {
 		for f in Family::ALL {
 			assert_eq!(Family::from_slug(f.slug()), Some(f), "slug {}", f.slug());
 		}
@@ -568,7 +568,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_volume_hors_range_not_part_not() {
+	fn an_out_of_range_volume_is_not_sent() {
 		assert_eq!(
 			SettingCommand::parse(Family::Audio, "volume", "100"),
 			Some(SettingCommand::AudioVolume("100".into()))
@@ -580,7 +580,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_denoiser_refuse_zero_and_accepts_hundred() {
+	fn the_denoiser_refuses_zero_and_accepts_hundred() {
 		// `level <= 0` éteint le débruiteur côté firmware : ce n'est pas une
 		// valeur de réglage, c'est un interrupteur déguisé.
 		assert_eq!(SettingCommand::parse(Family::Denoise, "level", "0"), None);
@@ -596,13 +596,13 @@ mod tests {
 	}
 
 	#[test]
-	fn the_sensibilite_mouvement_is_bornee_a_cinquante() {
+	fn the_motion_sensitivity_is_bounded_at_fifty() {
 		assert!(SettingCommand::parse(Family::Motion, "sensitivity", "50").is_some());
 		assert_eq!(SettingCommand::parse(Family::Motion, "sensitivity", "51"), None);
 	}
 
 	#[test]
-	fn the_interrupteurs_acceptent_the_trois_orthographes_ha() {
+	fn the_switches_accept_the_three_ha_spellings() {
 		for yes in ["on", "1", "true"] {
 			assert_eq!(
 				SettingCommand::parse(Family::Ntp, "enable", yes),
@@ -621,7 +621,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_zeros_of_remplissage_sont_normalises() {
+	fn the_padding_zeros_are_normalised() {
 		assert_eq!(
 			SettingCommand::parse(Family::Image, "bright", "007"),
 			Some(SettingCommand::ImageBright("7".into())),
@@ -630,7 +630,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_serveur_ntp_dubious_is_refuse() {
+	fn a_dubious_ntp_server_is_refused() {
 		assert!(SettingCommand::parse(Family::Ntp, "server", "pool.ntp.org").is_some());
 		assert!(SettingCommand::parse(Family::Ntp, "server", "192.168.1.10").is_some());
 		for suspect in ["", " ", "ntp; rm -rf /", "http://x", "a b", "a\nb", "x".repeat(64).as_str()]
@@ -644,7 +644,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_name_of_pere_printable_and_bound() {
+	fn a_parent_name_is_printable_and_bounded() {
 		assert!(SettingCommand::parse(Family::General, "device_name", "Porche").is_some());
 		assert!(SettingCommand::parse(Family::General, "device_name", "Entrée ✨").is_some());
 		assert_eq!(SettingCommand::parse(Family::General, "device_name", ""), None);
@@ -660,7 +660,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_text_counts_en_chars_not_en_bytes() {
+	fn the_text_counts_in_chars_not_bytes() {
 		// « Entrée » avec son é : 6 caractères, 7 octets en UTF-8. Une borne en
 		// octets refuserait des noms que la caméra accepte.
 		let ok = SettingCommand::parse(Family::Osd, "name", "Entrée");
@@ -668,7 +668,7 @@ mod tests {
 	}
 
 	#[test]
-	fn dst_offset_is_signed() {
+	fn the_dst_offset_is_signed() {
 		assert_eq!(
 			SettingCommand::parse(Family::Dst, "offset", "-1"),
 			Some(SettingCommand::DstOffset("-1".into()))
@@ -678,7 +678,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_chime_accepts_melody_seule_ou_pair_complet() {
+	fn the_chime_accepts_a_melody_alone_or_a_full_pair() {
 		assert_eq!(
 			SettingCommand::parse(Family::Chime, "ring", "3"),
 			Some(SettingCommand::ChimeRing {
@@ -698,8 +698,8 @@ mod tests {
 	}
 
 	#[test]
-	fn a_leaf_read_seule_is_not_commandable() {
-		// Le Wi-Fi, la veille, les masques et la batterie n'ont pas de SET :
+	fn a_read_only_leaf_is_not_commandable() {
+		// Le Wi-Fi, la veille, les masques et la battery n'ont pas de SET :
 		// une commande doit être refusée, pas ignorée en silence.
 		for (family, leaf) in [
 			(Family::Wifi, "signal"),
@@ -719,7 +719,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_leaf_unknown_of_a_family_known_is_refused() {
+	fn an_unknown_leaf_of_a_known_family_is_refused() {
 		assert_eq!(SettingCommand::parse(Family::Ntp, "mot_de_passe", "x"), None);
 	}
 
@@ -732,7 +732,7 @@ mod tests {
 	}
 
 	#[test]
-	fn accepts_is_the_mirror_of_parse() {
+	fn accepts_mirror_parse() {
 		assert!(accepts("audio", "volume"));
 		assert!(accepts("chime", "ring"));
 		assert!(accepts("chime", "volume"));
@@ -747,7 +747,7 @@ mod tests {
 	/// 0-100 hérité du volume général. Une valeur hors de cette plage ne part
 	/// pas : le 485 stockerait et répondrait 200, ce qui est un « OK » mensonger.
 	#[test]
-	fn volume_of_chime_not_sort_not_of_the_range_seen() {
+	fn a_chime_volume_never_leaves_the_observed_range() {
 		for v in ["0", "2", "4"] {
 			let cmd = SettingCommand::parse(Family::Chime, "volume", v)
 				.unwrap_or_else(|| panic!("« {v} » est dans la plage documentée"));

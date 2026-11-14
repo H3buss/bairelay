@@ -34,7 +34,7 @@ const PRESENCE_OFFLINE: u8 = 2;
 /// Dernier verdict de présence publié pour une caméra, partagé par tous les
 /// publieurs de cette caméra.
 ///
-/// Une sonnette sur batterie ouvre et ferme sa session des dizaines de fois par
+/// Une sonnette sur battery ouvre et ferme sa session des dizaines de fois par
 /// jour. Sans cet état partagé, chaque wake republierait `reachable`, et un
 /// courtier domestique ne veut pas de cinquante messages identiques par heure.
 /// Une publication ne part donc que sur une transition. La bascule atomique
@@ -78,7 +78,7 @@ impl PublishedPresence {
 	/// échoué, et seulement tant que le code courant est encore celui de la
 	/// transition ratée. Sans ce retour, la cellule prétendrait un verdict absent
 	/// du courtier, et le prochain contact ne republierait plus jamais rien.
-	fn annuler(&self, cible: u8, previous: u8) {
+	fn cancel(&self, cible: u8, previous: u8) {
 		let _ = self
 			.0
 			.compare_exchange(cible, previous, Ordering::AcqRel, Ordering::Acquire);
@@ -146,7 +146,7 @@ impl<'a> StatusPublisher<'a> {
 	/// en message conservé sur [`topics::presence`], seulement quand le verdict
 	/// change.
 	///
-	/// La présence ne suit pas la session : une sonnette sur batterie ferme la
+	/// La présence ne suit pas la session : une sonnette sur battery ferme la
 	/// sienne quelques instants après chaque wake, et la suivre griserait tout le
 	/// tableau de bord pendant le sommeil. Elle se déduit de trois événements qui
 	/// ont déjà lieu — démarrage du pont, session ouverte, tentative qui renonce —
@@ -169,7 +169,7 @@ impl<'a> StatusPublisher<'a> {
 		{
 			Ok(()) => Ok(()),
 			Err(e) => {
-				self.presence.annuler(cible, previous);
+				self.presence.cancel(cible, previous);
 				Err(e)
 			}
 		}
@@ -623,7 +623,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn a_setting_itself_publishes_on_its_leaf_conservee() {
+	async fn a_setting_publishes_on_its_own_retained_leaf() {
 		let (c, mock) = crate::test_support::mock_client();
 		let pub_ = StatusPublisher::new(&c, "bairelay", "cam1");
 		pub_.publish_setting(Family::Audio, "volume", "42")
@@ -658,7 +658,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn a_setting_refuse_is_not_publishes_mais_clears() {
+	async fn a_refused_setting_is_not_published_but_clears() {
 		// La caméra n'a pas répondu : on efface l'état conservé, on ne met pas
 		// une valeur par défaut. Un capteur « inconnu » est honnête ; un « 0 »
 		// conservé ne l'est pas.
@@ -684,7 +684,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn the_cause_of_a_family_is_kept_then_clears() {
+	async fn the_reason_for_a_family_is_kept_then_cleared() {
 		// Le refus d'une famille doit rester lisible après coup : conservé, et
 		// effacé (et non remplacé par une phrase triomphante) dès que la famille
 		// a répondu.
@@ -712,7 +712,7 @@ mod tests {
 	/// dix lignes de trace : `publishable_reason` est la dernière barrière, et
 	/// c'est elle qui tient la promesse, pas la vigilance des appelants.
 	#[test]
-	fn a_cause_not_carries_ni_xml_ni_secret() {
+	fn a_reason_carries_neither_xml_nor_secrets() {
 		// Le nom de la balise est l'information utile ; seuls ses délimiteurs
 		// disparaissent.
 		assert_eq!(
@@ -761,7 +761,7 @@ mod tests {
 	/// seconde. Sans ce garde-fou, cinquante wakes par heure écriraient cinquante
 	/// fois le même message conservé sur un courtier domestique.
 	#[tokio::test]
-	async fn the_presence_not_publishes_que_on_transition() {
+	async fn presence_publishes_only_on_transition() {
 		let (c, mock) = crate::test_support::mock_client();
 		let state = Arc::new(PublishedPresence::default());
 		let publ = StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&state));
@@ -800,7 +800,7 @@ mod tests {
 	/// cellule doit donc porter la déduplication au-delà des instances : sinon elle
 	/// saute dès que deux endroits publient.
 	#[tokio::test]
-	async fn the_presence_itself_deduplique_enters_deux_publieurs() {
+	async fn presence_is_deduplicated_between_two_publishers() {
 		let (c, mock) = crate::test_support::mock_client();
 		let state = Arc::new(PublishedPresence::default());
 		StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&state))

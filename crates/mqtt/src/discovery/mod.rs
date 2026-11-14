@@ -73,7 +73,7 @@ pub enum Feature {
 	/// `<OsdDatetime>` + `<OsdChannelName>` (44/45).
 	Osd,
 	/// Les réglages de `<MD>` (46/47). Distinct de `Motion`, qui est le
-	/// capteur d'événement : couper l'un ne coupe pas l'autre.
+	/// capteur d'événement : cut l'un ne coupe pas l'autre.
 	MotionSettings,
 	/// `<Ntp>` (38/39).
 	Ntp,
@@ -90,7 +90,7 @@ pub enum Feature {
 	/// `<WifiSignal>` (115) — lecture seule.
 	WifiSignal,
 	/// Les états bonus de `<BatteryInfo>` (253) : tension, courant,
-	/// température, état de charge, batterie faible.
+	/// température, état de charge, battery faible.
 	BatteryExtra,
 	/// Le carillon appairé (483-487, 609, 610).
 	Chime,
@@ -452,7 +452,7 @@ fn unique(prefix: &str, cam: &str, suffix: &str) -> String {
 /// Disponibilite de toutes les entites de l'appareil : le processus du pont.
 /// Rattachee a `{prefix}/status` — `online` a chaque ConnAck, `offline` par
 /// le dernier message du courtier — et jamais a une session avec l'appareil :
-/// pour un carillon sur batterie la session se ferme quelques instants apres
+/// pour un carillon sur battery la session se ferme quelques instants apres
 /// chaque reveil, et la rattacher a la session masquait les cent
 /// quatre-vingt-six entites d'un coup, valeurs retenues comprises.
 ///
@@ -1025,7 +1025,7 @@ mod tests {
 	}
 
 	#[test]
-	fn each_feature_of_setting_produces_the_entities() {
+	fn each_setting_feature_produces_entities() {
 		// `Feature::ALL` sans entrée dans `SPECS` = une fonctionnalité activée
 		// dans la config qui n'émet rien, sans le moindre message.
 		for f in Feature::ALL {
@@ -1579,7 +1579,7 @@ mod tests {
 	/// rendrait une entité disponible alors que la caméra est injoignable, et aucun
 	/// autre test ne le verrait.
 	#[test]
-	fn all_the_entities_carry_the_deux_blocks_of_availability() {
+	fn every_entity_carries_both_availability_blocks() {
 		let f = Fixture::new("bairelay");
 		let caps = CameraCapabilitiesView {
 			has_ptz: true,
@@ -1611,7 +1611,7 @@ mod tests {
 			("select préréglage", build_ptz_presets(&ctx)),
 			("button redémarrer", build_reboot(&ctx)),
 			("button sirène", build_siren(&ctx)),
-			("sensor batterie", build_battery(&ctx)),
+			("sensor battery", build_battery(&ctx)),
 			("event appui", build_doorbell(&ctx)),
 		] {
 			let (topic, payload) =
@@ -1619,7 +1619,7 @@ mod tests {
 			assert!(!topic.is_empty(), "{nom} : topic vide");
 			emitted.push((nom.to_string(), payload));
 		}
-		let mut vues = 0;
+		let mut seen = 0;
 		for (nom, payload) in build_pt_buttons(&ctx)
 			.into_iter()
 			.chain(build_ai_binary_sensors(&ctx).into_iter())
@@ -1640,9 +1640,9 @@ mod tests {
 			);
 			assert_eq!(blocs[1]["payload_available"], "reachable", "{nom}");
 			assert_eq!(blocs[1]["payload_not_available"], "unreachable", "{nom}");
-			vues += 1;
+			seen += 1;
 		}
 		// Boutons PTZ (4) + capteurs IA (5) + les douze entités nommées plus haut.
-		assert_eq!(vues, 21, "le jeu testé a changé de taille");
+		assert_eq!(seen, 21, "le jeu testé a changé de taille");
 	}
 }

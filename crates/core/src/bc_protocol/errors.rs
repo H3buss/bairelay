@@ -67,7 +67,7 @@ pub enum Error {
 	/// servir une seule famille de commandes serait payer l'orchestre pour un
 	/// soliste.
 	///
-	/// Le `detail` est **déjà borné** (voir `couper` côté réglages) ; il
+	/// Le `detail` est **déjà borné** (voir `cut` côté réglages) ; il
 	/// n'est jamais publié tel quel, `publishable_reason` s'en charge plus haut.
 	#[error(
 		"Camera refused msg {id} with code {code}: {detail}"

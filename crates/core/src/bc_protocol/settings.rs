@@ -144,7 +144,7 @@ impl BcCamera {
 		// [`forme_de_trame`], mesurée à la sonde MQTT le 13/11 sur cette
 		// sonnette. Quatre lectures changeaient d'avis rien qu'en ajoutant
 		// l'extension qui nomme le channel.
-		let (canal_entete, canal_extension) = forme_of_frame(msg_id, self.channel_id);
+		let (canal_entete, canal_extension) = frame_shape(msg_id, self.channel_id);
 		let req = Bc {
 			meta: BcMeta {
 				msg_id,
@@ -197,7 +197,7 @@ impl BcCamera {
 				"msg {} refusé en {} — réponse de la caméra : {}",
 				msg.meta.msg_id,
 				msg.meta.response_code,
-				couper(&returned, 400)
+				cut(&returned, 400)
 			);
 			// Le texte voyage avec l'erreur, et pas seulement dans le journal :
 			// c'est lui que l'opératrice lira sur `status/<famille>/reason`,
@@ -205,7 +205,7 @@ impl BcCamera {
 			return Err(Error::CameraRefused {
 				id: msg.meta.msg_id,
 				code: msg.meta.response_code,
-				detail: couper(&returned, 200),
+				detail: cut(&returned, 200),
 			});
 		}
 		Ok(msg)
@@ -314,7 +314,7 @@ impl BcCamera {
 		// Même règle que la lecture ([`forme_de_trame`]) : le SET partait avec
 		// la trame d'avant et la caméra répondait `400`, mesuré le 13/11 au
 		// soir en basculant la détection de mouvement depuis Home Assistant.
-		let (canal_entete, canal_extension) = forme_of_frame(msg_id, self.channel_id);
+		let (canal_entete, canal_extension) = frame_shape(msg_id, self.channel_id);
 		let meta = BcMeta {
 			msg_id,
 			channel_id: canal_entete,
@@ -421,10 +421,10 @@ impl BcCamera {
 
 	// ── Veille (574) et signal Wi-Fi (115) — lecture seule ──────────────
 
-	/// Lit `<sleepState>` (msg 574) : la caméra sur batterie dort-elle ?
+	/// Lit `<sleepState>` (msg 574) : la caméra sur battery dort-elle ?
 	///
 	/// Verdict seule : aucun setter n'est documenté, et endormir un appareil
-	/// sur batterie par une écriture de réglage n'est pas le rôle de ce pont.
+	/// sur battery par une écriture de réglage n'est pas le rôle de ce pont.
 	/// C'est aussi la seule façon de le savoir **sans le wakeler**.
 	pub async fn get_sleep_state(&self) -> Result<SleepState> {
 		let msg = self.raw_get(MSG_ID_GET_SLEEP_STATE).await?;
@@ -717,7 +717,7 @@ mod tests {
 	// ── NTP ─────────────────────────────────────────────────────────────
 
 	#[tokio::test]
-	async fn get_ntp_relaye_the_text_camera() {
+	async fn get_ntp_relays_the_camera_text() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_NTP)
 			.reply_with(ntp_reply)
@@ -732,7 +732,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn get_ntp_distingue_refusal_and_empty() {
+	async fn get_ntp_tells_refusal_apart_from_empty() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_NTP)
 			.reply_with(|req| reply_err_code(req, 400))
@@ -757,7 +757,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn get_ntp_200_without_block_is_inintelligible() {
+	async fn get_ntp_200_without_block_is_unintelligible() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_NTP)
 			.reply_with(reply_200_empty)
@@ -771,7 +771,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_ntp_retourne_the_reread_and_not_the_request() {
+	async fn set_ntp_returns_the_reread_not_the_request() {
 		// Caméra têtue : elle acquitte le 39 mais garde son serveur. La valeur
 		// retournée doit être celle de la relecture.
 		let mock = MockConnection::new()
@@ -807,10 +807,10 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_ntp_rejete_not_rereads_not() {
+	async fn a_rejected_ntp_set_does_not_reread() {
 		// Le script ne prévoit délibérément aucun 38 : une relecture après un
 		// refus échouerait le mock — c'est l'assertion voulue (une octave de
-		// radio économisée sur un appareil sur batterie).
+		// radio économisée sur un appareil sur battery).
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_NTP)
 			.reply_with(|req| reply_err_code(req, 409))
@@ -827,7 +827,7 @@ mod tests {
 	// ── Débruitage micro ────────────────────────────────────────────────
 
 	#[tokio::test]
-	async fn get_ai_denoise_accepts_the_version_majuscule() {
+	async fn get_ai_denoise_accepts_the_capitalised_version() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_AI_DENOISE)
 			.reply_with(|req| {
@@ -848,7 +848,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_ai_denoise_renvoie_the_casse_read_without_inventer_the_other() {
+	async fn set_ai_denoise_returns_the_case_as_read_without_inventing_the_other() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_AI_DENOISE)
 			.reply_with(|req| {
@@ -925,7 +925,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn get_image_cfg_apporte_the_deux_blocks() {
+	async fn get_image_cfg_brings_both_blocks() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_IMAGE)
 			.reply_with(image_reply)
@@ -945,7 +945,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_image_cfg_renvoie_the_deux_blocks_au_25() {
+	async fn set_image_cfg_sends_both_blocks_back_at_25() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_IMAGE)
 			.reply_with(|req| {
@@ -982,7 +982,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn get_image_cfg_200_without_block_is_inintelligible() {
+	async fn get_image_cfg_200_without_block_is_unintelligible() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_IMAGE)
 			.reply_with(reply_200_empty)
@@ -1035,7 +1035,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn get_osd_cfg_apporte_the_deux_blocks() {
+	async fn get_osd_cfg_brings_both_blocks() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_OSD)
 			.reply_with(osd_reply)
@@ -1051,7 +1051,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_osd_cfg_renvoie_the_deux_blocks_without_recalculer_the_coordonnees() {
+	async fn set_osd_cfg_sends_both_blocks_back_without_recomputing_coordinates() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_OSD)
 			.reply_with(|req| {
@@ -1112,7 +1112,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn motion_on_md_writes_without_abimer_the_zones() {
+	async fn motion_on_md_writes_without_damaging_the_zones() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_MOTION_DETECT)
 			.reply_with(md_reply)
@@ -1142,7 +1142,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_forme_of_frame_is_bornee_aux_quatre_families_mesurees() {
+	fn the_frame_shape_is_bounded_to_the_four_measured_families() {
 		// Ces quatre familles refusaient sans rien dire ; la mesure du 13/11 dit
 		// qu'il leur faut le channel, dans l'extension et dans l'en-tête — en
 		// lecture, et en écriture par symétrie (le `47` refuse sans lui).
@@ -1157,7 +1157,7 @@ mod tests {
 			MSG_ID_SET_PRIVACY_MASK,
 		] {
 			assert_eq!(
-				forme_of_frame(id, 7),
+				frame_shape(id, 7),
 				(0, Some(0)),
 				"le msg {id} doit partir avec le channel 0 partout"
 			);
@@ -1171,7 +1171,7 @@ mod tests {
 			MSG_ID_BATTERY_INFO,
 		] {
 			assert_eq!(
-				forme_of_frame(id, 7),
+				frame_shape(id, 7),
 				(7, None),
 				"le msg {id} doit garder sa trame d'aujourd'hui"
 			);
@@ -1179,7 +1179,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn ecrire_the_mouvement_port_the_channel_comme_the_read() {
+	async fn writing_motion_carries_the_channel_like_the_read() {
 		// Home Assistant basculait l'interrupteur sans effet : le `47` partait
 		// sans l'extension et la caméra répondait `400`. Le SET doit donc partir
 		// avec la même forme que le GET — et c'est la relecture, déjà dans
@@ -1210,7 +1210,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn motion_46_part_the_channel_qui_lui_fait_respondre() {
+	async fn motion_46_replies_only_on_the_channel_asked() {
 		// Le 46 répond 400 **sans corps** tant que la demande ne nomme pas le
 		// channel. Ce test porte la forme sur la vraie chaîne d'envoi, pas
 		// seulement sur la table : une table juste mal appliquée ne se verrait
@@ -1237,7 +1237,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn motion_on_md_alarm_refuse_without_nothing_send() {
+	async fn motion_on_md_alarm_refusal_sends_nothing() {
 		// Le script ne prévoit QUE le 46 : l'envoi d'un 47 ferait échouer le
 		// mock, ce qui est exactement l'assertion voulue.
 		let mock = MockConnection::new()
@@ -1276,7 +1276,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn motion_200_without_porteur_is_inintelligible() {
+	async fn motion_200_without_carrier_is_unintelligible() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_MOTION_DETECT)
 			.reply_with(reply_200_empty)
@@ -1292,7 +1292,7 @@ mod tests {
 	// ── Veille, Wi-Fi, masques ──────────────────────────────────────────
 
 	#[tokio::test]
-	async fn sleep_state_and_wifi_signal_itself_lisent() {
+	async fn sleep_state_and_wifi_signal_are_read_back() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_SLEEP_STATE)
 			.reply_with(|req| {
@@ -1339,7 +1339,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn masques_itself_lisent() {
+	async fn masks_are_read_back() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_PRIVACY_MASK)
 			.reply_with(|req| {
@@ -1389,7 +1389,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn auto_reboot_writes_on_the_right_id_and_rereads() {
+	async fn auto_reboot_writes_the_right_id_and_rereads() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_AUTO_REBOOT)
 			.reply_with(reboot_reply)
@@ -1487,7 +1487,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_general_not_touches_not_horloge_and_marks_the_renommage_seul() {
+	async fn set_general_touches_no_clock_and_marks_the_rename_only() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_GENERAL)
 			.reply_with(|req| {
@@ -1522,7 +1522,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_general_not_marks_not_renommage_seul_quand_il_y_a_other_thing() {		let mock = MockConnection::new()
+	async fn set_general_marks_a_rename_only_when_nothing_else_changed() {		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_GENERAL)
 			.reply_with(|req| {
 				let sent = inspect_xml(req);
@@ -1555,7 +1555,7 @@ mod tests {
 	/// `<aiDenoise Version>` majuscule), et surtout l'absence totale de balise
 	/// qu'une caméra n'a pas imprimée.
 	#[test]
-	fn the_wire_invente_no_tag() {
+	fn the_wire_invents_no_tag() {
 		let xml = BcXml {
 			ntp: Some(ntp_block()),
 			ai_denoise: Some(denoise_block()),
@@ -1645,7 +1645,7 @@ pub struct RawRequest {
 
 impl RawRequest {
 	/// Le témoin : la trame que la bibliothèque envoie aujourd'hui.
-	pub fn temoin() -> Self {
+	pub fn flag() -> Self {
 		Self::default()
 	}
 
@@ -1713,7 +1713,7 @@ impl RawRequest {
 /// le `52` répond `<OsdDatetime>`, là où la bibliothèque attendait
 /// `<VideoInput>` et `<Shelter>` ; et rien ici ne dit où ce micrologiciel sert
 /// les réglages d'image.
-fn forme_of_frame(msg_id: u32, canal_camera: u8) -> (u8, Option<u8>) {
+fn frame_shape(msg_id: u32, canal_camera: u8) -> (u8, Option<u8>) {
 	match msg_id {
 		MSG_ID_GET_IMAGE
 		| MSG_ID_SET_IMAGE
@@ -1749,7 +1749,7 @@ fn text_extension(ext: &Extension) -> String {
 /// Couper un texte rendu **par caractères**, jamais par octets : une réponse de
 /// caméra peut porter de l'UTF-8 et un `&t[..400]` sur un octet au milieu d'un
 /// accent panique. Le journal est fait pour être lu, pas pour être exhaustif.
-fn couper(texte: &str, caracteres: usize) -> String {
+fn cut(texte: &str, caracteres: usize) -> String {
 	if texte.chars().count() <= caracteres {
 		return texte.to_string();
 	}

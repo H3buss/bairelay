@@ -48,9 +48,9 @@ impl CameraEnableFlags {
 			// listener, so they follow its flag.
 			Feature::Motion | Feature::Ai | Feature::Doorbell => self.motion,
 			Feature::Battery => self.battery,
-			// Les états bonus de la batterie sortent de la même trame (253)
+			// Les états bonus de la battery sortent de la même trame (253)
 			// que le niveau : même drapeau, sinon une caméra dont on a coupé
-			// la batterie garderait cinq capteurs qui ne se rempliront jamais.
+			// la battery garderait cinq capteurs qui ne se rempliront jamais.
 			Feature::BatteryExtra => self.battery,
 			Feature::Floodlight => self.floodlight,
 			Feature::Led => self.light,
@@ -60,7 +60,7 @@ impl CameraEnableFlags {
 			//
 			// `MotionSettings` reste accessible même quand `motion` est
 			// éteint : le drapeau pilote les *événements* de mouvement, pas le
-			// réglage de la détection, et les couper ensemble priverait l'
+			// réglage de la détection, et les cut ensemble priverait l'
 			// opératrice du curseur de sensibilité.
 			Feature::Camera
 			| Feature::Ir
@@ -180,7 +180,7 @@ impl DiscoveryPublisher {
 	/// suivante ne promette un curseur qui écrira en vain.
 	///
 	/// Appelé après chaque lecture réussie — `query/settings`, écriture avec
-	/// relecture, aperçu — jamais sur minuterie : une sonnette sur batterie ne
+	/// relecture, aperçu — jamais sur minuterie : une sonnette sur battery ne
 	/// survit pas à un interrogatoire périodique.
 	pub fn mark_family_read(&self, camera_name: &str, family: Family, writable: bool) -> bool {
 		let mut guard = match self.familles_read.lock() {
@@ -686,7 +686,7 @@ mod tests {
 	/// change) — plus une troisième, qui empêche la correction de déborder : le
 	/// bloc `device`, lui, doit continuer de nommer l'appareil.
 	#[test]
-	fn no_libelle_not_carries_the_name_of_the_appareil_and_no_not_is_a_deux() {
+	fn an_absent_label_carries_no_device_name() {
 		let caps = CameraCapabilitiesView {
 			has_ptz: true,
 			status_led: crate::discovery::Presence::Present,
@@ -783,7 +783,7 @@ mod tests {
 	}
 
 	#[test]
-	fn compute_a_family_of_settings_removed_not_leaves_no_topic() {
+	fn a_removed_settings_family_leaves_no_topic() {
 		// `[mqtt.discovery] features = [...]` retire des familles entières :
 		// rien ne doit en rester, sinon une entité HA dont l'état ne se
 		// remplit jamais.
@@ -1091,7 +1091,7 @@ mod tests {
 	/// d'abord, nouvelle configuration ensuite. Dans l'autre ordre, l'opératrice
 	/// voit deux entités porter le même `unique_id` et HA en garde une au hasard.
 	#[tokio::test]
-	async fn a_family_reread_itself_publishes_empty_before_its_new_config() {
+	async fn a_reread_family_publishes_empty_before_its_new_config() {
 		let (client, mock) = crate::test_support::mock_client();
 		let publisher = DiscoveryPublisher::new(
 			client,
@@ -1178,7 +1178,7 @@ mod tests {
 	/// (`<MdAlarm>` pour la détection de mouvement) ne doit **jamais** finir
 	/// modifiable, même si une lecture antérieure l'avait promotionnée.
 	#[test]
-	fn a_family_not_writable_not_becomes_not_writable() {
+	fn a_non_writable_family_never_becomes_writable() {
 		let publisher = publisher_with_features(&Feature::ALL);
 		let flags = all_flags_on();
 		let caps = CameraCapabilitiesView::default();

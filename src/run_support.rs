@@ -1135,7 +1135,7 @@ on_motion = true
 	/// ligne ; ces deux commandes n'ont qu'une issue heureuse, un `Outcome`,
 	/// donc c'est ce couple (Outcome → code + octets) qu'il faut épingler.
 	#[test]
-	fn a_read_settings_reussie_releases_zero() {
+	fn a_successful_settings_read_returns_zero() {
 		use crate::oneshot::output::DingDongCfgInfo;
 		let cas = [
 			(
@@ -1199,7 +1199,7 @@ on_motion = true
 	/// Extraire la décision n'a pas adouci les échecs : une erreur reste
 	/// classifiée, et le JSON d'erreur part sur `stdout` en mode JSON.
 	#[test]
-	fn a_erreur_of_output_stays_classee() {
+	fn an_output_error_stays_classified() {
 		let mut output = Vec::new();
 		let mut erreurs = Vec::new();
 		let e = anyhow::anyhow!("une panne qui ne ressemble à rien de connu");

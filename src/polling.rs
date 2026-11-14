@@ -7,7 +7,7 @@
 //! l'enregistrement ([`crate::annonces`] publie ce second moment). Dix‑huit
 //! secondes pour une sonnette, c'est trop.
 //!
-//! Ce que fait l'interrogation, et seulement cela : à `event` 3, prendre le
+//! Ce que fait l'interrogation, et seulement cela : à `event` 3, take le
 //! verrou de wake de la caméra et le tenir. C'est ce verrou qui dit à la
 //! boucle de connexion d'aller joindre la caméra — le même geste que la salve
 //! de lecture ([`crate::burst`]). Une fois la session établie, l'écouteur

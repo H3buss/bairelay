@@ -367,7 +367,7 @@ pub async fn dispatch_control(
 		}
 		ControlCommand::QuerySettings { family, .. } => {
 			// Relecture à la demande explicite. Chaque famille est une commande
-			// caméra — sur une sonnette sur batterie, `query/settings` sans
+			// caméra — sur une sonnette sur battery, `query/settings` sans
 			// famille en costaud une quinzaine : c'est le prix d'un appui
 			// d'opératrice ou d'une automatisation volontaire, et c'est bien pour
 			// ça que rien ici n'est périodique.
@@ -2258,11 +2258,11 @@ mod tests {
 	/// indistinguable d'un pont mort, et le `FAIL` du topic de commande est
 	/// éphémère — personne ne le retrouve le lendemain dans Home Assistant.
 	#[test]
-	fn dispatch_setting_refuse_by_the_camera_not_publishes_nothing() {
-		on_worker(|| Box::pin(camera_refuse_write_audio()));
+	fn a_camera_refusal_publishes_nothing() {
+		on_worker(|| Box::pin(camera_refuses_audio_write()));
 	}
 
-	async fn camera_refuse_write_audio() {
+	async fn camera_refuses_audio_write() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_AUDIO_CFG)
 			.reply_with(|req| audio_reply(req, audio_cfg("10", "7")))
@@ -2323,11 +2323,11 @@ mod tests {
 	/// Elle publie quand même le motif : un réglage refusé ne doit plus être «
 	/// juste silencieux », même quand le coupable est le pont lui-même.
 	#[test]
-	fn dispatch_setting_value_refused_sends_not_nothing() {
-		on_worker(|| Box::pin(value_refused_nothing_envoye()));
+	fn dispatch_setting_value_refused_sends_nothing() {
+		on_worker(|| Box::pin(a_refused_value_sends_nothing()));
 	}
 
-	async fn value_refused_nothing_envoye() {
+	async fn a_refused_value_sends_nothing() {
 		// Script vide : la moindre trame fermerait le channel de la mock
 		// connexion, et la commande ne pourrait plus aboutir.
 		let mock = MockConnection::new().build().await;
@@ -2448,10 +2448,10 @@ mod tests {
 	/// la semaine dernière qui n'a plus rien à voir avec le matériel.
 	#[test]
 	fn dispatch_query_settings_refused_family_clears_states() {
-		on_worker(|| Box::pin(query_ntp_refuse_clears()));
+		on_worker(|| Box::pin(query_ntp_refusal_clears()));
 	}
 
-	async fn query_ntp_refuse_clears() {
+	async fn query_ntp_refusal_clears() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_NTP)
 			.reply_with(|req| reply_err_code(req, 404))
@@ -2489,11 +2489,11 @@ mod tests {
 	/// et « vide » doivent rester deux choses distinctes. C'est exactement ce
 	/// qu'a répondu la caméra de l'utilisatrice, relue en lecture seule.
 	#[test]
-	fn dispatch_query_chime_without_answer_not_publishes_no_list() {
-		on_worker(|| Box::pin(chime_without_answer()));
+	fn dispatch_query_chime_without_answer_publishes_no_list() {
+		on_worker(|| Box::pin(a_chime_without_answer_publishes_nothing()));
 	}
 
-	async fn chime_without_answer() {
+	async fn a_chime_without_answer_publishes_nothing() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_DING_DONG_CTRL)
 			.reply_with(|req| reply_err_code(req, 400))
@@ -2577,7 +2577,7 @@ mod tests {
 	/// entité propres. Il s'écrit en lecture-modification-écriture, et c'est la
 	/// **relecture** qui est publiée — ici 88, jamais la valeur demandée 77.
 	#[test]
-	fn dispatch_setting_volume_general_writes_then_publishes_the_reread() {
+	fn dispatch_setting_general_volume_writes_then_publishes_the_reread() {
 		on_worker(|| Box::pin(volume_general_writes_then_rereads()));
 	}
 
@@ -2662,11 +2662,11 @@ mod tests {
 	/// balise qu'il n'a jamais déclarée. Le motif publié le dit ; aucun état
 	/// n'est publié, parce que rien n'a dst lu de nouveau.
 	#[test]
-	fn dispatch_setting_volume_general_refuse_without_tag() {
-		on_worker(|| Box::pin(volume_general_without_tag_refuse()));
+	fn dispatch_setting_general_volume_refuses_without_tag() {
+		on_worker(|| Box::pin(general_volume_without_tag_is_refused()));
 	}
 
-	async fn volume_general_without_tag_refuse() {
+	async fn general_volume_without_tag_is_refused() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_AUDIO_CFG)
 			.reply_with(|req| audio_reply(req, audio_cfg_general("", "10", "7")))
@@ -2718,7 +2718,7 @@ mod tests {
 	/// publier le nouveau : sinon Home Assistant garde une entité fantôme qui
 	/// pointe vers un interrupteur qui n'existe plus.
 	#[test]
-	fn discovery_ntp_without_command_until_the_first_read() {
+	fn discovery_ntp_has_no_command_until_the_first_read() {
 		on_worker(|| Box::pin(discovery_ntp_becomes_writable()));
 	}
 
@@ -2815,11 +2815,11 @@ mod tests {
 	/// sont justes), le motif explique pourquoi elles ne sont pas réglables, et
 	/// aucune entité ne promet de commande.
 	#[test]
-	fn md_alarm_stays_en_read_seule_and_the_says() {
-		on_worker(|| Box::pin(md_alarm_read_seule()));
+	fn md_alarm_stays_read_only_and_says_so() {
+		on_worker(|| Box::pin(md_alarm_is_read_only()));
 	}
 
-	async fn md_alarm_read_seule() {
+	async fn md_alarm_is_read_only() {
 		let connexion = MockConnection::new()
 			.expect_msg(MSG_ID_GET_MOTION_DETECT)
 			.reply_with(|req| {
@@ -2935,11 +2935,11 @@ mod tests {
 	/// moitié que l'opératrice regarde et qu'elle doit survivre à la coupe à 160
 	/// caractères.
 	#[test]
-	fn read_refused_en_400_not_locks_not_and_the_says() {
-		on_worker(|| Box::pin(image_quarante_hundred_not_locks_nothing()));
+	fn a_read_refused_with_400_locks_nothing_and_says_so() {
+		on_worker(|| Box::pin(image_four_hundred_locks_nothing()));
 	}
 
-	async fn image_quarante_hundred_not_locks_nothing() {
+	async fn image_four_hundred_locks_nothing() {
 		let connexion = MockConnection::new()
 			// Première relecture : la caméra répond, la famille devient modifiable.
 			.expect_msg(MSG_ID_GET_IMAGE)
@@ -3036,11 +3036,11 @@ mod tests {
 	/// vérifiée deux fois sur le terrain. La commande est donc publiée, et la
 	/// raison du refus avec.
 	#[test]
-	fn quarante_hundred_on_a_family_never_read_the_publishes_writable() {
-		on_worker(|| Box::pin(never_read_then_quarante_hundred()));
+	fn a_four_hundred_on_a_never_read_family_publishes_writable() {
+		on_worker(|| Box::pin(a_family_never_read_then_answered_four_hundred()));
 	}
 
-	async fn never_read_then_quarante_hundred() {
+	async fn a_family_never_read_then_answered_four_hundred() {
 		let connexion = MockConnection::new()
 			// Les deux tentatives de `read_family` : le rejeu unique après un 400.
 			.expect_msg(MSG_ID_GET_IMAGE)
@@ -3106,11 +3106,11 @@ mod tests {
 	/// rien n'est verrouillé. Sans ce test, la correction serait une promesse
 	/// générale d'écrire sans jamais rien avoir lu.
 	#[test]
-	fn cinq_hundred_not_promises_nothing_and_the_says() {
-		on_worker(|| Box::pin(image_cinq_hundred_not_locks_nothing()));
+	fn five_hundred_promises_nothing_and_says_so() {
+		on_worker(|| Box::pin(image_five_hundred_locks_nothing()));
 	}
 
-	async fn image_cinq_hundred_not_locks_nothing() {
+	async fn image_five_hundred_locks_nothing() {
 		let connexion = MockConnection::new()
 			// Une seule tentative : le rejeu est réservé au 400, re-tenter un `500`
 			// serait payer deux fois une radio qui va mal.
@@ -3166,11 +3166,11 @@ mod tests {
 	/// l'opératrice, sans quoi une caméra bien portante continuerait d'afficher
 	/// sa bouderie d'hier.
 	#[test]
-	fn reread_ok_after_a_refusal_releases_writable_and_empty_the_cause() {
-		on_worker(|| Box::pin(reread_ok_after_quarante_hundred()));
+	fn a_reread_after_a_refusal_restores_writable_and_clears_the_reason() {
+		on_worker(|| Box::pin(a_reread_after_four_hundred_is_writable()));
 	}
 
-	async fn reread_ok_after_quarante_hundred() {
+	async fn a_reread_after_four_hundred_is_writable() {
 		let connexion = MockConnection::new()
 			// Premier essai : « pas maintenant ».
 			.expect_msg(MSG_ID_GET_IMAGE)
@@ -3229,11 +3229,11 @@ mod tests {
 	/// seule, le motif nomme la balise manquante, et l'état lu (l'horodatage) est
 	/// quand même publié.
 	#[test]
-	fn osd_without_osdchannelname_stays_en_read_seule_and_the_says() {
-		on_worker(|| Box::pin(osd_without_tag_read_seule()));
+	fn osd_without_osdchannelname_stays_read_only_and_says_so() {
+		on_worker(|| Box::pin(osd_without_tag_is_read_only()));
 	}
 
-	async fn osd_without_tag_read_seule() {
+	async fn osd_without_tag_is_read_only() {
 		let connexion = MockConnection::new()
 			.expect_msg(MSG_ID_GET_OSD)
 			.reply_with(|req| {
@@ -3335,7 +3335,7 @@ mod tests {
 	/// ne sont pas des entités ; elles se lisent dans `status/pir/json`, et ce
 	/// test le vérifie aussi.
 	#[test]
-	fn dispatch_setting_interval_pir_writes_then_publishes_the_reread() {
+	fn dispatch_setting_pir_interval_writes_then_publishes_the_reread() {
 		on_worker(|| Box::pin(interval_pir_writes_then_rereads()));
 	}
 
@@ -3421,11 +3421,11 @@ mod tests {
 	/// l'écriture refusée **sans qu'aucune trame 213 parte** : le pont n'invente
 	/// pas au firmware une balise qu'il n'a jamais déclarée.
 	#[test]
-	fn dispatch_setting_interval_pir_refuse_without_tag() {
-		on_worker(|| Box::pin(interval_pir_without_tag_refuse()));
+	fn dispatch_setting_pir_interval_refuses_without_tag() {
+		on_worker(|| Box::pin(pir_interval_without_tag_is_refused()));
 	}
 
-	async fn interval_pir_without_tag_refuse() {
+	async fn pir_interval_without_tag_is_refused() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_PIR_ALARM)
 			.reply_with(|req| {

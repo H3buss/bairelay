@@ -566,7 +566,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_leaf_of_setting_becomes_a_command_valid() {
+	fn a_setting_leaf_becomes_a_valid_command() {
 		let got = cmd("bairelay/cam1/control/denoise/level", "80").expect("se parse");
 		assert_eq!(got.camera_name(), "cam1");
 		match got {
@@ -579,7 +579,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_topic_of_answer_is_the_topic_received() {
+	fn the_answer_topic_is_the_topic_received() {
 		// L'invariant qui empêche une réponse `OK` de partir sur un autre
 		// topic que celui que Home Assistant écoute.
 		for topic in [
@@ -598,14 +598,14 @@ mod tests {
 	}
 
 	#[test]
-	fn a_family_unknown_is_ignored() {
+	fn an_unknown_family_is_ignored() {
 		// Peut-être un autre intégrateur sur le même préfixe : on ne répond
 		// rien, on ne commande rien.
 		assert!(cmd("bairelay/cam1/control/domotique/volume", "50").is_none());
 	}
 
 	#[test]
-	fn a_leaf_unknown_of_a_family_known_repond_fail() {
+	fn an_unknown_leaf_of_a_known_family_answers_fail() {
 		let got = cmd("bairelay/cam1/control/ntp/mot_de_passe", "x").expect("se parse");
 		assert!(
 			matches!(got, ControlCommand::RejectedSetting { .. }),
@@ -618,7 +618,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_leaf_en_read_seule_is_refused() {
+	fn a_read_only_leaf_refuses_a_write() {
 		for topic in [
 			"bairelay/cam1/control/wifi/signal",
 			"bairelay/cam1/control/battery/voltage",
@@ -634,7 +634,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_value_hors_range_is_refused_without_atteindre_the_camera() {
+	fn a_value_out_of_range_is_rejected_before_touching_the_camera() {
 		let got = cmd("bairelay/cam1/control/image/bright", "999").expect("se parse");
 		assert!(
 			matches!(got, ControlCommand::RejectedSetting { .. }),
@@ -643,7 +643,7 @@ mod tests {
 	}
 
 	#[test]
-	fn notre_answer_not_re_triggers_nothing() {
+	fn our_own_answer_re_triggers_nothing() {
 		// `OK`/`FAIL` repartent sur le topic de commande : s'ils se
 		// reparsaient en commande, la boucle serait infinie.
 		for topic in [
@@ -657,7 +657,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_leaf_indescente_not_repart_not_in_a_topic_publishes() {
+	fn an_absurd_leaf_does_not_publish_a_topic() {
 		// Le segment vient du broker : il ne doit pas être recopié dans un
 		// topic sur lequel on publie.
 		assert!(cmd("bairelay/cam1/control/audio/../reboot", "on").is_none());
@@ -666,7 +666,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_requete_the_settings_itself_parse_in_the_deux_formes() {
+	fn the_settings_query_parses_in_both_forms() {
 		let all = cmd("bairelay/cam1/query/settings", "").expect("se parse");
 		assert!(matches!(
 			all,
@@ -696,7 +696,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_actions_simple_the_plus_proches_not_sont_not_captures() {
+	fn the_closest_simple_actions_are_not_captured() {
 		// `control/pir` (4 segments, l'interrupteur) et `control/ptz/preset`
 		// (5 segments, mais traité avant) gardent leur sémantique.
 		assert!(matches!(

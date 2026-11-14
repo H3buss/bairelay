@@ -249,7 +249,7 @@ pub async fn handle_connack(
 	// publier ceci en premier evite que Home Assistant voie transitoirement
 	// des entites dont le topic de disponibilite porte encore l'ancien
 	// `offline`. Traffic MQTT pur : aucun ordre a l'appareil, ce qu'un
-	// carillon sur batterie exige.
+	// carillon sur battery exige.
 	if let Err(e) = mqtt
 		.publish_retained(&bairelay_mqtt::topics::bridge_status(topic_prefix), b"online")
 		.await

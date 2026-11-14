@@ -1557,7 +1557,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn not_post_methods_get_405() {
+	async fn non_post_methods_get_405() {
 		let rig = rig().await;
 		let path = rig.hook_path();
 		for method in ["GET", "PUT", "HEAD", "post"] {
@@ -1782,7 +1782,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn a_request_read_one_byte_at_a_time_is_read_whole() {
+	async fn a_request_streamed_byte_by_byte_is_still_read_whole() {
 		let raw = post_request("/hook/x", WAKE_DOORBELL);
 		let mut reader = Chunks(raw.iter().map(|b| vec![*b]).collect());
 		assert_eq!(read_request(&mut reader).await, Ok(raw));

@@ -626,7 +626,7 @@ impl Writability {
 /// dépôt applique déjà ailleurs au même code, et sans elle une salve complète
 /// perd les quatre blocs que la caméra finit par donner quand elle s'est
 /// wakelée. Une seule tentative de plus, pas davantage : `query/settings` est
-/// déjà une quinzaine de commandes radio sur une sonnette sur batterie. Le délai
+/// déjà une quinzaine de commandes radio sur une sonnette sur battery. Le délai
 /// dépassé, lui, n'est pas rejoué — re-tenter une commande à laquelle la caméra
 /// n'a pas répondu, c'est payer deux fois une radio qui dort.
 pub(crate) async fn read_family(
@@ -646,20 +646,20 @@ pub(crate) async fn read_family(
 			let mut second = Writability::new();
 			match sync_family(bc, publ, family, &mut second).await {
 				Ok(n) => promise(publ, family, second, n).await,
-				Err(deuxieme) => repli(publ, family, &deuxieme).await,
+				Err(deuxieme) => fallback(publ, family, &deuxieme).await,
 			}
 		}
-		Err(e) => repli(publ, family, &e).await,
+		Err(e) => fallback(publ, family, &e).await,
 	}
 }
 
 /// Batterie **déjà lue** par l'appelant : publie les cinq champs et rend le même
 /// verdict que [`read_family`], sans repayer la trame 253.
 ///
-/// Il existe parce que la salve de wake ([`crate::burst`]) lit la batterie
+/// Il existe parce que la salve de wake ([`crate::burst`]) lit la battery
 /// elle-même — c'est pour son niveau qu'elle se déclenche — et doit quand même
 /// publier les motifs et le verdict comme le fait `query/settings`. Deux chemins
-/// qui publient la batterie avec deux règles de verdict, c'est exactement la
+/// qui publient la battery avec deux règles de verdict, c'est exactement la
 /// divergence que ce module refuse partout ailleurs.
 pub(crate) async fn battery_read(
 	publ: &StatusPublisher<'_>,
@@ -667,7 +667,7 @@ pub(crate) async fn battery_read(
 ) -> (Family, Verdict) {
 	match issu {
 		Ok(_) => promise(publ, Family::Battery, Writability::new(), 5).await,
-		Err(e) => repli(publ, Family::Battery, e).await,
+		Err(e) => fallback(publ, Family::Battery, e).await,
 	}
 }
 
@@ -695,7 +695,7 @@ async fn promise(
 	(family, Verdict::NotWritable)
 }
 
-/// La caméra n'a rien donné d'exploitable : c'est le repli, et c'est lui qui
+/// La caméra n'a rien donné d'exploitable : c'est le fallback, et c'est lui qui
 /// décide quelle espèce de manque nous avons sous les yeux.
 ///
 /// Dans les deux cas les états conservés sont effacés — « on ne sait pas » ne se
@@ -708,7 +708,7 @@ async fn promise(
 /// * **tentative impossible** (pas de session, caméra injoignable, capacité
 ///   absente) → [`Verdict::Unknown`] : le pont ne peut promettre ce qu'il n'a
 ///   pas pu tenter, la discovery garde ce qu'elle avait.
-async fn repli(publ: &StatusPublisher<'_>, family: Family, e: &Error) -> (Family, Verdict) {
+async fn fallback(publ: &StatusPublisher<'_>, family: Family, e: &Error) -> (Family, Verdict) {
 	clear_family(publ, family).await;
 	if is_transient(e) {
 		tracing::debug!(
@@ -755,7 +755,7 @@ fn is_transient(e: &Error) -> bool {
 /// Ce refus mérite-t-il la **seconde** tentative de [`read_family`] ? Seul le
 /// `400` : c'est le seul que le dépôt traite déjà comme réessayable — voir la
 /// boucle de `bc_protocol::services.rs`, qui en tente cinq avant de se rendre.
-/// Un délai dépassé se paie deux fois en radio sur une caméra sur batterie, et
+/// Un délai dépassé se paie deux fois en radio sur une caméra sur battery, et
 /// une réponse incompréhensible ne s'améliore pas en la redemandant.
 fn is_retryable(e: &Error) -> bool {
 	matches!(
@@ -931,11 +931,11 @@ pub(crate) async fn sync_family(
 	}
 }
 
-/// Synchronisation complète, dans l'ordre de [`Family::ALL`] (la batterie d'abord :
+/// Synchronisation complète, dans l'ordre de [`Family::ALL`] (la battery d'abord :
 /// c'est la trame 253, celle qui ne wakele pas la caméra et dont l'opératrice a
 /// le plus souvent besoin).
 ///
-/// **Jamais périodique.** Sur une sonnette sur batterie, chaque famille est une
+/// **Jamais périodique.** Sur une sonnette sur battery, chaque famille est une
 /// commande radio ; cette fonction n'est appelée que sur `query/settings`, donc
 /// sur demande humaine ou automatisation explicite.
 ///
@@ -1396,7 +1396,7 @@ mod tests {
 	/// — et ce sont les tests de `crate::mqtt_dispatch`, passés en release, qui
 	/// y répondent. Les chiffres sont imprimés pour le rapport.
 	#[test]
-	fn bcxml_guard_a_size_known() {
+	fn bcxml_guards_a_known_size() {
 		let blocs = [
 			("BcXml", core::mem::size_of::<BcXml>()),
 			("ImageCfg", core::mem::size_of::<ImageCfg>()),
@@ -1421,7 +1421,7 @@ mod tests {
 	/// d'une famille absente du micrologiciel — donc ça doit arriver jusqu'à
 	/// l'opératrice, et pas s'arrêter dans le journal d'un conteneur.
 	#[test]
-	fn the_cause_dun_refusal_of_read_carries_the_answer() {
+	fn the_reason_for_a_read_refusal_carries_the_answer() {
 		let err = bairelay_neolink_core::Error::CameraRefused {
 			id: 26,
 			code: 400,

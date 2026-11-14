@@ -253,7 +253,7 @@ pub(crate) struct AlarmReport {
 ///
 /// `reveil` est la poignée de la caméra, quand l'appelant la détient : un appui
 /// publié est un wake de la caméra endormie, donc la seule occasion de lire sa
-/// batterie sans wake payé. La salve est proposée **après** la publication du
+/// battery sans wake payé. La salve est proposée **après** la publication du
 /// `press` — jamais avant : l'automatisation de l'opératrice doit recevoir
 /// l'appui avant le bruit de la lecture ([`crate::burst`]).
 pub(crate) async fn report_doorbell_press(
