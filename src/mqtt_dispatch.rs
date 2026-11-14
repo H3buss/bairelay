@@ -2881,6 +2881,10 @@ mod tests {
 			);
 		};
 		assert!(*retained, "the reason is retained");
+		// What closes this one is the topic it reads: `read-only` is the wording of two
+		// different locks (the `<MdAlarm>` block and the missing `<OsdChannelName>`), and
+		// `status/motion/reason` is the only thing that tells them apart. Deliberate, not
+		// sloppiness — deleting the topic pin would make this assertion vacuous.
 		assert!(
 			String::from_utf8_lossy(cause).contains("read-only"),
 			"the reason must say read-only, not a read failure: {:?}",
@@ -3479,6 +3483,13 @@ mod tests {
 		let reason_text = String::from_utf8_lossy(cause).to_string();
 		assert!(reason_text.contains("tag, so this setting cannot be written")
 			&& reason_text.contains("interval"), "the reason must name the refusal: {reason_text}");
-		assert!(reason_text.contains("interval"), "and the tag at fault: {reason_text}");
+		// The tag named in the sentence, not just present somewhere in it: an assertion
+		// reading `interval` alone is satisfied by eleven different published sentences.
+		// The guillemets are the sanitiser's doing (crates/mqtt/src/status.rs maps `<`
+		// and `>` so no raw XML is retained), written as escapes to keep this file ASCII.
+		assert!(
+			reason_text.contains("no \u{ab}interval\u{bb} tag"),
+			"the reason must name the tag it refused to invent: {reason_text}"
+		);
 	}
 }
