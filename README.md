@@ -185,7 +185,7 @@ Bairelay's config is **a deliberate near-superset of Neolink's** so existing con
    features = ["floodlight", "camera", "motion", "led", "ir", "reboot", "pt", "battery", "siren", "ai", "doorbell"]
    ```
 
-7. **Talk (two-way audio) is not implemented.** If you used `neolink talk`, bairelay has no equivalent yet — see the future-development notes.
+7. **Talk (two-way audio) is a CLI path, not an MQTT/RTSP service.** `bairelay talk` sends one file and `bairelay audio-bridge` bridges live microphone audio from stdin (see [Two-way audio](#two-way-audio-talk)). There is no MQTT service and no RTSP audio *ingest* — the protocol has no other upload path. On cameras whose `abilityInfo` omits `two_way_audio` you must set the per-camera `two_way_audio = true` override.
 
 ### From-scratch config
 
@@ -301,6 +301,55 @@ webhook = true
 
 Arming replaces any other webhook URL on the doorbell, such as Home Assistant's Reolink integration's. The webhook is plain HTTP on the LAN, protected by a random per-camera token and a source-IP check.
 
+### Two-way audio (talk)
+
+Two commands write to the camera's loudspeaker. Both read the camera's own `<TalkAbility>` answer (msg id 10) first and encode to *that* geometry — nothing is hard-coded to one model:
+
+```bash
+# One file, paced at real speed (516 B = 1024 nibbles = 64 ms per block):
+bairelay talk front_door --file annonce.wav
+bairelay talk front_door --file annonce.pcm --raw     # headerless s16le/16000/mono
+
+# Live bridge, one talk session per speech burst:
+bairelay audio-bridge front_door < microphone.pcm
+```
+
+`bairelay talk-ability <camera>` reads the `<TalkAbility>` negotiation table without sending audio (ungated msg 10), and `bairelay audio-check` verifies the ADPCM encoder round trip with no camera and no network.
+
+Input is **signed 16-bit little-endian PCM at 16000 Hz mono** either way. `talk` validates the file *before* it connects — a battery doorbell is not woken to be handed a refusal — and names what it actually found (rate, channel count, bit depth, codec) instead of silently re-encoding. Verbatim from a real run (one line, wrapped here), exit code 2:
+
+```text
+$ bairelay talk front_door --file test44100.wav
+error: test44100.wav is not usable as talk audio: usage error: found 1 channel / 44100 Hz / 16 bits / PCM;
+       sample rate is 44100 Hz, needs 16000 Hz; the talk path is fixed at 16000 Hz mono 16-bit signed
+       PCM — re-encode the file (for example: ffmpeg -i INPUT -ar 16000 -ac 1 -sample_fmt s16 OUTPUT.wav)
+```
+
+The same shape covers stereo (`channel count is 2, needs 1 (mono)`), 8-bit (`depth is 8 bits, needs 16`), float/mu-law/A-law (`codec is IEEE float, needs integer PCM`), and a headerless dump handed in without `--raw` (it quotes the first bytes and points at `--raw`).
+
+**`two_way_audio = true` (per-camera, default `false`).** The talk path is gated on the camera advertising `two_way_audio` in its `abilityInfo`, and some firmware *under-declares*: this fork's battery doorbell answers `<TalkAbility>` with a complete FDX `adpcm / 16000 Hz / 16 bits / lengthPerEncoder 1024 / mono` configuration while listing no `two_way_audio` ability at all (56 abilities, verified twice with `bairelay talk-ability <camera>` — an ungated read of msg 10 that sends no audio). For a camera in that situation, declare the ability by hand:
+
+```toml
+[[cameras]]
+name = "front_door"
+two_way_audio = true      # firmware under-declaration, verified by `talk-ability`
+```
+
+The default is `false`, so every other camera keeps the gate exactly as strict as it has always been and `talk` / `talk_stream` still refuse with `MissingAbility` (exit 6). The override is also deliberately *not* a lie to the diagnostics: with `two_way_audio = true` set, `bairelay abilities <camera>` still prints exactly the abilities the camera listed — on this doorbell the same `abilities (56):` table, with no `two_way_audio` row — because an override that made the diagnostic agree with the config would hide the very mismatch you need to see. The flag is not carried by the Home Assistant add-on's per-camera option set yet — set it in the config file.
+
+**Home Assistant / go2rtc.** The upstream path of this protocol *is* the talk session: there is no audio file upload anywhere in it, so live voice has to be streamed. go2rtc (HA add-on) pipes whatever the browser negotiated on the backchannel (G.711 μ-law in practice) into `audio-bridge`'s stdin, and the camera's microphone comes back on the RTSP stream go2rtc already pulls:
+
+```yaml
+go2rtc:
+  streams:
+    front_door: rtsp://...
+    front_door_push: "exec:bairelay audio-bridge front_door --input pcmu/8000#backchannel=1#audio=pcmu/8000"
+```
+
+`audio-bridge` opens a talk session at the first byte and closes it (msg id 11) after `--idle` seconds of silence (default 2 s) or at EOF. The reason is orphan avoidance: a process that is `SIGKILL`ed can never send the reset, so a session left open across silence is one the camera must time out on its own — while it holds it, the doorbell is deaf to its own microphone. Ctrl+C is handled gracefully (flush, reset, then exit 130); EOF is the *normal* end of a call and exits 0, including EOF before a single byte (go2rtc hanging up before you spoke: `0 talk session(s)`, exit 0). Measured on the doorbell of this fork: two clips 4 s apart on one stdin produced `2 talk session(s), 64 block(s)`, a new process started right after a clean close was accepted immediately, and this firmware never answers a msg 202 — so `talk_stream` paces by the clock rather than waiting for an ack that does not come ([`docs/two-way-audio.md`](docs/two-way-audio.md)).
+
+The block geometry, the ADPCM encoder that had to be written in the decode→encode direction, and the full lifecycle reasoning are in [`docs/two-way-audio.md`](docs/two-way-audio.md).
+
 ---
 
 ## Command-line usage
@@ -337,9 +386,13 @@ Camera commands:
   siren          Trigger the siren once
   abilities      Dump the camera's abilityInfo XML + parsed permissions
   webhook        Read the camera's HTTP webhook configuration
+  talk-ability   Probe <TalkAbility> ungated; print the raw reply
+  talk           Send a PCM file through the camera loudspeaker (one shot)
+  audio-bridge   Bridge stdin PCM to the camera loudspeaker (go2rtc backchannel)
 
 Other:
-  check-config    Validate the config file and exit (no camera connection)
+  check-config   Validate the config file and exit (no camera connection)
+  audio-check    Verify the talk ADPCM encoder against a PCM file (offline)
   cloud-authorise Perform cloud login authorisation (MFA) for this host
   help            Print help for the given subcommand
 ```
@@ -532,7 +585,7 @@ The workspace ships thousands of tests across the four crates plus the binary. T
 
 A short, unordered, non-committed list of features bairelay does not have today but might grow into:
 
-- Two-way audio (talk client) — sending audio to the camera speaker via ADPCM.
+- Two-way audio beyond the CLI — an MQTT service or an RTSP audio *ingest* so a browser microphone can arrive over the wire instead of through a subprocess's stdin, and a Home Assistant entity for it. The talk path itself exists (`talk`, `audio-bridge`); what's missing is only how the audio reaches those commands.
 - Multicast RTSP — extra transport for fan-out to many concurrent LAN viewers.
 - Periodic background refresh of the PTZ preset cache (currently query-driven).
 - On-board email notifications via the camera's built-in SMTP client.

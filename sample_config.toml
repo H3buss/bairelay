@@ -103,6 +103,7 @@ address = "192.168.1.187:9000"   # ip or hostname, optional :port
 # permitted_users = ["me"]
 # debug = false               # trace-dump decrypted protocol payloads; logs credential hashes
 # webhook = false             # report wake reasons via [webhook]; needs [webhook] enable
+# two_way_audio = false       # talk path on cameras whose abilityInfo omits the ability; see docs/two-way-audio.md
 
 # [cameras.mqtt]
 # enable_motion     = true    # also carries AI objects + doorbell presses

@@ -349,6 +349,7 @@ Reconnect on transient network failures still uses `ReconnectBackoff::sleep_with
 - `bind_port = 0` rejected.
 - Update intervals (`battery_update`, `preview_update`, `floodlight_update`): ≥ 500 ms.
 - `idle_disconnect`: defaults `false`. Must be explicitly enabled for battery cameras.
+- `two_way_audio`: defaults `false`. Pure opt-in override of the ability gate — see [`docs/two-way-audio.md`](two-way-audio.md). Not part of the HA add-on's per-camera option set (`src/ha/options.rs`), so it is config-file only.
 - `gap_threshold_secs`: must be finite + positive.
 - `idle_disconnect_timeout_secs`: must be finite + positive.
 

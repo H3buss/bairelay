@@ -72,3 +72,14 @@ tests/scripts/ha-config/.storage/http
 # Cobertura XML is uploaded as a workflow artifact instead.
 cobertura.xml
 tarpaulin-report.html
+
+# Bench leftovers from live-audio sessions: captured media, packet
+# captures, log dumps. None of these belong in the repo.
+*.log
+*.pcap
+*.jsonl
+*.pcm
+*.opus
+*.wav
+/out/
+/notes/
