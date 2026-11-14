@@ -25,21 +25,21 @@ pub(crate) fn floodlight_state_json(on: bool) -> &'static str {
 	}
 }
 
-/// Les trois codes portés par la cellule de présence partagée : `0` = aucun
-/// verdict publié depuis le démarrage du pont, puis les deux verdicts possibles.
+/// The three codes carried by the shared presence cell: `0` = no verdict
+/// published since the bridge started, then the two possible verdicts.
 const PRESENCE_UNKNOWN: u8 = 0;
 const PRESENCE_ONLINE: u8 = 1;
 const PRESENCE_OFFLINE: u8 = 2;
 
-/// Dernier verdict de présence publié pour une caméra, partagé par tous les
-/// publieurs de cette caméra.
+/// Last presence verdict published for a camera, shared by all the
+/// publishers of that camera.
 ///
-/// Une sonnette sur battery ouvre et ferme sa session des dizaines de fois par
-/// jour. Sans cet état partagé, chaque wake republierait `reachable`, et un
-/// courtier domestique ne veut pas de cinquante messages identiques par heure.
-/// Une publication ne part donc que sur une transition. La bascule atomique
-/// fait partir une seule publication, même quand deux tentatives concurrentes
-/// demandent la même.
+/// A battery doorbell opens and closes its session dozens of times per
+/// day. Without this shared state, every wake would republish `reachable`, and a
+/// home broker does not want fifty identical messages per hour.
+/// A publication therefore only leaves on a transition. The atomic swap
+/// makes exactly one publication leave, even when two concurrent attempts
+/// ask for the same one.
 #[derive(Debug)]
 pub struct PublishedPresence(AtomicU8);
 
@@ -50,9 +50,9 @@ impl Default for PublishedPresence {
 }
 
 impl PublishedPresence {
-	/// Applique le verdict `joignable` et rend le code précédent quand une
-	/// publication doit partir. Rend `None` quand le verdict demandé était déjà
-	/// le verdict courant, auquel cas rien ne part vers le courtier.
+	/// Applies the `reachable` verdict and returns the previous code when a
+	/// publication must leave. Returns `None` when the requested verdict was already
+	/// the current verdict, in which case nothing goes to the broker.
 	fn transition(&self, reachable: bool) -> Option<(u8, u8)> {
 		let cible = if reachable {
 			PRESENCE_ONLINE
@@ -74,10 +74,10 @@ impl PublishedPresence {
 		}
 	}
 
-	/// Remet le code précédent en place quand la publication correspondante a
-	/// échoué, et seulement tant que le code courant est encore celui de la
-	/// transition ratée. Sans ce retour, la cellule prétendrait un verdict absent
-	/// du courtier, et le prochain contact ne republierait plus jamais rien.
+	/// Puts the previous code back when the matching publication failed,
+	/// and only while the current code is still the failed transition's.
+	/// Without this rollback, the cell would claim a verdict absent from the
+	/// broker, and the next contact would never publish anything again.
 	fn cancel(&self, cible: u8, previous: u8) {
 		let _ = self
 			.0
@@ -95,8 +95,8 @@ pub struct StatusPublisher<'a> {
 	client: &'a SharedMqttClient,
 	topic_prefix: String,
 	camera_name: String,
-	/// Dernier verdict de présence publié, partagé par caméra. Voir
-	/// [`PublishedPresence`] et [`Self::publish_presence`].
+	/// Last presence verdict published, shared per camera. See
+	/// [`PublishedPresence`] and [`Self::publish_presence`].
 	presence: Arc<PublishedPresence>,
 }
 
@@ -106,15 +106,15 @@ impl<'a> StatusPublisher<'a> {
 			client,
 			topic_prefix: topic_prefix.to_string(),
 			camera_name: camera_name.to_string(),
-			// Cellule propre à cette instance : un publieur construit ici puis jeté
-			// ne déduplique donc rien. La présence passe par [`Self::with_presence`],
-			// qui partage la cellule de la caméra.
+			// A cell of this very instance: a publisher built here and thrown
+			// away therefore deduplicates nothing. Presence goes through [`Self::with_presence`],
+			// which shares the camera's cell.
 			presence: Arc::new(PublishedPresence::default()),
 		}
 	}
 
-	/// Même publieur, avec la cellule de présence partagée par une caméra : seul
-	/// ce constructeur déduplique entre deux publications successives, donc seul
+	/// Same publisher, with the presence cell shared by a camera: only
+	/// this constructor deduplicates between two successive publications, so only
 	/// lui convient [`Self::publish_presence`].
 	pub fn with_presence(
 		client: &'a SharedMqttClient,
@@ -132,8 +132,8 @@ impl<'a> StatusPublisher<'a> {
 
 	/// Publish "connected" or "disconnected" on the camera status topic (retained).
 	///
-	/// Ne dit rien de la disponibilité : voir [`Self::publish_presence`], qui lui
-	/// est préférée pour ça.
+	/// Says nothing about availability: see [`Self::publish_presence`], which is
+	/// preferred for that reason.
 	pub async fn publish_connection(&self, online: bool) -> Result<(), MqttError> {
 		let payload = if online { "connected" } else { "disconnected" };
 		let topic = topics::status(&self.topic_prefix, &self.camera_name);
@@ -142,20 +142,20 @@ impl<'a> StatusPublisher<'a> {
 			.await
 	}
 
-	/// Publie le verdict de présence de la caméra (`reachable` / `unreachable`)
-	/// en message conservé sur [`topics::presence`], seulement quand le verdict
+	/// Publishes the camera's presence verdict (`reachable` / `unreachable`)
+	/// as a retained message on [`topics::presence`], only when the verdict
 	/// change.
 	///
-	/// La présence ne suit pas la session : une sonnette sur battery ferme la
-	/// sienne quelques instants après chaque wake, et la suivre griserait tout le
-	/// tableau de bord pendant le sommeil. Elle se déduit de trois événements qui
-	/// ont déjà lieu — démarrage du pont, session ouverte, tentative qui renonce —
-	/// et ne déclenche donc jamais un appel réseau de plus vers la caméra.
+	/// Presence does not follow the session: a battery doorbell closes its
+	/// own a few moments after each wake, and following it would grey the whole
+	/// dashboard during sleep. It is deduced from three events that already
+	/// take place — bridge start, session opened, an attempt that gives up —
+	/// and therefore never triggers one more network call towards the camera.
 	///
-	/// La cellule de dédoublonnage doit être partagée par caméra. Construite par
-	/// [`Self::new`], elle reste propre à cette instance et ne déduplique que dans
-	/// cette dernière : les trois endroits du pont qui publient la présence passent
-	/// par [`Self::with_presence`].
+	/// The deduplication cell must be shared per camera. Built by
+	/// [`Self::new`], it stays specific to that instance and deduplicates only
+	/// within it: the three places of the bridge that publish presence go
+	/// through [`Self::with_presence`].
 	pub async fn publish_presence(&self, reachable: bool) -> Result<(), MqttError> {
 		let Some((previous, cible)) = self.presence.transition(reachable) else {
 			return Ok(());
@@ -291,14 +291,14 @@ impl<'a> StatusPublisher<'a> {
 		self.client.publish_retained(&topic, json.as_bytes()).await
 	}
 
-	// ── Réglages ────────────────────────────────────────────────────────
+	// ── Settings ────────────────────────────────────────────────────────
 	//
-	// Un topic par feuille, conservé, et **toujours la valeur relue** : après
-	// une écriture, le dispatch relit le bloc et publie ce que la caméra a
-	// gardé. Publier la valeur demandée ferait mentir un état conservé sur le
-	// broker, qui survivrait au redémarrage du pont.
+	// One topic per leaf, retained, and **always the re-read value**: after
+	// a write, the dispatch re-reads the block and publishes what the camera
+	// kept. Publishing the requested value would make a state retained on the
+	// broker lie, and it would survive the bridge's restart.
 
-	/// Publie la valeur texte d'un réglage (conservé).
+	/// Publishes the text value of a setting (retained).
 	pub async fn publish_setting(
 		&self,
 		family: Family,
@@ -312,8 +312,8 @@ impl<'a> StatusPublisher<'a> {
 			.await
 	}
 
-	/// Un réglage qui est un interrupteur : `on`/`off`, exactement les deux
-	/// textes que l'entité `switch` découvre en `state_on`/`state_off`.
+	/// A setting that is a switch: `on`/`off`, exactly the two
+	/// texts the `switch` entity discovers in `state_on`/`state_off`.
 	pub async fn publish_setting_switch(
 		&self,
 		family: Family,
@@ -324,8 +324,8 @@ impl<'a> StatusPublisher<'a> {
 			.await
 	}
 
-	/// Un drapeau lu dans le bloc caméra (`"1"`/`"0"`), pour les
-	/// `binary_sensor` de lecture seule.
+	/// A flag read in the camera's block (`"1"`/`"0"`), for the
+	/// read-only `binary_sensor`s.
 	pub async fn publish_setting_flag(
 		&self,
 		family: Family,
@@ -336,8 +336,8 @@ impl<'a> StatusPublisher<'a> {
 			.await
 	}
 
-	/// Le bloc d'une famille en JSON (conservé) : pour les automates et le
-	/// diagnostic. Les entités Home Assistant, elles, consomment les feuilles
+	/// A family's block in JSON (retained): for automations and
+	/// diagnostics. The Home Assistant entities consume the leaves
 	/// scalaires.
 	pub async fn publish_settings_json(
 		&self,
@@ -349,34 +349,34 @@ impl<'a> StatusPublisher<'a> {
 		self.client.publish_retained(&topic, json.as_bytes()).await
 	}
 
-	/// Efface un état conservé (payload vide conservé = topic effacé chez
+	/// Erases a retained state (empty retained payload = topic erased at
 	/// Home Assistant).
 	///
-	/// C'est ce qu'on fait quand la caméra **n'a pas répondu** : mieux vaut un
-	/// capteur « inconnu » qu'une valeur de la dernière fois, qui pourrait
-	/// venir d'un autre réglage, d'un autre firmware, ou d'avant un
-	/// appairage. « Refusé » et « vide » doivent rester distincts.
+	/// That is what we do when the camera **did not answer**: better a
+	/// `unknown` sensor than last time's value, which could come from another
+	/// setting, another firmware, or from before a pairing.
+	/// "Refused" and "empty" must stay distinct.
 	pub async fn clear_setting(&self, family: Family, leaf: &str) -> Result<(), MqttError> {
 		let topic =
 			topics::status_setting(&self.topic_prefix, &self.camera_name, family.slug(), leaf);
 		self.client.publish_retained(&topic, b"").await
 	}
 
-	/// Efface le JSON d'une famille.
+	/// Erases a family's JSON.
 	pub async fn clear_settings_json(&self, family: Family) -> Result<(), MqttError> {
 		let topic =
 			topics::status_settings_json(&self.topic_prefix, &self.camera_name, family.slug());
 		self.client.publish_retained(&topic, b"").await
 	}
 
-	/// Le motif du dernier refus d'une famille, en conservé
-	/// (`status/<famille>/reason`).
+	/// The reason of a family's last refusal, retained
+	/// (`status/<family>/reason`).
 	///
-	/// Une famille dont les états sont effacés est silencieuse : Home Assistant
-	/// affiche « inconnu » et rien ne dit si la caméra a refusé, n'a pas répondu,
-	/// ou n'imprime pas la balise. Ce topic porte la phrase. Il est assaini par
-	/// [`crate::status::publishable_reason`] — une ligne, sans XML, sans secret — parce qu'un
-	/// topic conservé est relu des années plus tard.
+	/// A family whose states are erased is silent: Home Assistant shows
+	/// `unknown` and nothing says whether the camera refused, did not answer,
+	/// or does not print the tag. This topic carries the sentence. It is sanitised by
+	/// [`crate::status::publishable_reason`] — one line, no XML, no secret — because a
+	/// retained topic is re-read years later.
 	pub async fn publish_family_reason(
 		&self,
 		family: Family,
@@ -388,8 +388,8 @@ impl<'a> StatusPublisher<'a> {
 		self.client.publish_retained(&topic, propre.as_bytes()).await
 	}
 
-	/// Efface le motif d'une famille : elle vient de répondre, la raison
-	/// précédente n'a plus lieu d'être conservée.
+	/// Erases a family's reason: it just answered, the previous
+	/// reason no longer has any reason to be retained.
 	pub async fn clear_family_reason(&self, family: Family) -> Result<(), MqttError> {
 		let topic =
 			topics::status_setting_reason(&self.topic_prefix, &self.camera_name, family.slug());
@@ -398,28 +398,28 @@ impl<'a> StatusPublisher<'a> {
 
 }
 
-/// Longueur maximale d'un motif. Un topic conservé est relus à chaque démarrage
-/// de Home Assistant : une phrase, pas une trace de pile ni un dump.
+/// Maximum length of a reason. A retained topic is re-read at every Home
+/// Assistant start: one sentence, not a stack trace or a dump.
 const REASON_MAX: usize = 160;
 
-/// Ce qu'on publie quand le motif lui-même est inutilisable.
-pub(crate) const REASON_SANS_DETAIL: &str = "the camera gave no reason";
-pub(crate) const REASON_MASQUE: &str = "reason hidden: it could have contained a secret";
+/// What we publish when the reason itself is unusable.
+pub(crate) const REASON_NO_DETAIL: &str = "the camera gave no reason";
+pub(crate) const REASON_MASKED: &str = "reason hidden: it could have contained a secret";
 
-/// Les sous-chaînes qui n'ont rien à faire sur un topic conservé. Aucun motif
-/// construit par le pont n'en contient ; cette ceinture tient la promesse
-/// « jamais de secret dans un topic conservé » même si un appelant passe le
-/// texte brut d'une erreur caméra.
-const REASON_INTERDITS: [&str; 6] =
+/// The substrings that have no business on a retained topic. No reason
+/// built by the bridge contains one; this belt holds the promise
+/// "never a secret in a retained topic" even if a caller passes the
+/// raw text of a camera error.
+const REASON_FORBIDDEN: [&str; 6] =
 	["password", "passwd", "mot de passe", "token", "secret", "apikey"];
 
-/// Met un motif de refus en état d'être conservé sur le broker : une seule
-/// ligne, sans balise XML, sans secret, bornée à [`REASON_MAX`] caractères.
+/// Puts a refusal reason in a state fit to be retained on the broker: one
+/// single line, no XML tag, no secret, bounded to [`REASON_MAX`] characters.
 ///
-/// Les balises sont remplacées par des guillemets français et non supprimées :
-/// `this camera's reply has no <OsdChannelName> tag` est précisément
-/// l'information qui explique un refus, et ce qui doit disparaître est le
-/// délimiteur XML, pas le nom de la balise.
+/// The tags are replaced by french guillemets and not deleted:
+/// `this camera's reply has no <OsdChannelName> tag` is precisely
+/// the information that explains a refusal, and what must disappear is the
+/// XML delimiter, not the tag's name.
 pub fn publishable_reason(reason: &str) -> String {
 	publishable_reason_bounded(reason, REASON_MAX)
 }
@@ -434,8 +434,8 @@ pub fn publishable_reason(reason: &str) -> String {
 /// may become a channel for secrets, so the cleaning is identical in both: no
 /// bare XML delimiter, no control character, and the mask applies whenever the
 /// text looks like a credential.
-pub fn publishable_reason_bounded(reason: &str, maximal: usize) -> String {
-	let sans_balises: String = reason
+pub fn publishable_reason_bounded(reason: &str, max_chars: usize) -> String {
+	let tag_free: String = reason
 		.chars()
 		.map(|c| match c {
 			'<' => '«',
@@ -444,20 +444,20 @@ pub fn publishable_reason_bounded(reason: &str, maximal: usize) -> String {
 			c => c,
 		})
 		.collect();
-	if REASON_INTERDITS
+	if REASON_FORBIDDEN
 		.iter()
-		.any(|interdit| sans_balises.to_lowercase().contains(interdit))
+		.any(|forbidden| tag_free.to_lowercase().contains(forbidden))
 	{
-		return REASON_MASQUE.to_string();
+		return REASON_MASKED.to_string();
 	}
-	let propre = sans_balises.split_whitespace().collect::<Vec<_>>().join(" ");
+	let propre = tag_free.split_whitespace().collect::<Vec<_>>().join(" ");
 	if propre.is_empty() {
-		return REASON_SANS_DETAIL.to_string();
+		return REASON_NO_DETAIL.to_string();
 	}
-	if propre.chars().count() <= maximal {
+	if propre.chars().count() <= max_chars {
 		return propre;
 	}
-	let tronc: String = propre.chars().take(maximal - 1).collect();
+	let tronc: String = propre.chars().take(max_chars - 1).collect();
 	format!("{}…", tronc.trim_end())
 }
 
@@ -659,9 +659,9 @@ mod tests {
 
 	#[tokio::test]
 	async fn a_refused_setting_is_not_published_but_clears() {
-		// La caméra n'a pas répondu : on efface l'état conservé, on ne met pas
-		// une valeur par défaut. Un capteur « inconnu » est honnête ; un « 0 »
-		// conservé ne l'est pas.
+		// The camera did not answer: the retained state is erased, we do not put
+		// a default value in it. An `unknown` sensor is honest; a retained
+		// `0` is not.
 		let (c, mock) = crate::test_support::mock_client();
 		let pub_ = StatusPublisher::new(&c, "bairelay", "cam1");
 		pub_.clear_setting(Family::Chime, "list").await.unwrap();
@@ -685,13 +685,13 @@ mod tests {
 
 	#[tokio::test]
 	async fn the_reason_for_a_family_is_kept_then_cleared() {
-		// Le refus d'une famille doit rester lisible après coup : conservé, et
-		// effacé (et non remplacé par une phrase triomphante) dès que la famille
-		// a répondu.
+		// A family's refusal must stay readable after the fact: retained, and
+		// erased (not replaced by a triumphant sentence) as soon as the family
+		// has answered.
 		let (c, mock) = crate::test_support::mock_client();
 		let pub_ = StatusPublisher::new(&c, "bairelay", "cam1");
 		pub_
-			.publish_family_reason(Family::Motion, "la caméra a répondu MdAlarm : non écrivable")
+			.publish_family_reason(Family::Motion, "the camera answered MdAlarm: not writable")
 			.await
 			.unwrap();
 		pub_.clear_family_reason(Family::Motion).await.unwrap();
@@ -700,7 +700,7 @@ mod tests {
 			vec![
 				(
 					"bairelay/cam1/status/motion/reason".to_string(),
-					"la caméra a répondu MdAlarm : non écrivable".as_bytes().to_vec(),
+					"the camera answered MdAlarm: not writable".as_bytes().to_vec(),
 					true
 				),
 				("bairelay/cam1/status/motion/reason".to_string(), Vec::new(), true),
@@ -708,34 +708,34 @@ mod tests {
 		);
 	}
 
-	/// Un topic conservé ne verra jamais le XML brut de la caméra, un secret, ni
-	/// dix lignes de trace : `publishable_reason` est la dernière barrière, et
-	/// c'est elle qui tient la promesse, pas la vigilance des appelants.
+	/// A retained topic will never see the camera's raw XML, a secret, nor
+	/// ten lines of trace: `publishable_reason` is the last barrier, and
+	/// it is what holds the promise, not the callers' vigilance.
 	#[test]
 	fn a_reason_carries_neither_xml_nor_secrets() {
-		// Le nom de la balise est l'information utile ; seuls ses délimiteurs
+		// The tag's name is the useful information; only its delimiters
 		// disparaissent.
 		assert_eq!(
 			publishable_reason("no <OsdChannelName> tag here"),
 			"no «OsdChannelName» tag here"
 		);
-		assert_eq!(publishable_reason("  \n\t  "), REASON_SANS_DETAIL);
+		assert_eq!(publishable_reason("  \n\t  "), REASON_NO_DETAIL);
 		assert_eq!(
 			publishable_reason("could not auth with password hunter2"),
-			REASON_MASQUE
+			REASON_MASKED
 		);
 		assert_eq!(
 			publishable_reason("<Wifi><key>mot de passe</key></Wifi>"),
-			REASON_MASQUE,
-			"un bloc XML passé par erreur ne doit pas ressortir"
+			REASON_MASKED,
+			"an XML block passed by mistake must not come back out"
 		);
 		assert_eq!(
-			publishable_reason("MdAlarm: refus\nde réécriture"),
-			"MdAlarm: refus de réécriture",
-			"un motif tient sur une ligne"
+			publishable_reason("MdAlarm: refusal\nto rewrite"),
+			"MdAlarm: refusal to rewrite",
+			"a reason fits on one line"
 		);
 		let long = publishable_reason(&"a".repeat(4000));
-		assert!(long.chars().count() <= REASON_MAX, "{} caractères", long.chars().count());
+		assert!(long.chars().count() <= REASON_MAX, "{} characters", long.chars().count());
 		assert!(long.ends_with('…'), "{long}");
 	}
 
@@ -756,10 +756,10 @@ mod tests {
 		);
 	}
 
-	/// Dédoublonnage de la présence : deux succès consécutifs produisent une seule
-	/// publication, et la transition vers le verdict inverse en produit une
-	/// seconde. Sans ce garde-fou, cinquante wakes par heure écriraient cinquante
-	/// fois le même message conservé sur un courtier domestique.
+	/// Presence deduplication: two consecutive successes produce a single
+	/// publication, and the transition to the opposite verdict produces a
+	/// second one. Without this guard, fifty wakes per hour would write fifty
+	/// times the same retained message on a home broker.
 	#[tokio::test]
 	async fn presence_publishes_only_on_transition() {
 		let (c, mock) = crate::test_support::mock_client();
@@ -774,7 +774,7 @@ mod tests {
 				b"reachable".to_vec(),
 				true
 			)],
-			"deux succès consécutifs ne doivent rien publish_now de plus"
+			"two consecutive successes must not publish anything more"
 		);
 		publ.publish_presence(false).await.unwrap();
 		publ.publish_presence(false).await.unwrap();
@@ -792,13 +792,13 @@ mod tests {
 					true
 				),
 			],
-			"une transition, une publication"
+			"one transition, one publication"
 		);
 	}
 
-	/// Les trois endroits du pont construisent chacun leur propre publieur : la
-	/// cellule doit donc porter la déduplication au-delà des instances : sinon elle
-	/// saute dès que deux endroits publient.
+	/// The three places of the bridge each build their own publisher: the cell
+	/// must therefore carry the deduplication beyond the instances — otherwise it
+	/// jumps as soon as two places publish.
 	#[tokio::test]
 	async fn presence_is_deduplicated_between_two_publishers() {
 		let (c, mock) = crate::test_support::mock_client();

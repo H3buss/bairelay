@@ -11,7 +11,7 @@
 mod tests {
 	use crate::ai::AiObject;
 	use crate::settings::Family;
-	use crate::status::{REASON_MASQUE, REASON_SANS_DETAIL};
+	use crate::status::{REASON_MASKED, REASON_NO_DETAIL};
 	use crate::topics::REASON_LEAF;
 
 	/// French words that are not english words; see the root crate's guard for why the
@@ -36,8 +36,8 @@ mod tests {
 	#[test]
 	fn every_reason_sentence_of_this_crate_is_english() {
 		published_value_is_english("topics::REASON_LEAF", REASON_LEAF);
-		published_value_is_english("REASON_SANS_DETAIL", REASON_SANS_DETAIL);
-		published_value_is_english("REASON_MASQUE", REASON_MASQUE);
+		published_value_is_english("REASON_NO_DETAIL", REASON_NO_DETAIL);
+		published_value_is_english("REASON_MASKED", REASON_MASKED);
 	}
 
 	#[test]
