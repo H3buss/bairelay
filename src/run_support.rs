@@ -495,7 +495,7 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 	}
 	.await;
 
-	code_pour_sortie(mode, result, stdout, stderr)
+	exit_code_for_outcome(mode, result, stdout, stderr)
 }
 
 /// Publishes what the command produced and returns the process exit code.
@@ -512,7 +512,7 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 /// The emitted bytes are produced by the same
 /// [`emit_success_to`]/[`emit_failure_to`] as before: extracting this
 /// decision changes nothing about the JSON.
-fn code_pour_sortie<W1: std::io::Write, W2: std::io::Write>(
+fn exit_code_for_outcome<W1: std::io::Write, W2: std::io::Write>(
 	mode: Mode,
 	result: Result<Outcome>,
 	stdout: &mut W1,
@@ -1123,7 +1123,7 @@ on_motion = true
 	}
 
 	/// A successful talk run exits **0** — the invariant is decided in
-	/// [`code_pour_sortie`] and nowhere else. The full call path
+	/// [`exit_code_for_outcome`] and nowhere else. The full call path
 	/// (`runner::run` → real camera) is not reproducible offline, so what
 	/// gets pinned here is the pair (Outcome → exit code + emitted bytes),
 	/// including the awkward success that carries a camera error code:
@@ -1159,7 +1159,7 @@ on_motion = true
 		for (name, outcome) in cases {
 			let mut stdout = Vec::new();
 			let mut stderr = Vec::new();
-			let code = code_pour_sortie(Mode::Json, Ok(outcome), &mut stdout, &mut stderr);
+			let code = exit_code_for_outcome(Mode::Json, Ok(outcome), &mut stdout, &mut stderr);
 			assert_eq!(code, classify::EXIT_OK, "{name} succeeded: the code must be 0");
 			assert!(stderr.is_empty(), "{name} must write nothing to stderr");
 			let parsed: serde_json::Value = serde_json::from_slice(&stdout)
@@ -1175,7 +1175,7 @@ on_motion = true
 		let mut stdout = Vec::new();
 		let mut stderr = Vec::new();
 		let e = anyhow::anyhow!("a failure that looks like nothing known");
-		let code = code_pour_sortie(Mode::Json, Err(e), &mut stdout, &mut stderr);
+		let code = exit_code_for_outcome(Mode::Json, Err(e), &mut stdout, &mut stderr);
 		assert_eq!(code, classify::EXIT_UNEXPECTED);
 		let parsed: serde_json::Value = serde_json::from_slice(&stdout).expect("json");
 		assert_eq!(parsed["ok"], serde_json::Value::Bool(false));

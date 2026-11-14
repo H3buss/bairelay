@@ -611,16 +611,18 @@ mod tests {
 	fn pump_carries_an_odd_byte_across_chunks() {
 		let mut pump = Pump::new(&neg());
 		let (tx, rx) = bairelay_neolink_core::crossbeam_channel::unbounded::<Vec<u8>>();
-		let chunk: Vec<u8> = (0..4095).map(|i| (i % 251) as u8).collect();
+		// One byte short of a whole block: a block is 1025 samples (the header
+		// sample plus 1024 nibbles), so 2050 bytes.
+		let chunk: Vec<u8> = (0..2049).map(|i| (i % 251) as u8).collect();
 		pump.feed(&chunk, &tx).expect("sender alive");
-		assert_eq!(pump.pending_byte, Some(chunk[4094]));
-		assert_eq!(pump.bytes_in, 4095);
-		assert_eq!(rx.len(), 1, "2047 samples = one block plus a tail");
+		assert_eq!(pump.pending_byte, Some(chunk[2048]));
+		assert_eq!(pump.bytes_in, 2049);
+		assert_eq!(rx.len(), 0, "1024 samples < one 1025-sample block");
 
 		pump.feed(&[0x00], &tx).expect("sender alive");
 		assert_eq!(pump.pending_byte, None);
-		assert_eq!(pump.bytes_in, 4096, "the carried byte completed the sample");
-		assert_eq!(rx.len(), 2, "4096 bytes = 2048 samples = 2 blocks");
+		assert_eq!(pump.bytes_in, 2050, "the carried byte completed the sample");
+		assert_eq!(rx.len(), 1, "2050 bytes = 1025 samples = exactly one block");
 	}
 
 	/// Nothing reaches the camera until a whole block exists, and the tail must
@@ -630,60 +632,72 @@ mod tests {
 		let mut pump = Pump::new(&neg());
 		let (tx, rx) = bairelay_neolink_core::crossbeam_channel::unbounded::<Vec<u8>>();
 		pump.feed(&[0x10; 2000], &tx).unwrap();
-		assert_eq!(rx.len(), 0, "1000 samples < one 1024-sample block");
+		assert_eq!(rx.len(), 0, "1000 samples < one 1025-sample block");
 		pump.feed(&[0x10; 2200], &tx).unwrap();
-		assert_eq!(rx.len(), 2, "2100 samples = 2 blocks, 52 left over");
-		// `try_iter`: `rx.iter()` would block waiting for a sender that is
-		// still alive; everything to check is already queued.
-		assert!(rx.try_iter().all(|b| b.len() == 516));
+		assert_eq!(rx.len(), 2, "2100 samples = 2 blocks, 50 left over");
+		// Collect before checking lengths: iterating the receiver consumes
+		// what it walks over, and `rx.len()` afterwards would only see the
+		// blocks that the iteration left behind.
+		let blocks: Vec<Vec<u8>> = rx.try_iter().collect();
+		assert!(blocks.iter().all(|b| b.len() == 516));
 
 		pump.finish_burst(&tx);
-		assert_eq!(rx.len(), 3, "the 52-sample tail becomes one padded block");
+		assert_eq!(rx.len(), 1, "the 50-sample tail becomes one padded block");
 		assert_eq!(pump.blocks, 3);
 	}
 
-	/// A burst must not inherit the previous burst's predictor state or its
-	/// half-encoded bytes: every talk session starts from silence.
+	/// A burst must not inherit the previous burst's half-encoded bytes or its
+	/// encoder state: every talk session starts on its own first sample.
 	#[test]
 	fn start_burst_resets_the_encoder_and_the_partial_block() {
-		let loud = [0x40u8; 3000];
-		let next = [0x40u8; 2048];
+		// Two bursts with different sample values (257 and 127), so a block
+		// header says which burst its first sample came from.
+		let loud: Vec<u8> = vec![0x01u8; 3000];
+		let next: Vec<u8> = (0..2050).map(|i| if i % 2 == 0 { 0x7F } else { 0x00 }).collect();
 
-		// Control: the same two feeds *without* a reset, so the predictor state
-		// carries over. The second block's header then holds the last sample of
-		// the first block — proof that the assertion below can fail.
+		// Control: the same two feeds *without* a reset. The second block then
+		// starts from the first burst's leftover samples — proof that the
+		// assertion below can fail.
 		let (ctx, crx) = bairelay_neolink_core::crossbeam_channel::unbounded::<Vec<u8>>();
 		let mut control = Pump::new(&neg());
 		control.feed(&loud, &ctx).unwrap();
 		control.feed(&next, &ctx).unwrap();
-		let carried = crx.iter().nth(1).expect("two blocks");
-		assert_ne!(
-			&carried[..4],
-			&[0, 0, 0, 0],
-			"sanity: without a reset the predictor is supposed to move"
+		let carried = crx.try_iter().nth(1).expect("two blocks");
+		assert_eq!(
+			i16::from_le_bytes([carried[0], carried[1]]),
+			257,
+			"sanity: without a reset the second block still starts from the old burst's leftovers"
 		);
 
-		// The bridge: a reset between bursts, and the session starts silent.
+		// The bridge: a reset between bursts, so the new burst owns its
+		// block boundary from the first sample.
 		let (tx, rx) = bairelay_neolink_core::crossbeam_channel::unbounded::<Vec<u8>>();
 		let mut pump = Pump::new(&neg());
 		pump.feed(&loud, &tx).unwrap();
-		let first = rx.recv().unwrap();
-		assert_eq!(&first[..4], &[0, 0, 0, 0], "a fresh session starts from silence");
 		assert_eq!(pump.blocks, 1);
-
-		pump.start_burst();
-		pump.feed(&next, &tx).unwrap();
-		let second = rx.recv().unwrap();
+		let first: Vec<Vec<u8>> = rx.try_iter().collect();
 		assert_eq!(
-			&second[..4],
-			&[0, 0, 0, 0],
-			"start_burst must put the predictor back to silence"
+			i16::from_le_bytes([first[0][0], first[0][1]]),
+			257,
+			"the loud burst's own block starts from its own first sample"
 		);
-		assert_eq!(second.len(), 516);
-		assert!(
-			rx.is_empty(),
-			"the 476 samples left over from the old burst must never arrive"
+		pump.pending_byte = Some(0x02);
+		pump.start_burst();
+		assert_eq!(pump.pending_byte, None, "start_burst drops the half sample");
+
+		pump.feed(&next, &tx).unwrap();
+		let blocks: Vec<Vec<u8>> = rx.try_iter().collect();
+		assert_eq!(
+			blocks.len(),
+			1,
+			"the reset burst contributes exactly one block, not one inflated by the old tail"
 		);
+		assert_eq!(
+			i16::from_le_bytes([blocks[0][0], blocks[0][1]]),
+			127,
+			"start_burst must put the new burst's first sample in the header"
+		);
+		assert_eq!(blocks[0].len(), 516);
 		assert_eq!(pump.blocks, 2, "only what was actually queued is counted");
 	}
 

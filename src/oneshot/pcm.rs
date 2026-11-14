@@ -328,7 +328,9 @@ mod tests {
 		bytes.extend_from_slice(&[0u8; 16]);
 		let msg = parse_wav(&bytes).expect_err("must refuse").to_string();
 		assert!(msg.contains("--raw"), "message was: {msg}");
-		assert!(msg.contains("\\x34"), "magic must be quoted: {msg}");
+		// Non-text bytes of the magic are quoted as hex; 0x34 is '4' and
+		// stays readable, 0x12 must not leak raw.
+		assert!(msg.contains("\\x12"), "magic must be quoted: {msg}");
 	}
 
 	#[test]
