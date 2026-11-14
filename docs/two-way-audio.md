@@ -95,7 +95,9 @@ command-line flag.
 `talk.rs` computes `block_size = length_per_encoder / 2` and
 `full_block_size = block_size + 4`, so one block is 512 payload bytes
 plus a 4-byte header (predictor `i16` LE, step index `u8`, one reserved
-byte), i.e. **516 bytes = 1024 nibble samples = 64 ms at 16 kHz**.
+byte), i.e. **516 bytes = 1024 nibble samples = 64 ms at 16 kHz**, and
+1025 real samples per block once the header sample is counted (so one
+block consumes exactly 2050 input bytes).
 `talk()` packs `BLOCK_PER_PAYLOAD = 4` blocks into one msg 202 payload
 and paces by sleeping out each payload's playback duration;
 `talk_stream()` sends one block per payload, paced on the camera's ack.
