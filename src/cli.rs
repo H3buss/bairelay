@@ -32,6 +32,8 @@ Camera commands:
   siren          Trigger the siren once
   abilities      Dump the camera's abilityInfo XML + parsed permissions
   webhook        Read the camera's HTTP webhook configuration
+  reglages-audio Read (or with options, rewrite) the audioCfg volumes
+  reglages-carillon Read (or with options, rewrite) the paired-chime settings
 
 Other:
   check-config   Validate the config file and exit (no camera connection)
@@ -281,6 +283,90 @@ pub enum Command {
 	/// retrying the wake-time 400. Read-only.
 	Webhook(OneShotArgs),
 
+	/// Read the camera's `<audioCfg>` block: the loudspeaker `volume` and, on
+	/// a doorbell, `talkAndReplyVolume` (how loud the answer you speak through
+	/// the app comes out), `visitorVolume` (the pre-set greeting clips) and
+	/// `visitorLoudspeaker`. Baichuan cmd 264 reads it, 265 writes it, and it
+	/// is the only place the intercom volume exists.
+	///
+	/// With no option this is read-only. Each write option rewrites one tag of
+	/// the block the camera just printed: the command reads the block, patches
+	/// only the tags you passed, and sends the **whole block** back — a block
+	/// that omits tags the camera sent is rejected, or silently ignored, by
+	/// this firmware. A tag the camera didn't print is never invented, and
+	/// asking to change one it doesn't have is an error rather than a silent
+	/// addition. The block is read again after the write and printed, so the
+	/// before / after you see is what the camera kept.
+	///
+	/// Tags whose meaning is undocumented (`audioSelect`, `audioListId`,
+	/// `preAlarm`, `timeout`) are printed and echoed back untouched.
+	ReglagesAudio {
+		#[command(flatten)]
+		common: OneShotArgs,
+		/// volume — the loudspeaker volume, 0-100.
+		#[arg(long = "volume", value_name = "N")]
+		volume: Option<u8>,
+		/// talkAndReplyVolume — the intercom volume, 0-100.
+		#[arg(long = "interphone", value_name = "N")]
+		interphone: Option<u8>,
+		/// visitorVolume — how loud the pre-set message clips play, 0-100.
+		#[arg(long = "messages", value_name = "N")]
+		messages: Option<u8>,
+		/// visitorLoudspeaker — whether the loudspeaker is live for a visitor
+		/// (0 or 1).
+		#[arg(long = "visiteur", value_name = "0|1")]
+		visiteur: Option<u8>,
+		/// Let the camera's advertised abilities veto the command before it is
+		/// sent. Off by default: this doorbell's `abilityInfo` under-reports,
+		/// so the answer to cmd 264 is the only proof of support that counts.
+		#[arg(long = "gate")]
+		gate: bool,
+	},
+
+	/// Read the paired chime (carillon appairé, ding-dong): the paired list
+	/// (cmd 484), the per-chime volume and LED (485), the mute window (609),
+	/// the per-event melodies (486) and the hardwired block (483) — the
+	/// doorbell answers all of these for the chime, which has no address of
+	/// its own.
+	///
+	/// The camera must be REACHABLE and the chime PAIRED for anything to
+	/// answer: each part the camera doesn't have refuses its question, and the
+	/// report names which parts were refused — that is how "no wireless chime"
+	/// tells itself apart from a broken read. On a wired install the 483 read
+	/// itself can make the chime sound.
+	///
+	/// With no option this is read-only. Each write option patches one tag of
+	/// the block the camera just printed and rewrites the whole received
+	/// block — a tag the camera didn't print is never invented. Only parts
+	/// whose text actually changed are sent: re-writing the silent-mode block
+	/// would re-arm the mute countdown, so an unchanged value costs no
+	/// command. The family is read again after any write and printed, so the
+	/// before / after you see is what the camera kept.
+	ReglagesCarillon {
+		#[command(flatten)]
+		common: OneShotArgs,
+		/// volLevel — the chime volume, 0-4 (the documented range; the true
+		/// ceiling is undocumented).
+		#[arg(long = "volume", value_name = "N")]
+		volume: Option<u8>,
+		/// ledState — the chime status LED (0 or 1).
+		#[arg(long = "led", value_name = "0|1")]
+		led: Option<u8>,
+		/// musicId — the melody for every event whose block printed one
+		/// (integer; no melody list is documented, so read 486 first).
+		#[arg(long = "melodie", value_name = "ID")]
+		melodie: Option<u32>,
+		/// Mute the chime for N (unit undocumented; the reference client sends
+		/// seconds). 0 unmutes.
+		#[arg(long = "silencieux", value_name = "N")]
+		silencieux: Option<u32>,
+		/// Ring the chime once after the read (and after the write, if any):
+		/// the live test — hearing it is the only proof of life the protocol
+		/// cannot give. It makes noise, on purpose, because you asked.
+		#[arg(long = "sonner")]
+		sonner: bool,
+	},
+
 	/// Query or set the PIR sensor.
 	Pir {
 		#[command(flatten)]
@@ -392,6 +478,8 @@ impl Cli {
 			| Command::Siren(_)
 			| Command::Abilities(_)
 			| Command::Webhook(_)
+			| Command::ReglagesAudio { .. }
+			| Command::ReglagesCarillon { .. }
 			| Command::Pir { .. }
 			| Command::StatusLight { .. }
 			| Command::Ptz { .. }
@@ -458,6 +546,8 @@ impl Cli {
 			| Command::Abilities(a)
 			| Command::Webhook(a) => Some(&a.camera),
 			Command::Snapshot { common, .. }
+			| Command::ReglagesAudio { common, .. }
+			| Command::ReglagesCarillon { common, .. }
 			| Command::Floodlight { common, .. }
 			| Command::Pir { common, .. }
 			| Command::StatusLight { common, .. }
@@ -926,6 +1016,158 @@ mod tests {
 		);
 	}
 
+	/// `reglages-audio` is the read/write face of `<audioCfg>`: the bare form
+	/// must be a plain read, and every option must reach the one-shot, with the
+	/// ability gate **off** unless `--gate` is passed (this doorbell's
+	/// `abilityInfo` under-reports, so gating by default would refuse a command
+	/// the camera answers).
+	#[test]
+	fn parse_reglages_audio() {
+		let cli = Cli::try_parse_from(["bairelay", "-c", "c.toml", "reglages-audio", "Sonnette"])
+			.unwrap();
+		let Command::ReglagesAudio {
+			common,
+			volume,
+			interphone,
+			messages,
+			visiteur,
+			gate,
+		} = &cli.command
+		else {
+			panic!("wrong variant")
+		};
+		assert_eq!(common.camera, "Sonnette");
+		assert_eq!(volume, &None);
+		assert_eq!(interphone, &None);
+		assert_eq!(messages, &None);
+		assert_eq!(visiteur, &None);
+		assert!(!*gate, "the gate is opt-in");
+		assert!(cli.is_oneshot());
+		assert_eq!(cli.camera_name(), Some("Sonnette"));
+		assert!(cli.dump_bcmedia_path().is_none());
+
+		let cli = Cli::try_parse_from([
+			"bairelay",
+			"reglages-audio",
+			"Sonnette",
+			"--volume",
+			"80",
+			"--interphone",
+			"90",
+			"--messages",
+			"60",
+			"--visiteur",
+			"0",
+			"--gate",
+		])
+		.unwrap();
+		let Command::ReglagesAudio {
+			volume,
+			interphone,
+			messages,
+			visiteur,
+			gate,
+			..
+		} = &cli.command
+		else {
+			panic!("wrong variant")
+		};
+		assert_eq!(volume, &Some(80));
+		assert_eq!(
+			interphone,
+			&Some(90),
+			"the intercom volume is the setting this command exists for"
+		);
+		assert_eq!(messages, &Some(60));
+		assert_eq!(
+			*visiteur,
+			Some(0),
+			"a switch set to 0 must not read as 'not passed'"
+		);
+		assert!(*gate);
+
+		let cloned = crate::cli_convert::clone_command(&cli.command);
+		let Command::ReglagesAudio { interphone, .. } = &cloned else {
+			panic!("clone_command must preserve the variant")
+		};
+		assert_eq!(interphone, &Some(90));
+	}
+
+	/// `reglages-carillon` must parse as a bare read (every option `None`,
+	/// no write intent) and as a full-option write.
+	#[test]
+	fn parse_reglages_carillon() {
+		let cli = Cli::try_parse_from(["bairelay", "-c", "c.toml", "reglages-carillon", "Sonnette"])
+			.unwrap();
+		let Command::ReglagesCarillon {
+			common,
+			volume,
+			led,
+			melodie,
+			silencieux,
+			sonner,
+		} = &cli.command
+		else {
+			panic!("wrong variant")
+		};
+		assert_eq!(common.camera, "Sonnette");
+		assert_eq!(volume, &None);
+		assert_eq!(led, &None);
+		assert_eq!(melodie, &None);
+		assert_eq!(silencieux, &None);
+		assert!(!*sonner, "a command that makes noise must never be the default");
+		assert!(cli.is_oneshot());
+		assert_eq!(cli.camera_name(), Some("Sonnette"));
+		assert!(cli.dump_bcmedia_path().is_none());
+
+		let cli = Cli::try_parse_from([
+			"bairelay",
+			"reglages-carillon",
+			"Sonnette",
+			"--volume",
+			"4",
+			"--led",
+			"0",
+			"--melodie",
+			"2",
+			"--silencieux",
+			"0",
+			"--sonner",
+		])
+		.unwrap();
+		let Command::ReglagesCarillon {
+			volume,
+			led,
+			melodie,
+			silencieux,
+			sonner,
+			..
+		} = &cli.command
+		else {
+			panic!("wrong variant")
+		};
+		assert_eq!(volume, &Some(4));
+		assert_eq!(
+			*led,
+			Some(0),
+			"a switch set to 0 must not read as 'not passed'"
+		);
+		assert_eq!(melodie, &Some(2));
+		assert_eq!(
+			*silencieux,
+			Some(0),
+			"silencieux 0 means unmute: a value, not an absence"
+		);
+		assert!(*sonner);
+
+		let cloned = crate::cli_convert::clone_command(&cli.command);
+		let Command::ReglagesCarillon { melodie, sonner, .. } = &cloned else {
+			panic!("clone_command must preserve the variant")
+		};
+		assert_eq!(melodie, &Some(2));
+		assert!(*sonner);
+	}
+
 	#[test]
 	fn help_template_lists_all_subcommands_grouped() {
 		// The hand-rolled help_template must stay in sync with the
@@ -958,6 +1200,7 @@ mod tests {
 			"siren",
 			"abilities",
 			"webhook",
+			"miroir",
 		] {
 			assert!(
 				help.contains(cmd),

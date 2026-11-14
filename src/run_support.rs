@@ -20,7 +20,9 @@ use crate::oneshot::classify;
 use crate::oneshot::dispatch::{dispatch_oneshot, find_camera_config, snapshot_json_preflight};
 use crate::oneshot::errors::ConfigError;
 use crate::oneshot::output::{format_failure, format_success, Mode, Outcome};
-use crate::oneshot::{runner, snapshot};
+use crate::oneshot::{
+	reglages_audio, reglages_carillon, runner, snapshot,
+};
 
 /// Pick the one-shot output mode from the CLI flag. Extracted so the
 /// `cli.json → Mode` mapping is pinned in one place.
@@ -44,6 +46,13 @@ pub fn load_validated_config(path: &Path) -> Result<Config> {
 	// Attach the host's MFA trust token (if bootstrapped via `cloud-authorise`)
 	// from the sibling state file, so cloud cameras can clear login verification.
 	crate::config::apply_cloud_auth(&mut config, path);
+	// Same sibling-state-file rule for the settings verdicts: the families the
+	// bridge has proven modifiable are restored from
+	// `config-familles-lues.json` beside this config file, so a battery
+	// doorbell doesn't pay a full fifteen-command salvo to remember what it
+	// already proved yesterday. Missing or corrupt file is the current
+	// behaviour, never a startup failure — see [`crate::etat_familles`].
+	crate::etat_familles::definir_chemin(path);
 	validate_config(&config)
 		.map_err(|e| anyhow::anyhow!(e))
 		.context("Configuration validation failed")?;
@@ -397,6 +406,65 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 			})
 			.await;
 		}
+		// `reglages-audio` reads and writes `<audioCfg>` through
+		// `BcCamera::get_audio_cfg` / `set_audio_cfg`. Those two are on the
+		// concrete camera and pointedly not on `CameraDriver`, so the command
+		// takes this route like `talk-abilite` does. The argument checks run
+		// before the connection: this is a battery doorbell, and a volume of
+		// 120 is a typo about the operator's own command line — it must not
+		// cost a wake-up to be refused.
+		if let Command::ReglagesAudio {
+			volume,
+			interphone,
+			messages,
+			visiteur,
+			gate,
+			..
+		} = &cli.command
+		{
+			let edit = reglages_audio::Edit {
+				volume: *volume,
+				interphone: *interphone,
+				messages: *messages,
+				visiteur: *visiteur,
+				gate: *gate,
+			};
+			edit.check()?;
+			return runner::run(&cam_cfg, cancel, move |cam| {
+				async move { reglages_audio::run(cam, edit).await }.boxed()
+			})
+			.await;
+		}
+
+		// `reglages-carillon` reads and writes the chime family through
+		// `BcCamera::get_ding_dong_cfg` / `set_ding_dong_cfg` /
+		// `ring_ding_dong` — concrete camera, not the trait, same route.
+		// Argument checks again run before the connection: `--volume 9` is a
+		// typo, and even `--sonner` (which only rings) must be refused before
+		// a wake-up if it could not be valid.
+		if let Command::ReglagesCarillon {
+			volume,
+			led,
+			melodie,
+			silencieux,
+			sonner,
+			..
+		} = &cli.command
+		{
+			let edit = reglages_carillon::Edit {
+				volume: *volume,
+				led: *led,
+				melodie: *melodie,
+				silencieux: *silencieux,
+				sonner: *sonner,
+			};
+			edit.check()?;
+			return runner::run(&cam_cfg, cancel, move |cam| {
+				async move { reglages_carillon::run(cam, edit).await }.boxed()
+			})
+			.await;
+		}
+
 		let cmd = crate::cli_convert::clone_command(&cli.command);
 		let json = cli.json;
 		runner::run(&cam_cfg, cancel, move |cam| {
@@ -414,6 +482,30 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 	}
 	.await;
 
+	code_pour_sortie(mode, result, stdout, stderr)
+}
+
+/// Publie ce que la commande a produit et rend le code de sortie du processus.
+///
+/// L'invariant, écrit ici parce que c'est le seul endroit où il est décidé :
+/// **une exécution qui a produit un `Outcome` rend 0**. Un code non nul sur un
+/// `Outcome` serait un succès contradictoire — l'opératrice aurait dans son
+/// tube le JSON complet d'une lecture réussie *et* un code d'échec, et son
+/// script devrait deviner lequel des deux croire. C'est exactement le
+/// signalement qui a été fait pour `reglages-audio` et `reglages-carillon` ;
+/// ces deux commandes n'ont qu'une seule issue heureuse, un `Outcome`, donc
+/// l'invariant se teste ici, sans caméra — le chemin d'appel complet
+/// (`runner::run` → connexion réelle) n'est pas reproductible hors ligne.
+///
+/// Les octets écrits sont produits par les mêmes
+/// [`emit_success_to`]/[`emit_failure_to`] qu'avant : extraire cette décision
+/// ne change en rien le JSON.
+fn code_pour_sortie<W1: std::io::Write, W2: std::io::Write>(
+	mode: Mode,
+	result: Result<Outcome>,
+	stdout: &mut W1,
+	stderr: &mut W2,
+) -> i32 {
 	match result {
 		Ok(outcome) => {
 			emit_success_to(mode, &outcome, stdout, stderr);
@@ -769,8 +861,47 @@ cameras = []
 	/// non-`--use-stream-raw` path. The TCP connect fails (no real
 	/// camera at 127.0.0.1:65535), surfacing through `Err(e)` →
 	/// classify → exit code. Covers the dispatch_oneshot bind branch.
-	#[tokio::test]
-	async fn run_oneshot_dispatch_path_returns_nonzero_on_tcp_failure() {
+	/// Corps d'un test one-shot, épinglé sur le tas pour traverser un fil sans
+	/// fioritures de generics.
+	type CorpsDeTest = std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>;
+
+	/// Fait tourner un test one-shot sur un fil à **pile explicite**, avec son
+	/// propre runtime — le même détour que `sur_worker` de `mqtt_dispatch`.
+	///
+	/// Pourquoi ce détour ici : `run_oneshot` sur le chemin TCP réel, c'est la
+	/// poignée de main Baïchuan, donc `BcXml` — tous les blocs du protocole en
+	/// `Option`, plusieurs kilo-octets, et au moins deux copies par commande. En
+	/// release — le profil du binaire qui tourne chez l'utilisatrice — le fil
+	/// reçoit exactement les **2 Mo d'un worker tokio**, la pile dont dispose
+	/// vraiment le one-shot : un test vert prouve que le chemin tient chez elle.
+	/// En debug, les cadres non optimisés réclament plus large, et le test ne
+	/// prouve plus que le comportement — c'est voulu, pas une cache.
+	fn sur_worker(body: fn() -> CorpsDeTest) {
+		let pile = if cfg!(debug_assertions) {
+			8 * 1024 * 1024
+		} else {
+			2 * 1024 * 1024
+		};
+		std::thread::Builder::new()
+			.stack_size(pile)
+			.spawn(move || {
+				let rt = tokio::runtime::Builder::new_current_thread()
+					.enable_all()
+					.build()
+					.expect("runtime du fil de test");
+				rt.block_on(body());
+			})
+			.expect("fil de test à pile explicite")
+			.join()
+			.expect("le one-shot ne doit pas paniquer sur une caméra absente");
+	}
+
+	#[test]
+	fn run_oneshot_dispatch_path_returns_nonzero_on_tcp_failure() {
+		sur_worker(|| Box::pin(run_oneshot_dispatch_path()))
+	}
+
+	async fn run_oneshot_dispatch_path() {
 		let f = tempfile::NamedTempFile::new().unwrap();
 		// Address with `127.0.0.1:65500` — connect refused / times out.
 		let toml = r#"
@@ -795,8 +926,12 @@ discovery = "local"
 	/// (the `if let Command::Snapshot ... use_stream_raw: true` arm),
 	/// then `runner::run` fails to connect — exit nonzero. Covers
 	/// the snapshot --use-stream-raw branch (lines 161-180).
-	#[tokio::test]
-	async fn run_oneshot_use_stream_raw_path_returns_nonzero_on_tcp_failure() {
+	#[test]
+	fn run_oneshot_use_stream_raw_path_returns_nonzero_on_tcp_failure() {
+		sur_worker(|| Box::pin(run_oneshot_use_stream_raw_path()))
+	}
+
+	async fn run_oneshot_use_stream_raw_path() {
 		let f = tempfile::NamedTempFile::new().unwrap();
 		let toml = r#"
 bind = "127.0.0.1"
@@ -973,6 +1108,106 @@ on_motion = true
 		assert_eq!(code, classify::EXIT_CONFIG);
 		let s = String::from_utf8(err).expect("utf8");
 		assert!(s.contains("read"));
+	}
+
+	/// Le bloc `<audioCfg>` d'une sonnette qui imprime ses **trois** volumes,
+	/// tels qu'ils ont été relevés sur le modèle de l'utilisatrice.
+	fn bloc_audio_reglages() -> crate::oneshot::output::AudioCfgInfo {
+		crate::oneshot::output::AudioCfgInfo {
+			version: "1.1".into(),
+			channel_id: "0".into(),
+			volume: "100".into(),
+			timeout: "10".into(),
+			audio_select: "0".into(),
+			pre_alarm: "0".into(),
+			audio_list_id: "0".into(),
+			talk_and_reply_volume: Some("90".into()),
+			visitor_volume: Some("38".into()),
+			visitor_loudspeaker: Some("1".into()),
+			pascal: false,
+		}
+	}
+
+	/// Une lecture réussie de réglages rend **0** — c'est l'invariant que le
+	/// signalement demandait pour `reglages-audio` et `reglages-carillon`, et
+	/// le seul endroit où il se décide est [`code_pour_sortie`]. Le chemin
+	/// complet (`runner::run` → caméra réelle) n'est pas reproductible hors
+	/// ligne ; ces deux commandes n'ont qu'une issue heureuse, un `Outcome`,
+	/// donc c'est ce couple (Outcome → code + octets) qu'il faut épingler.
+	#[test]
+	fn une_lecture_reglages_reussie_rend_zero() {
+		use crate::oneshot::output::DingDongCfgInfo;
+		let cas = [
+			(
+				"reglages-audio",
+				Outcome::ReglagesAudio {
+					tag: "audioCfg".into(),
+					changed: false,
+					block: bloc_audio_reglages(),
+					changes: vec![],
+				},
+			),
+			(
+				"reglages-carillon",
+				Outcome::ReglagesCarillon {
+					changed: false,
+					block: DingDongCfgInfo::default(),
+					changes: vec![],
+					ring: None,
+				},
+			),
+		];
+		for (nom, outcome) in cas {
+			let mut sortie = Vec::new();
+			let mut erreurs = Vec::new();
+			let code = code_pour_sortie(Mode::Json, Ok(outcome), &mut sortie, &mut erreurs);
+			assert_eq!(code, classify::EXIT_OK, "{nom} a réussi : le code doit être 0");
+			assert!(erreurs.is_empty(), "{nom} ne doit rien écrire sur stderr");
+			let lu: serde_json::Value = serde_json::from_slice(&sortie)
+				.unwrap_or_else(|e| panic!("{nom} doit rendre du JSON lisible : {e}"));
+			assert_eq!(lu["ok"], serde_json::Value::Bool(true), "{nom} : {lu}");
+			assert_eq!(
+				lu["changed"],
+				serde_json::Value::Bool(false),
+				"{nom} : une lecture n'écrit rien"
+			);
+		}
+		// Les trois volumes du `<audioCfg>` relevé sont bien dans le JSON : c'est
+		// du côté des entités MQTT qu'il en manquait un, pas ici.
+		let mut sortie = Vec::new();
+		let mut erreurs = Vec::new();
+		code_pour_sortie(
+			Mode::Json,
+			Ok(Outcome::ReglagesAudio {
+				tag: "audioCfg".into(),
+				changed: false,
+				block: bloc_audio_reglages(),
+				changes: vec![],
+			}),
+			&mut sortie,
+			&mut erreurs,
+		);
+		let lu: serde_json::Value = serde_json::from_slice(&sortie).expect("json");
+		assert_eq!(lu["block"]["volume"], "100", "<volume> est le volume général");
+		assert_eq!(
+			lu["block"]["talk_and_reply_volume"], "90",
+			"<talkAndReplyVolume> est le volume d'interphone"
+		);
+		assert_eq!(lu["block"]["visitor_volume"], "38", "<visitorVolume> visiteur");
+	}
+
+	/// Extraire la décision n'a pas adouci les échecs : une erreur reste
+	/// classifiée, et le JSON d'erreur part sur `stdout` en mode JSON.
+	#[test]
+	fn une_erreur_de_sortie_reste_classee() {
+		let mut sortie = Vec::new();
+		let mut erreurs = Vec::new();
+		let e = anyhow::anyhow!("une panne qui ne ressemble à rien de connu");
+		let code = code_pour_sortie(Mode::Json, Err(e), &mut sortie, &mut erreurs);
+		assert_eq!(code, classify::EXIT_UNEXPECTED);
+		let lu: serde_json::Value = serde_json::from_slice(&sortie).expect("json");
+		assert_eq!(lu["ok"], serde_json::Value::Bool(false));
+		assert!(erreurs.is_empty(), "en mode JSON, tout part sur stdout");
 	}
 
 	#[test]

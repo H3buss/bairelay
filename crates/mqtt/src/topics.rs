@@ -15,6 +15,28 @@ pub fn status(prefix: &str, cam: &str) -> String {
 	format!("{prefix}/{cam}/status")
 }
 
+/// Availability topic of the bridge process itself: `{prefix}/status`.
+/// Published `online` (retained) by the bridge on every broker ConnAck and
+/// `offline` (retained) by the broker's last will if the process dies, so
+/// Home Assistant's `unavailable` means « the bridge is gone » instead of
+/// « the battery doorbell happens to be asleep ».
+pub fn bridge_status(prefix: &str) -> String {
+	format!("{prefix}/status")
+}
+
+/// Présence de la caméra : `{prefix}/{cam}/presence`.
+///
+/// `reachable` quand une tentative de joindre la caméra a réussi, `unreachable`
+/// quand une tentative a échoué, après le déroulé normal de reconnexion ou de
+/// réveil. Topic distinct de [`status`] : une sonnette sur batterie ferme sa
+/// session quelques instants après chaque réveil, et brancher la disponibilité
+/// des entités sur la session les griserait toutes pendant le sommeil. Message
+/// conservé, publié seulement quand le verdict change, afin de ne pas écrire
+/// cinquante fois la même chose sur un courtier domestique.
+pub fn presence(prefix: &str, cam: &str) -> String {
+	format!("{prefix}/{cam}/presence")
+}
+
 /// Motion detection events: `{prefix}/{cam}/status/motion`
 pub fn status_motion(prefix: &str, cam: &str) -> String {
 	format!("{prefix}/{cam}/status/motion")
@@ -69,6 +91,17 @@ pub fn status_ai(prefix: &str, cam: &str, object: AiObject) -> String {
 /// Doorbell button press events: `{prefix}/{cam}/status/doorbell`
 pub fn status_doorbell(prefix: &str, cam: &str) -> String {
 	format!("{prefix}/{cam}/status/doorbell")
+}
+
+/// Raw camera event announcement, as the camera pushed it over UDP:
+/// `{prefix}/{cam}/status/evenement`
+///
+/// Non-retained, and the payload is the announcement's own JSON object
+/// (`{"event":4,"duration":19281,"totalduration":2225330,"reason":19}`). This is
+/// the diagnostic trail: when an `event`/`reason` value surprises us, the answer
+/// is here instead of in a fresh capture off the camera.
+pub fn status_evenement(prefix: &str, cam: &str) -> String {
+	format!("{prefix}/{cam}/status/evenement")
 }
 
 /// PTZ preset position: `{prefix}/{cam}/status/ptz/preset`
@@ -160,6 +193,58 @@ pub fn query_ptz_preset(prefix: &str, cam: &str) -> String {
 	format!("{prefix}/{cam}/query/ptz/preset")
 }
 
+// ── Réglages (settings) ────────────────────────────────────────────────
+//
+// Les réglages suivent exactement la forme des topics existants, avec un
+// segment de plus pour la famille : `status/<famille>/<feuille>` en lecture,
+// `control/<famille>/<feuille>` en écriture. Une feuille par entité Home
+// Assistant, parce qu'un topic JSON partagé ne se relit pas proprement après
+// une écriture (et qu'un état conservé doit être le plus petit possible).
+
+/// État d'un réglage : `{prefix}/{cam}/status/{family}/{leaf}`
+pub fn status_setting(prefix: &str, cam: &str, family: &str, leaf: &str) -> String {
+	format!("{prefix}/{cam}/status/{family}/{leaf}")
+}
+
+/// Le bloc complet d'une famille, en JSON brut de la caméra :
+/// `{prefix}/{cam}/status/{family}/json`. Pour les automates et le
+/// débogage ; les entités HA, elles, consomment les feuilles scalaires.
+pub fn status_settings_json(prefix: &str, cam: &str, family: &str) -> String {
+	format!("{prefix}/{cam}/status/{family}/json")
+}
+
+/// La feuille de diagnostic d'une famille : la raison lisible de son dernier
+/// refus.
+///
+/// Effacer les états d'une famille dit qu'elle n'a pas de valeur, pas
+/// **pourquoi**. Cette feuille porte une phrase courte — jamais le XML de la
+/// caméra, jamais un identifiant, jamais un mot de passe (voir
+/// [`crate::status::raison_publiable`], qui l'assainit avant publication).
+///
+/// Ce n'est pas une feuille d'entité : aucune entité Home Assistant ne la
+/// découvre, et aucun `SettingCommand` ne l'accepte en écriture.
+pub const REASON_LEAF: &str = "reason";
+
+/// Motif du dernier refus d'une famille : `{prefix}/{cam}/status/{family}/reason`
+pub fn status_setting_reason(prefix: &str, cam: &str, family: &str) -> String {
+	status_setting(prefix, cam, family, REASON_LEAF)
+}
+
+/// Écriture d'un réglage : `{prefix}/{cam}/control/{family}/{leaf}`
+pub fn control_setting(prefix: &str, cam: &str, family: &str, leaf: &str) -> String {
+	format!("{prefix}/{cam}/control/{family}/{leaf}")
+}
+
+/// (Re)lecture de tous les réglages : `{prefix}/{cam}/query/reglages`
+pub fn query_settings(prefix: &str, cam: &str) -> String {
+	format!("{prefix}/{cam}/query/reglages")
+}
+
+/// (Re)lecture d'une famille : `{prefix}/{cam}/query/reglages/{family}`
+pub fn query_settings_family(prefix: &str, cam: &str, family: &str) -> String {
+	format!("{prefix}/{cam}/query/reglages/{family}")
+}
+
 // ── Subscribe list ─────────────────────────────────────────────────────
 
 /// Returns all control + query topics that the bridge should subscribe to
@@ -179,10 +264,83 @@ pub fn subscribe_topics(prefix: &str, cam: &str) -> Vec<String> {
 		control_zoom(prefix, cam),
 		control_siren(prefix, cam),
 		control_wakeup(prefix, cam),
+		// Réglages : n'importe quelle feuille sous une famille. Le joker est
+		// volontaire — la liste des familles et des feuilles valides est dans
+		// `crate::reglages`, pas ici ; une paire inconnue est rejetée au
+		// parsing, pas par le filtre du broker. Il couvre aussi
+		// `control/ptz/{preset,assign}`, déjà listés explicitement au-dessus.
+		format!("{prefix}/{cam}/control/+/+"),
 		// Query topics
 		query_battery(prefix, cam),
 		query_preview(prefix, cam),
 		query_pir(prefix, cam),
 		query_ptz_preset(prefix, cam),
+		query_settings(prefix, cam),
+		format!("{prefix}/{cam}/query/reglages/+"),
 	]
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn les_topics_de_reglages_suivent_la_forme_existante() {
+		assert_eq!(
+			status_setting("bairelay", "cam1", "audio", "volume"),
+			"bairelay/cam1/status/audio/volume"
+		);
+		assert_eq!(
+			control_setting("bairelay", "cam1", "denoise", "level"),
+			"bairelay/cam1/control/denoise/level"
+		);
+		assert_eq!(
+			status_settings_json("bairelay", "cam1", "image"),
+			"bairelay/cam1/status/image/json"
+		);
+		// Le motif du dernier refus est une feuille de la famille, au même
+		// niveau que son JSON : rien de nouveau à apprendre au broker.
+		assert_eq!(
+			status_setting_reason("bairelay", "cam1", "audio"),
+			"bairelay/cam1/status/audio/reason"
+		);
+		assert_eq!(
+			status_setting("bairelay", "cam1", "audio", REASON_LEAF),
+			status_setting_reason("bairelay", "cam1", "audio"),
+			"le motif doit rester une feuille de la famille, pas un topic à part"
+		);
+		assert_eq!(query_settings("bairelay", "cam1"), "bairelay/cam1/query/reglages");
+		assert_eq!(
+			query_settings_family("bairelay", "cam1", "pir"),
+			"bairelay/cam1/query/reglages/pir"
+		);
+	}
+
+	#[test]
+	fn la_liste_d_abonnement_couvre_les_reglages() {
+		let topics = subscribe_topics("bairelay", "cam1");
+		assert!(
+			topics.contains(&"bairelay/cam1/control/+/+".to_string()),
+			"les feuilles de réglages ne seraient jamais reçues : {topics:?}"
+		);
+		assert!(topics.contains(&"bairelay/cam1/query/reglages".to_string()));
+		assert!(topics.contains(&"bairelay/cam1/query/reglages/+".to_string()));
+		// Aucun doublon : un abonnement en trop est invisible mais ment sur le
+		// nombre de souscriptions déclarées.
+		let mut tri = topics.clone();
+		tri.sort();
+		tri.dedup();
+		assert_eq!(tri.len(), topics.len(), "{topics:?}");
+	}
+
+	#[test]
+	fn le_topic_de_presence_est_distinct_de_celui_de_la_session() {
+		assert_eq!(presence("bairelay", "cam1"), "bairelay/cam1/presence");
+		assert_eq!(presence("neolink", "porche"), "neolink/porche/presence");
+		// La présence ne suit pas la session : les deux topics doivent rester
+		// distincts, sinon une sonnette endormie griserait tout son tableau de
+		// bord a chaque fermeture de session.
+		assert_ne!(presence("bairelay", "cam1"), status("bairelay", "cam1"));
+		assert_ne!(presence("bairelay", "cam1"), bridge_status("bairelay"));
+	}
 }

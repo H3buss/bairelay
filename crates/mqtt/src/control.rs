@@ -4,8 +4,17 @@
 //! `{prefix}/{cam}/query/*` topics into typed `ControlCommand` values.
 //! `{prefix}` is the `mqtt.topic_prefix` config value (default
 //! `"bairelay"`; `"neolink"` for legacy migration).
+//!
+//! Deux formes cohabitent sous `control/` : l'action simple à quatre segments
+//! (`control/pir`, `control/siren`, …, héritée de neolink) et le réglage à
+//! cinq segments (`control/<famille>/<feuille>`, voir [`crate::reglages`]).
+//! Les deux répondent `OK`/`FAIL` sur leur propre topic, d'où le filtre des
+//! mots réservés à chaque branche.
 
 use std::str;
+
+use crate::reglages::{Family, SettingCommand};
+use crate::topics;
 
 /// PTZ movement direction.
 #[derive(Debug, Clone, PartialEq)]
@@ -95,9 +104,31 @@ pub enum ControlCommand {
 		camera: String,
 		minutes: u32,
 	},
+	/// Un réglage à écrire, reçu sur `control/<famille>/<feuille>`. La valeur
+	/// a déjà passé les bornes du protocole ([`SettingCommand`]) : le dispatch
+	/// n'a plus qu'à lire, patcher, écrire, relire.
+	Setting {
+		camera: String,
+		setting: SettingCommand,
+	},
+	/// Une paire `(famille, feuille)` que le pont connaît mais dont la valeur
+	/// a été refusée, ou une feuille en lecture seule sur laquelle quelqu'un a
+	/// écrit. La seule action est de répondre `FAIL` sur le topic d'origine :
+	/// une commande refusée qui ne dit rien est indistinguable d'un pont mort.
+	RejectedSetting {
+		camera: String,
+		family: Family,
+		leaf: String,
+	},
 	// Query commands (triggered by publishing to query topics)
 	QueryBattery {
 		camera: String,
+	},
+	/// Relecture des réglages. `None` = toutes les familles
+	/// (`query/reglages`), `Some(f)` = une seule (`query/reglages/<famille>`).
+	QuerySettings {
+		camera: String,
+		family: Option<Family>,
 	},
 	QueryPreview {
 		camera: String,
@@ -132,7 +163,20 @@ impl ControlCommand {
 			ControlCommand::Zoom { .. } => format!("{prefix}/{cam}/control/zoom"),
 			ControlCommand::Siren { .. } => format!("{prefix}/{cam}/control/siren"),
 			ControlCommand::Wakeup { .. } => format!("{prefix}/{cam}/control/wakeup"),
+			ControlCommand::Setting { setting, .. } => topics::control_setting(
+				prefix,
+				cam,
+				setting.family().slug(),
+				setting.leaf(),
+			),
+			ControlCommand::RejectedSetting { family, leaf, .. } => {
+				topics::control_setting(prefix, cam, family.slug(), leaf)
+			}
 			ControlCommand::QueryBattery { .. } => format!("{prefix}/{cam}/query/battery"),
+			ControlCommand::QuerySettings { family: None, .. } => topics::query_settings(prefix, cam),
+			ControlCommand::QuerySettings {
+				family: Some(family), ..
+			} => topics::query_settings_family(prefix, cam, family.slug()),
 			ControlCommand::QueryPreview { .. } => format!("{prefix}/{cam}/query/preview"),
 			ControlCommand::QueryPir { .. } => format!("{prefix}/{cam}/query/pir"),
 			ControlCommand::QueryPtzPreset { .. } => format!("{prefix}/{cam}/query/ptz/preset"),
@@ -155,7 +199,10 @@ impl ControlCommand {
 			ControlCommand::Zoom { camera, .. } => camera,
 			ControlCommand::Siren { camera, .. } => camera,
 			ControlCommand::Wakeup { camera, .. } => camera,
+			ControlCommand::Setting { camera, .. } => camera,
+			ControlCommand::RejectedSetting { camera, .. } => camera,
 			ControlCommand::QueryBattery { camera } => camera,
+			ControlCommand::QuerySettings { camera, .. } => camera,
 			ControlCommand::QueryPreview { camera } => camera,
 			ControlCommand::QueryPir { camera } => camera,
 			ControlCommand::QueryPtzPreset { camera } => camera,
@@ -218,6 +265,20 @@ pub fn parse_control_message(prefix: &str, topic: &str, payload: &[u8]) -> Optio
 	} else if parts.len() == 4 && parts[2] == "control" {
 		let action = parts[3];
 		parse_control_action(&camera, action, payload_trimmed)
+	} else if parts.len() == 5 && parts[2] == "control" {
+		// `control/<famille>/<feuille>` : les réglages. Comme pour les
+		// actions simples, le topic de commande est aussi celui de la réponse
+		// `OK`/`FAIL` : sans ce filtre, notre propre réponse relancerait
+		// l'écriture pour toujours.
+		if is_reserved_reply_token(payload_trimmed) {
+			return None;
+		}
+		parse_control_setting(&camera, parts[3], parts[4], payload_trimmed)
+	} else if parts.len() == 5 && parts[2] == "query" && parts[3] == "reglages" {
+		if is_reserved_reply_token(payload_trimmed) {
+			return None;
+		}
+		parse_query_settings(&camera, parts[4])
 	} else if parts.len() == 4 && parts[2] == "query" {
 		if is_reserved_reply_token(payload_trimmed) {
 			return None;
@@ -380,8 +441,58 @@ fn parse_query_action(camera: &str, action: &str) -> Option<ControlCommand> {
 		"pir" => Some(ControlCommand::QueryPir {
 			camera: camera.to_string(),
 		}),
+		"reglages" => Some(ControlCommand::QuerySettings {
+			camera: camera.to_string(),
+			family: None,
+		}),
 		_ => None,
 	}
+}
+
+/// Une feuille de topic de réglage est-elle un identifiant sur lequel on peut
+/// republier ? Le segment vient du broker, donc de n'importe qui : on ne
+/// recopie pas son contenu dans un topic qu'on publie.
+fn is_safe_leaf(leaf: &str) -> bool {
+	!leaf.is_empty()
+		&& leaf.len() <= 32
+		&& leaf
+			.bytes()
+			.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// `control/<famille>/<feuille>`. Une famille inconnue est **ignorée** (elle
+/// appartient peut-être à un autre intégrateur sur le même préfixe) ; une
+/// famille connue avec une valeur refusée ou une feuille en lecture seule
+/// devient `RejectedSetting`, qui répondra `FAIL`.
+fn parse_control_setting(
+	camera: &str,
+	family_slug: &str,
+	leaf: &str,
+	payload: &str,
+) -> Option<ControlCommand> {
+	let family = Family::from_slug(family_slug)?;
+	if !is_safe_leaf(leaf) {
+		return None;
+	}
+	Some(match SettingCommand::parse(family, leaf, payload) {
+		Some(setting) => ControlCommand::Setting {
+			camera: camera.to_string(),
+			setting,
+		},
+		None => ControlCommand::RejectedSetting {
+			camera: camera.to_string(),
+			family,
+			leaf: leaf.to_string(),
+		},
+	})
+}
+
+/// `query/reglages/<famille>`.
+fn parse_query_settings(camera: &str, family_slug: &str) -> Option<ControlCommand> {
+	Some(ControlCommand::QuerySettings {
+		camera: camera.to_string(),
+		family: Some(Family::from_slug(family_slug)?),
+	})
 }
 
 fn parse_control_ptz_sub(camera: &str, sub: &str, payload: &str) -> Option<ControlCommand> {
@@ -443,5 +554,158 @@ fn parse_query_ptz_sub(camera: &str, sub: &str) -> Option<ControlCommand> {
 			camera: camera.to_string(),
 		}),
 		_ => None,
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn cmd(topic: &str, payload: &str) -> Option<ControlCommand> {
+		parse_control_message("bairelay", topic, payload.as_bytes())
+	}
+
+	#[test]
+	fn une_feuille_de_reglage_devient_une_commande_validee() {
+		let got = cmd("bairelay/cam1/control/denoise/level", "80").expect("se parse");
+		assert_eq!(got.camera_name(), "cam1");
+		match got {
+			ControlCommand::Setting {
+				setting: SettingCommand::DenoiseLevel(v),
+				..
+			} => assert_eq!(v, "80"),
+			other => panic!("attendu Setting/DenoiseLevel, reçu {other:?}"),
+		}
+	}
+
+	#[test]
+	fn le_topic_de_reponse_est_le_topic_recu() {
+		// L'invariant qui empêche une réponse `OK` de partir sur un autre
+		// topic que celui que Home Assistant écoute.
+		for topic in [
+			"bairelay/cam1/control/audio/volume",
+			"bairelay/cam1/control/osd/name",
+			"bairelay/cam1/control/chime/ring",
+		] {
+			let payload = match topic {
+				t if t.ends_with("/volume") => "50",
+				t if t.ends_with("/name") => "Porche",
+				_ => "1",
+			};
+			let got = cmd(topic, payload).expect("se parse");
+			assert_eq!(got.control_topic("bairelay"), topic, "{topic}");
+		}
+	}
+
+	#[test]
+	fn une_famille_inconnue_est_ignoree() {
+		// Peut-être un autre intégrateur sur le même préfixe : on ne répond
+		// rien, on ne commande rien.
+		assert!(cmd("bairelay/cam1/control/domotique/volume", "50").is_none());
+	}
+
+	#[test]
+	fn une_feuille_inconnue_d_une_famille_connue_repond_fail() {
+		let got = cmd("bairelay/cam1/control/ntp/mot_de_passe", "x").expect("se parse");
+		assert!(
+			matches!(got, ControlCommand::RejectedSetting { .. }),
+			"une feuille inconnue d'une famille connue doit être refusée à voix haute : {got:?}"
+		);
+		assert_eq!(
+			got.control_topic("bairelay"),
+			"bairelay/cam1/control/ntp/mot_de_passe"
+		);
+	}
+
+	#[test]
+	fn une_feuille_en_lecture_seule_est_refusee() {
+		for topic in [
+			"bairelay/cam1/control/wifi/signal",
+			"bairelay/cam1/control/battery/voltage",
+			"bairelay/cam1/control/mask/enable",
+			"bairelay/cam1/control/sleep/state",
+		] {
+			let got = cmd(topic, "1").expect("se parse");
+			assert!(
+				matches!(got, ControlCommand::RejectedSetting { .. }),
+				"{topic} n'est pas écrivable : {got:?}"
+			);
+		}
+	}
+
+	#[test]
+	fn une_valeur_hors_plage_est_refusee_sans_atteindre_la_camera() {
+		let got = cmd("bairelay/cam1/control/image/bright", "999").expect("se parse");
+		assert!(
+			matches!(got, ControlCommand::RejectedSetting { .. }),
+			"{got:?}"
+		);
+	}
+
+	#[test]
+	fn notre_reponse_ne_re_declenche_rien() {
+		// `OK`/`FAIL` repartent sur le topic de commande : s'ils se
+		// reparsaient en commande, la boucle serait infinie.
+		for topic in [
+			"bairelay/cam1/control/audio/volume",
+			"bairelay/cam1/control/chime/ring",
+		] {
+			for reply in ["OK", "FAIL", "ok", "fail"] {
+				assert!(cmd(topic, reply).is_none(), "{topic} ← {reply}");
+			}
+		}
+	}
+
+	#[test]
+	fn une_feuille_indescente_ne_repart_pas_dans_un_topic_publie() {
+		// Le segment vient du broker : il ne doit pas être recopié dans un
+		// topic sur lequel on publie.
+		assert!(cmd("bairelay/cam1/control/audio/../reboot", "on").is_none());
+		assert!(cmd("bairelay/cam1/control/audio/VOLUME", "50").is_none());
+		assert!(cmd("bairelay/cam1/control/audio/", "50").is_none());
+	}
+
+	#[test]
+	fn la_requete_des_reglages_se_parse_dans_les_deux_formes() {
+		let all = cmd("bairelay/cam1/query/reglages", "").expect("se parse");
+		assert!(matches!(
+			all,
+			ControlCommand::QuerySettings { family: None, .. }
+		));
+		assert_eq!(
+			all.control_topic("bairelay"),
+			"bairelay/cam1/query/reglages"
+		);
+		let one = cmd("bairelay/cam1/query/reglages/pir", "").expect("se parse");
+		assert!(matches!(
+			one,
+			ControlCommand::QuerySettings {
+				family: Some(Family::Pir),
+				..
+			}
+		));
+		assert_eq!(
+			one.control_topic("bairelay"),
+			"bairelay/cam1/query/reglages/pir"
+		);
+		assert!(cmd("bairelay/cam1/query/reglages/inconnu", "").is_none());
+		for reply in ["OK", "FAIL"] {
+			assert!(cmd("bairelay/cam1/query/reglages", reply).is_none());
+			assert!(cmd("bairelay/cam1/query/reglages/pir", reply).is_none());
+		}
+	}
+
+	#[test]
+	fn les_actions_simple_les_plus_proches_ne_sont_pas_captures() {
+		// `control/pir` (4 segments, l'interrupteur) et `control/ptz/preset`
+		// (5 segments, mais traité avant) gardent leur sémantique.
+		assert!(matches!(
+			cmd("bairelay/cam1/control/pir", "on"),
+			Some(ControlCommand::Pir { state: true, .. })
+		));
+		assert!(matches!(
+			cmd("bairelay/cam1/control/ptz/preset", "3"),
+			Some(ControlCommand::PtzPreset { preset_id: 3, .. })
+		));
 	}
 }

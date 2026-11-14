@@ -622,7 +622,13 @@ async fn dispatch(
 			}
 			// A press is news even when a push edge already woke the camera.
 			if let Some(publisher) = &publisher {
-				report_doorbell_press(handle.name(), publisher, &handle.status_cache()).await;
+				report_doorbell_press(
+					handle.name(),
+					publisher,
+					&handle.status_cache(),
+					Some(&handle),
+				)
+				.await;
 			}
 		}
 		Action::Wake(WakeReason::Pir) => {
@@ -679,6 +685,7 @@ async fn dispatch(
 					caps,
 					&mut stream.report,
 					&update,
+					None,
 				)
 				.await;
 			}
@@ -1361,6 +1368,7 @@ mod tests {
 			Default::default(),
 			&mut AlarmReport::default(),
 			&press,
+			None,
 		)
 		.await;
 		assert_eq!(local.presses(), 1);
