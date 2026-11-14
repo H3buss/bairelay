@@ -3181,7 +3181,7 @@ mod tests {
 			.await;
 		let (mqtt, mock) = bairelay_mqtt::test_support::mock_client();
 		let (cameras, cam) = cameras_with_mock_and_discovery(
-			"cam-refusedeu",
+			"cam-replay",
 			connexion,
 			vec![bairelay_mqtt::discovery::Feature::Image],
 			&mqtt,
@@ -3191,7 +3191,7 @@ mod tests {
 		cam.publish_discovery().await.expect("first discovery");
 		dispatch_control(
 			ControlCommand::QuerySettings {
-				camera: "cam-refusedeu".to_string(),
+				camera: "cam-replay".to_string(),
 				family: Some(Family::Image),
 			},
 			&cameras,
@@ -3202,12 +3202,12 @@ mod tests {
 
 		let rows = mock.published();
 		assert!(
-			rows.iter().any(|(t, p, _)| t == "bairelay/cam-refusedeu/status/image/bright"
+			rows.iter().any(|(t, p, _)| t == "bairelay/cam-replay/status/image/bright"
 				&& p == b"128"),
 			"the second attempt read, the re-read value is published; observed: {rows:?}"
 		);
 		let Some((_, cause, retained)) =
-			rows.iter().rev().find(|(t, _, _)| t == "bairelay/cam-refusedeu/status/image/reason")
+			rows.iter().rev().find(|(t, _, _)| t == "bairelay/cam-replay/status/image/reason")
 		else {
 			panic!("the family is fine, its reason must be written then emptied; observed: {rows:?}");
 		};
@@ -3215,7 +3215,7 @@ mod tests {
 		assert!(*retained, "a topic is erased by an empty retained payload");
 		assert!(
 			rows.iter().any(|(t, p, _)| t
-				== "homeassistant/number/bairelay_cam-refusedeu_image_bright/config"
+				== "homeassistant/number/bairelay_cam-replay_image_bright/config"
 				&& !p.is_empty()),
 			"and the family becomes modifiable; observed: {rows:?}"
 		);
