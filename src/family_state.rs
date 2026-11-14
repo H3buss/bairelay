@@ -1,50 +1,50 @@
-//! La mémoire des familles de réglages **tenues pour modifiables**.
+//! The memory of the settings families **held to be writable**.
 //!
-//! # Le problème que ce fichier règle
+//! # The problem this file solves
 //!
-//! Une famille de réglages n'est publiée modifiable (curseur, selecteur,
-//! interrupteur avec topic de commande) qu'après avoir dst **relue avec succès**
-//! par la caméra. C'est la règle du pont : ne jamais promettre une écriture sur
-//! une balise qu'on n'a pas lue.
+//! A settings family is published modifiable (slider, select,
+//! switch with a command topic) only after the camera has **answered a read of it**
+//! successfully. That is the bridge's rule: never promise a write on
+//! a tag that has not been read.
 //!
-//! Mais ce verdict ne vivait que dans la mémoire du processus. Concrètement, sur
-//! la sonnette :
+//! But that verdict lived only in the process memory. Concretely, on the
+//! doorbell:
 //!
-//! * au démarrage, tout part en lecture seule ;
-//! * il faut une salve complète (`query/settings`, ~15 commandes radio, et la
-//!   caméra doit être wakelée) pour que les familles retrouvent leur statut ;
-//! * et **un redémarrage du complément oublie tout**, donc la caméra paie à
-//!   nouveau quinze commandes radio pour retrouver ce qu'elle avait déjà prouvé
-//!   la veille.
+//! * at startup, everything goes out read-only;
+//! * a full burst is needed (`query/settings`, ~15 radio commands, and the
+//!   camera has to be woken) for the families to get their status back;
+//! * and **a restart of the add-on forgets everything**, so the camera pays
+//!   fifteen radio commands again to recover what it had already proven
+//!   the day before.
 //!
-//! Ce module persiste donc, sur le disque du complément, la liste des familles
-//! dont le pont a la preuve qu'elles sont modifiables. Au démarrage suivant, il
-//! les marque modifiables **sans envoyer un seul paquet à la caméra**.
+//! This module therefore persists, on the add-on's disk, the list of families
+//! for which the bridge has proof they are writable. On the next start, it
+//! marks them writable **without sending a single packet to the camera**.
 //!
-//! # Où est le fichier, et pourquoi là
+//! # Where the file is, and why there
 //!
-//! À côté du fichier de configuration, sous le nom [`FAMILIES_READ_FILE`] — le
-//! même emplacement que [`crate::config::CLOUD_AUTH_FILE`], précédent explicite.
-//! Dans le complément Home Assistant, c'est `/config/bairelay/` : un répertoire
-//! déjà monté en lecture/écriture, qui survit aux mises à jour de l'image, et
-//! qui n'est **pas** le dépôt. Rien n'est écrit dans l'arborescence du code.
+//! Next to the configuration file, under the name [`FAMILIES_READ_FILE`] — the
+//! same location as [`crate::config::CLOUD_AUTH_FILE`], an explicit precedent.
+//! In the Home Assistant add-on, that is `/config/bairelay/`: a directory
+//! already mounted read-write, which survives image updates, and which is
+//! **not** the repository. Nothing is written into the code tree.
 //!
-//! # Ce que le fichier ne contient pas
+//! # What the file does not contain
 //!
-//! Des slugs de familles, rien d'autre : pas de valeur de réglage, pas
-//! d'identifiant, pas de secret. Le fichier est donc inutile en dehors du pont
-//! et ne contient rien à protéger.
+//! Family slugs, nothing else: no setting value, no
+//! identifier, no secret. The file is therefore useless outside the bridge
+//! and contains nothing to protect.
 //!
-//! # Les trois règles de survie
+//! # The three survival rules
 //!
-//! 1. **Jamais une commande caméra** : ce module ne fait que lire et écrire un
-//!    fichier. Marquer une famille modifiable ne wakele personne.
-//! 2. **Jamais un échec de démarrage** : fichier absent = comportement actuel
-//!    (tout en lecture seule jusqu'à la première relecture) ; fichier illisible
-//!    ou invalide = idem, avec un avertissement. Le pont démarre toujours.
-//! 3. **Jamais une écriture à moitié** : écriture dans un fichier temporaire du
-//!    même répertoire puis renommage. Un crash laisse l'ancien fichier intact,
-//!    jamais un JSON tronqué.
+//! 1. **Never a camera command**: this module only reads and writes a
+//!    file. Marking a family writable wakes nobody up.
+//! 2. **Never a failed start**: absent file = current behaviour
+//!    (everything read-only until the first re-read); unreadable or invalid
+//!    file = same, with a warning. The bridge always starts.
+//! 3. **Never a half write**: write into a temporary file of the same
+//!    directory then rename. A crash leaves the old file intact,
+//!    never a truncated JSON.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -54,73 +54,73 @@ use std::sync::{Mutex, OnceLock};
 use bairelay_mqtt::discovery::DiscoveryPublisher;
 use bairelay_mqtt::settings::Family;
 
-/// Nom du fichier d'état, posé à côté du fichier de configuration.
+/// The state file's name, placed next to the configuration file.
 ///
-/// Le préfixe `config-` est celui du voisin [`crate::config::CLOUD_AUTH_FILE`] :
-/// dans `/config/bairelay/`, ces fichiers se repèrent d'un coup d'œil, et le
-/// nom dit ce qu'il contient sans avoir à l'ouvrir.
+/// The `config-` prefix is the neighbour's ([`crate::config::CLOUD_AUTH_FILE`]):
+/// in `/config/bairelay/`, those files are spotted at a glance, and the
+/// name says what it holds without having to open it.
 pub const FAMILIES_READ_FILE: &str = "config-families-read.json";
 
-/// Ce que sait lire ce format. Un fichier d'une version inconnue est ignoré
-/// (et réécrit) plutôt que d'être interprdst de travers.
+/// What this format knows how to read. A file of an unknown version is ignored
+/// (and rewritten) rather than being misinterpreted.
 const VERSION: u8 = 1;
 
-/// Emplacement résolu une fois pour toutes depuis le path du fichier de
-/// configuration. `OnceLock` et non un champ de `CameraConfig` : le path
-/// n'appartient pas aux caméras (il est unique par processus, celui du fichier
-/// de config qu'on a chargé), et le threaded jusqu'au cœur de la caméra n'aurait
-/// pour seul effet qu'alourdir chaque constructeur de test.
+/// The location resolved once and for all from the configuration file's path.
+/// `OnceLock` and not a field of `CameraConfig`: the path
+/// does not belong to the cameras (it is unique per process, that of the config
+/// file we loaded), and threading it down to the heart of the camera would
+/// only make every test constructor heavier.
 ///
-/// Absent = ce module ne fait rien. C'est aussi ce qui rend les tests du reste
-/// du bin sans effet de bord : tant que `set_path` n'est pas appelé,
-/// aucune écriture n'a lieu.
+/// Absent = this module does nothing. That is also what keeps the rest of the
+/// binary's tests free of side effects: as long as `set_path` is not called,
+/// no write happens.
 static CHEMIN: OnceLock<PathBuf> = OnceLock::new();
 
-/// Caméras déjà amorcées dans ce processus : l'amorçage ne se joue qu'une fois
-/// par caméra, sinon chaque repubication de discovery relirait le fichier.
-/// `BTreeSet` et non `HashSet` uniquement parce que le premier doit pouvoir se
-/// construire dans une `static`.
+/// Cameras already primed in this process: priming happens once per
+/// camera only, otherwise every discovery republication would re-read the file.
+/// `BTreeSet` and not `HashSet` only because the former must be buildable in a
+/// `static`.
 static AMORCEES: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
-/// Contenu du fichier : `{"version":1,"cameras":{"Sonnette":["audio",…]}}`.
+/// The file's content: `{"version":1,"cameras":{"Doorbell":["audio", ...]}}`.
 ///
-/// `BTreeMap` pour que deux écritures identiques produisent des octets
-/// identiques — un fichier qui ne bouge pas quand rien ne bouge se diff et se
-/// lit mieux quand on diagnostique le terrain.
+/// `BTreeMap` so that two identical writes produce identical
+/// bytes — a file that does not move when nothing moved diffs and
+/// reads better when diagnosing a real installation.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct ReadFamilies {
 	version: u8,
 	cameras: BTreeMap<String, Vec<String>>,
 }
 
-/// Calcule l'emplacement depuis le path du fichier de configuration, et le
-/// retient. Appelé une fois dans `main`, juste après que `--config` est résolu.
+/// Computes the location from the configuration file's path, and
+/// remembers it. Called once in `main`, right after `--config` is resolved.
 pub fn set_path(config_path: &Path) {
 	let _ = CHEMIN.set(config_path.with_file_name(FAMILIES_READ_FILE));
 }
 
-/// L'emplacement retenu, si `set_path` a dst appelé.
+/// The remembered location, if `set_path` was called.
 fn path() -> Option<&'static Path> {
 	CHEMIN.get().map(PathBuf::as_path)
 }
 
-/// Relit l'état d'une caméra : les familles dont la modifiabilité est prouvée.
+/// Re-reads a camera's state: the families whose writability is proven.
 ///
-/// Fichier absent, illisible, caméra inconnue, slug inconnu : **`Vec` vide**,
-/// avec un avertissement quand le fichier était bien là mais ne se laisse pas
-/// lire. Un état impossible à lire doit se confondre avec « on ne sait pas
-/// encore », jamais empêcher le pont de démarrer.
+/// Absent file, unreadable file, unknown camera, unknown slug: **an empty
+/// `Vec`**, with a warning when the file was there but does not let itself be
+/// read. A state that cannot be read must be confused with "we do not know
+/// yet", never prevent the bridge from starting.
 fn load_saved(path: &Path, camera: &str) -> Vec<Family> {
 	let brut = match std::fs::read_to_string(path) {
 		Ok(brut) => brut,
-		// Absent : le cas normal au premier démarrage, et après une
-		// réinstallation du complément. Pas un événement.
+		// Absent: the normal case on a first start, and after an
+		// add-on reinstall. Not an event.
 		Err(e) if e.kind() == io::ErrorKind::NotFound => return Vec::new(),
 		Err(e) => {
 			tracing::warn!(
 				path = %path.display(),
 				erreur = %e,
-				"état des familles illisible : tout repart en lecture seule jusqu'à la première relecture"
+				"family state unreadable: everything restarts read-only until the first re-read"
 			);
 			return Vec::new();
 		}
@@ -132,7 +132,7 @@ fn load_saved(path: &Path, camera: &str) -> Vec<Family> {
 			tracing::warn!(
 				path = %path.display(),
 				version = state.version,
-				"état des familles dans un format inconnu : il sera réécrit à la première écriture"
+				"family state in an unknown format: it will be rewritten at the first write"
 			);
 			return Vec::new();
 		}
@@ -140,7 +140,7 @@ fn load_saved(path: &Path, camera: &str) -> Vec<Family> {
 			tracing::warn!(
 				path = %path.display(),
 				erreur = %e,
-				"état des familles corrompu : tout repart en lecture seule jusqu'à la première relecture"
+				"family state corrupt: everything restarts read-only until the first re-read"
 			);
 			return Vec::new();
 		}
@@ -148,20 +148,20 @@ fn load_saved(path: &Path, camera: &str) -> Vec<Family> {
 	let Some(slugs) = state.cameras.get(camera) else {
 		return Vec::new();
 	};
-	// Un slug que ce binaire ne connaît pas ne crée aucune famille : le fichier
-	// peut avoir dst écrit par une version plus récente, et deviner une famille à
-	// partir d'un mot serait exactement l'invention que le reste du pont refuse.
+	// A slug this binary does not know creates no family: the file
+	// may have been written by a more recent version, and guessing a family
+	// from a word would be exactly the invention the rest of the bridge refuses.
 	slugs.iter().filter_map(|s| Family::from_slug(s)).collect()
 }
 
-/// Les familles dont la modifiabilité est **déjà prouvée** pour cette caméra,
-/// dans l'ordre de [`Family::ALL`] — donc l'ordre dans lequel la salve de wake
-/// ([`crate::burst`]) les relira.
+/// The families whose writability is **already proven** for this camera,
+/// in the order of [`Family::ALL`] — therefore the order in which the wake burst
+/// ([`crate::burst`]) will re-read them.
 ///
-/// `Vec` vide quand [`set_path`] n'a pas dst appelé, quand le fichier est
-/// absent, ou quand cette caméra n'y figure pas encore : la salve ne lit alors
-/// que la battery. C'est voulu — rien ici ne devine une famille, et une famille
-/// qu'on n'a jamais lue n'a rien à faire dans une salve payée en radio.
+/// An empty `Vec` when [`set_path`] was not called, when the file is
+/// absent, or when this camera is not in it yet: the burst then reads
+/// only the battery. That is intended — nothing here guesses a family, and a
+/// family never read has no business in a burst paid for in radio.
 pub(crate) fn proven_families(camera: &str) -> Vec<Family> {
 	let Some(path) = path() else {
 		return Vec::new();
@@ -170,30 +170,30 @@ pub(crate) fn proven_families(camera: &str) -> Vec<Family> {
 	if connues.is_empty() {
 		return Vec::new();
 	}
-	// L'ordre du protocole plutôt que celui du fichier : `load_saved` rend les slugs
-	// dans l'ordre où le JSON les a écrits, et la salve doit partir des familles
-	// dont l'opératrice se soucie en premier, pas de l'ordre alphabétique.
+	// The protocol's order rather than the file's: `load_saved` returns the slugs
+	// in the order the JSON wrote them, and the burst must start from the families
+	// the operator cares about first, not from the alphabetical order.
 	Family::ALL
 		.into_iter()
 		.filter(|f| connues.contains(f))
 		.collect()
 }
 
-/// Écrit l'état d'une caméra, en préservant les autres.
+/// Writes a camera's state, preserving the others.
 ///
-/// Écriture **atomique** : fichier temporaire dans le même répertoire (même
-/// système de fichiers, seule condition pour que le renommage le soit aussi),
-/// puis renommage. Le renommage par-dessus un fichier existant échoue sur
-/// Windows, d'où le retrait juste avant — la fenêtre entre les deux n'expose
-/// qu'à lire « absent », ce qui est déjà un cas traité.
+/// **Atomic** write: a temporary file in the same directory (same
+/// filesystem, the only condition for the rename to be atomic too),
+/// then the rename. Renaming over an existing file fails on
+/// Windows, hence the unlink just before — the window between the two exposes
+/// only reading "absent", which is already a handled case.
 fn save(path: &Path, camera: &str, families: &[Family]) -> io::Result<()> {
 	let mut state = std::fs::read_to_string(path)
 		.ok()
 		.and_then(|brut| serde_json::from_str::<ReadFamilies>(&brut).ok())
 		.unwrap_or_default();
-	// Un fichier d'une autre version repart de zéro, mais uniquement pour la
-	// caméra qu'on est en train d'écrire : les autres entrées restent ce
-	// qu'elles sont, et la version est relevée.
+	// A file of another version restarts from scratch, but only for the
+	// camera being written: the other entries stay what
+	// they are, and the version is raised.
 	state.version = VERSION;
 	let mut slugs: Vec<String> = families.iter().map(|f| f.slug().to_string()).collect();
 	slugs.sort();
@@ -210,9 +210,9 @@ fn save(path: &Path, camera: &str, families: &[Family]) -> io::Result<()> {
 		.file_name()
 		.map(|n| n.to_string_lossy().into_owned())
 		.unwrap_or_else(|| FAMILIES_READ_FILE.to_string());
-	// Le pid dans le nom du temporaire : deux processus qui partagent ce
-	// répertoire (un complément qui redémarre pendant qu'on lance un outil en
-	// parallèle) ne doivent pas écrire dans le même fichier temporaire.
+	// The pid in the temporary file's name: two processes sharing this
+	// directory (an add-on restarting while a command-line tool is run next to it)
+	// must not write into the same temporary file.
 	let temporaire = path.with_file_name(format!("{nom}.{}.tmp", std::process::id()));
 	std::fs::write(&temporaire, serde_json::to_string_pretty(&state).unwrap_or_default())?;
 	if path.exists() {
@@ -225,8 +225,8 @@ fn save(path: &Path, camera: &str, families: &[Family]) -> io::Result<()> {
 	Ok(())
 }
 
-/// Amorçage, avec l'emplacement retenu par [`set_path`]. Ne fait rien si
-/// aucun emplacement n'a dst résolu (tests, outils en ligne de commande).
+/// Priming, with the location remembered by [`set_path`]. Does nothing if
+/// no location was resolved (tests, command-line tools).
 pub fn prime(publisher: &DiscoveryPublisher, camera: &str) {
 	let Some(path) = path() else { return };
 	let deja = {
@@ -242,7 +242,7 @@ pub fn prime(publisher: &DiscoveryPublisher, camera: &str) {
 	prime_wakes_nothing(path, publisher, camera);
 }
 
-/// Même chose, emplacement explicite — la forme que testent les tests.
+/// Same thing, explicit location — the form the tests use.
 fn prime_wakes_nothing(path: &Path, publisher: &DiscoveryPublisher, camera: &str) {
 	let families = load_saved(path, camera);
 	if families.is_empty() {
@@ -258,12 +258,12 @@ fn prime_wakes_nothing(path: &Path, publisher: &DiscoveryPublisher, camera: &str
 		camera,
 		families = marquees,
 		path = %path.display(),
-		"familles relancées en modifiable depuis le disque : aucune commande caméra n'a dst envoyée"
+		"families brought back to writable from disk: no camera command was sent"
 	);
 }
 
-/// Mémorise l'état d'une caméra, avec l'emplacement retenu. Ne fait rien si
-/// aucun emplacement n'est résolu.
+/// Remembers a camera's state, with the remembered location. Does nothing if
+/// no location is resolved.
 pub fn record(publisher: &DiscoveryPublisher, camera: &str) {
 	let Some(path) = path() else { return };
 	let families: Vec<Family> = publisher.writable_families(camera).into_iter().collect();
@@ -272,7 +272,7 @@ pub fn record(publisher: &DiscoveryPublisher, camera: &str) {
 			camera,
 			path = %path.display(),
 			erreur = %e,
-			"l'état des familles n'a pas pu être mémorisé : le prochain démarrage repartira en lecture seule"
+			"the family state could not be remembered: the next start will restart read-only"
 		);
 	}
 }
@@ -281,9 +281,9 @@ pub fn record(publisher: &DiscoveryPublisher, camera: &str) {
 mod tests {
 	use super::*;
 
-	/// Un path unique par test, dans le répertoire temporaire : ces tests
-	/// écrivent vraiment sur le disque (c'est ce qu'ils testent), mais jamais
-	/// dans le dépôt et jamais au même endroit.
+	/// A unique path per test, in the temporary directory: these tests
+	/// really write to disk (that is what they test), but never
+	/// into the repository and never at the same place.
 	fn a_path_setting_test(nom: &str) -> PathBuf {
 		let mut path = std::env::temp_dir();
 		path.push(format!(
@@ -299,34 +299,34 @@ mod tests {
 		let path = a_path_setting_test("aller-retour");
 		let _ = std::fs::remove_file(&path);
 
-		// Ce que le pont a appris : image et audio sont modifiables.
-		save(&path, "Sonnette", &[Family::Image, Family::Audio, Family::Image])
-			.expect("écriture de l'état");
+		// What the bridge learned: image and audio are writable.
+		save(&path, "Doorbell", &[Family::Image, Family::Audio, Family::Image])
+			.expect("writing the state");
 		assert!(
 			!path.with_file_name(format!("{}.tmp", std::process::id())).exists(),
-			"le fichier temporaire doit avoir dst renommé, pas laissé derrière lui"
+			"the temporary file must have been renamed, not left behind"
 		);
 
-		// Ce que le redémarrage en conclut, sans caméra.
+		// What the restart concludes from it, without a camera.
 		assert_eq!(
-			load_saved(&path, "Sonnette"),
+			load_saved(&path, "Doorbell"),
 			vec![Family::Audio, Family::Image],
-			"l'ordre vient du fichier, les doublons sont tombés"
+			"the order comes from the file, duplicates were dropped"
 		);
-		assert!(load_saved(&path, "Autre camera").is_empty(), "une autre caméra ne voit rien");
+		assert!(load_saved(&path, "Other camera").is_empty(), "another camera sees nothing");
 
 		let _ = std::fs::remove_file(&path);
 	}
 
 	#[test]
 	fn a_corrupt_file_blocks_nothing_and_is_repaired() {
-		let path = a_path_setting_test("corrompu");
-		std::fs::write(&path, "{ ce n'est pas du json").expect("fixture");
-		assert!(load_saved(&path, "Sonnette").is_empty(), "corrompu = on ne sait pas encore");
+		let path = a_path_setting_test("corrupt");
+		std::fs::write(&path, "{ this is not json").expect("fixture");
+		assert!(load_saved(&path, "Doorbell").is_empty(), "corrupt = we do not know yet");
 
-		// Et la première écriture qui suit reprend la main sur le fichier.
-		save(&path, "Sonnette", &[Family::Pir]).expect("réécriture");
-		assert_eq!(load_saved(&path, "Sonnette"), vec![Family::Pir]);
+		// And the first write that follows takes the file back in hand.
+		save(&path, "Doorbell", &[Family::Pir]).expect("rewriting");
+		assert_eq!(load_saved(&path, "Doorbell"), vec![Family::Pir]);
 
 		let _ = std::fs::remove_file(&path);
 	}
@@ -336,13 +336,13 @@ mod tests {
 		let path = a_path_setting_test("slug");
 		std::fs::write(
 			&path,
-			r#"{"version":1,"cameras":{"Sonnette":["audio","family-inventee"]}}"#,
+			r#"{"version":1,"cameras":{"Doorbell":["audio","family-inventee"]}}"#,
 		)
 		.expect("fixture");
 		assert_eq!(
-			load_saved(&path, "Sonnette"),
+			load_saved(&path, "Doorbell"),
 			vec![Family::Audio],
-			"un slug que le pont ne connaît pas n'invente pas une famille"
+			"a slug the bridge does not know does not invent a family"
 		);
 		let _ = std::fs::remove_file(&path);
 	}
@@ -350,9 +350,9 @@ mod tests {
 	#[test]
 	fn an_unknown_version_is_ignored() {
 		let path = a_path_setting_test("version");
-		std::fs::write(&path, r#"{"version":99,"cameras":{"Sonnette":["audio"]}}"#)
+		std::fs::write(&path, r#"{"version":99,"cameras":{"Doorbell":["audio"]}}"#)
 			.expect("fixture");
-		assert!(load_saved(&path, "Sonnette").is_empty(), "un format inconnu ne se devine pas");
+		assert!(load_saved(&path, "Doorbell").is_empty(), "an unknown format is not guessed");
 		let _ = std::fs::remove_file(&path);
 	}
 
@@ -360,19 +360,19 @@ mod tests {
 	fn the_other_cameras_are_preserved() {
 		let path = a_path_setting_test("voisines");
 		let _ = std::fs::remove_file(&path);
-		save(&path, "Sonnette", &[Family::Audio]).expect("première caméra");
-		save(&path, "Garage", &[Family::Image]).expect("seconde caméra");
-		assert_eq!(load_saved(&path, "Sonnette"), vec![Family::Audio]);
+		save(&path, "Doorbell", &[Family::Audio]).expect("first camera");
+		save(&path, "Garage", &[Family::Image]).expect("second camera");
+		assert_eq!(load_saved(&path, "Doorbell"), vec![Family::Audio]);
 		assert_eq!(load_saved(&path, "Garage"), vec![Family::Image]);
 
-		// Une famille qui retombe en lecture seule sort du fichier — sinon le
-		// pont repartirait modifiable sur une preuve qu'il vient de retirer.
-		save(&path, "Sonnette", &[]).expect("retrait");
-		assert!(load_saved(&path, "Sonnette").is_empty());
+		// A family that falls back to read-only leaves the file — otherwise the
+		// bridge would come back modifiable on a proof it just withdrew.
+		save(&path, "Doorbell", &[]).expect("retrait");
+		assert!(load_saved(&path, "Doorbell").is_empty());
 		assert_eq!(
 			load_saved(&path, "Garage"),
 			vec![Family::Image],
-			"retirer une caméra n'efface pas les autres"
+			"removing a camera does not erase the others"
 		);
 
 		let _ = std::fs::remove_file(&path);
@@ -380,8 +380,8 @@ mod tests {
 
 	#[test]
 	fn a_defined_path_lands_next_to_the_config() {
-		// La règle d'emplacement est vérifiée sans toucher au global : même
-		// répertoire, nom propre, et le fichier de config lui-même intact.
+		// The location rule is checked without touching the global: same
+		// directory, own name, and the config file itself untouched.
 		let config = Path::new("/config/bairelay/bairelay.toml");
 		assert_eq!(
 			config.with_file_name(FAMILIES_READ_FILE),
