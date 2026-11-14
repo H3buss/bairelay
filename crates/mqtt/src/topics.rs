@@ -28,8 +28,8 @@ pub fn bridge_status(prefix: &str) -> String {
 ///
 /// `reachable` quand une tentative de joindre la caméra a réussi, `unreachable`
 /// quand une tentative a échoué, après le déroulé normal de reconnexion ou de
-/// réveil. Topic distinct de [`status`] : une sonnette sur batterie ferme sa
-/// session quelques instants après chaque réveil, et brancher la disponibilité
+/// wake. Topic distinct de [`status`] : une sonnette sur batterie ferme sa
+/// session quelques instants après chaque wake, et brancher la disponibilité
 /// des entités sur la session les griserait toutes pendant le sommeil. Message
 /// conservé, publié seulement quand le verdict change, afin de ne pas écrire
 /// cinquante fois la même chose sur un courtier domestique.
@@ -285,7 +285,7 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn les_topics_de_reglages_suivent_la_forme_existante() {
+	fn the_topics_of_settings_suivent_the_forme_existante() {
 		assert_eq!(
 			status_setting("bairelay", "cam1", "audio", "volume"),
 			"bairelay/cam1/status/audio/volume"
@@ -317,7 +317,7 @@ mod tests {
 	}
 
 	#[test]
-	fn la_liste_d_abonnement_couvre_les_reglages() {
+	fn the_list_of_abonnement_couvre_the_settings() {
 		let topics = subscribe_topics("bairelay", "cam1");
 		assert!(
 			topics.contains(&"bairelay/cam1/control/+/+".to_string()),
@@ -334,7 +334,7 @@ mod tests {
 	}
 
 	#[test]
-	fn le_topic_de_presence_est_distinct_de_celui_de_la_session() {
+	fn the_topic_of_presence_is_distinct_of_celui_of_the_session() {
 		assert_eq!(presence("bairelay", "cam1"), "bairelay/cam1/presence");
 		assert_eq!(presence("neolink", "porche"), "neolink/porche/presence");
 		// La présence ne suit pas la session : les deux topics doivent rester

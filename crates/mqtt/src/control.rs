@@ -112,7 +112,7 @@ pub enum ControlCommand {
 		setting: SettingCommand,
 	},
 	/// Une paire `(famille, feuille)` que le pont connaît mais dont la valeur
-	/// a été refusée, ou une feuille en lecture seule sur laquelle quelqu'un a
+	/// a dst refusée, ou une feuille en lecture seule sur laquelle quelqu'un a
 	/// écrit. La seule action est de répondre `FAIL` sur le topic d'origine :
 	/// une commande refusée qui ne dit rien est indistinguable d'un pont mort.
 	RejectedSetting {
@@ -566,7 +566,7 @@ mod tests {
 	}
 
 	#[test]
-	fn une_feuille_de_reglage_devient_une_commande_validee() {
+	fn a_leaf_of_setting_becomes_a_command_valid() {
 		let got = cmd("bairelay/cam1/control/denoise/level", "80").expect("se parse");
 		assert_eq!(got.camera_name(), "cam1");
 		match got {
@@ -579,7 +579,7 @@ mod tests {
 	}
 
 	#[test]
-	fn le_topic_de_reponse_est_le_topic_recu() {
+	fn the_topic_of_answer_is_the_topic_received() {
 		// L'invariant qui empêche une réponse `OK` de partir sur un autre
 		// topic que celui que Home Assistant écoute.
 		for topic in [
@@ -598,14 +598,14 @@ mod tests {
 	}
 
 	#[test]
-	fn une_famille_inconnue_est_ignoree() {
+	fn a_family_unknown_is_ignored() {
 		// Peut-être un autre intégrateur sur le même préfixe : on ne répond
 		// rien, on ne commande rien.
 		assert!(cmd("bairelay/cam1/control/domotique/volume", "50").is_none());
 	}
 
 	#[test]
-	fn une_feuille_inconnue_d_une_famille_connue_repond_fail() {
+	fn a_leaf_unknown_of_a_family_known_repond_fail() {
 		let got = cmd("bairelay/cam1/control/ntp/mot_de_passe", "x").expect("se parse");
 		assert!(
 			matches!(got, ControlCommand::RejectedSetting { .. }),
@@ -618,7 +618,7 @@ mod tests {
 	}
 
 	#[test]
-	fn une_feuille_en_lecture_seule_est_refusee() {
+	fn a_leaf_en_read_seule_is_refused() {
 		for topic in [
 			"bairelay/cam1/control/wifi/signal",
 			"bairelay/cam1/control/battery/voltage",
@@ -634,7 +634,7 @@ mod tests {
 	}
 
 	#[test]
-	fn une_valeur_hors_plage_est_refusee_sans_atteindre_la_camera() {
+	fn a_value_hors_range_is_refused_without_atteindre_the_camera() {
 		let got = cmd("bairelay/cam1/control/image/bright", "999").expect("se parse");
 		assert!(
 			matches!(got, ControlCommand::RejectedSetting { .. }),
@@ -643,7 +643,7 @@ mod tests {
 	}
 
 	#[test]
-	fn notre_reponse_ne_re_declenche_rien() {
+	fn notre_answer_not_re_triggers_nothing() {
 		// `OK`/`FAIL` repartent sur le topic de commande : s'ils se
 		// reparsaient en commande, la boucle serait infinie.
 		for topic in [
@@ -657,7 +657,7 @@ mod tests {
 	}
 
 	#[test]
-	fn une_feuille_indescente_ne_repart_pas_dans_un_topic_publie() {
+	fn a_leaf_indescente_not_repart_not_in_a_topic_publishes() {
 		// Le segment vient du broker : il ne doit pas être recopié dans un
 		// topic sur lequel on publie.
 		assert!(cmd("bairelay/cam1/control/audio/../reboot", "on").is_none());
@@ -666,7 +666,7 @@ mod tests {
 	}
 
 	#[test]
-	fn la_requete_des_reglages_se_parse_dans_les_deux_formes() {
+	fn the_requete_the_settings_itself_parse_in_the_deux_formes() {
 		let all = cmd("bairelay/cam1/query/settings", "").expect("se parse");
 		assert!(matches!(
 			all,
@@ -696,7 +696,7 @@ mod tests {
 	}
 
 	#[test]
-	fn les_actions_simple_les_plus_proches_ne_sont_pas_captures() {
+	fn the_actions_simple_the_plus_proches_not_sont_not_captures() {
 		// `control/pir` (4 segments, l'interrupteur) et `control/ptz/preset`
 		// (5 segments, mais traité avant) gardent leur sémantique.
 		assert!(matches!(

@@ -1,31 +1,31 @@
-//! Interroger la caméra dans la seconde qui suit son annonce de réveil.
+//! Interroger la caméra dans la seconde qui suit son annonce de wake.
 //!
 //! Pourquoi ce module existe. L'annonce UDP que la caméra pousse toute seule
 //! dit deux choses, mais pas au même moment : `event` 3 prévient qu'elle se
-//! réveille — cent millisecondes après le bouton — et `event` 4 avec `reason`
+//! wakele — cent millisecondes après le bouton — et `event` 4 avec `reason`
 //! 19 ne confirme l'appui que **dix‑huit secondes plus tard**, à la fin de
 //! l'enregistrement ([`crate::annonces`] publie ce second moment). Dix‑huit
 //! secondes pour une sonnette, c'est trop.
 //!
 //! Ce que fait l'interrogation, et seulement cela : à `event` 3, prendre le
-//! verrou de réveil de la caméra et le tenir. C'est ce verrou qui dit à la
+//! verrou de wake de la caméra et le tenir. C'est ce verrou qui dit à la
 //! boucle de connexion d'aller joindre la caméra — le même geste que la salve
 //! de lecture ([`crate::burst`]). Une fois la session établie, l'écouteur
 //! d'alarmes du pont ([`crate::camera_tasks::motion_listener`]) s'abonne de
 //! lui‑même au message 31 et lit l'état visiteur de chaque poussée : si la
-//! caméra tient cet état, l'appui part par le chemin déjà écrit, dédupliqué.
+//! caméra tient cet état, l'appui part par le path déjà écrit, dédupliqué.
 //!
 //! Ce que ce module ne fait pas, et c'est le contrat :
 //!
 //! - **il n'ouvre pas son propre abonnement.** Une souscription aux alarmes
-//!   tient déjà le canal de poussée de la session ; en ouvrir une seconde sur
+//!   tient déjà le channel de poussée de la session ; en ouvrir une seconde sur
 //!   le même message serait inventer un protocole que la caméra n'a pas écrit.
 //!   On laisse donc l'écouteur en place faire la lecture et la publication.
-//! - **il ne publie rien lui‑même** : ni mouvement, ni appui. Un réveil n'est
+//! - **il ne publie rien lui‑même** : ni mouvement, ni appui. Un wake n'est
 //!   pas un mouvement, et l'appui appartient à [`crate::camera_tasks`].
 //! - **il ne part pas deux fois.** Une seule interrogation à la fois par
 //!   caméra, et un intervalle minimum entre deux *payées* : en mode nominal,
-//!   la détection de mouvement réveille la caméra sur chaque véhicule.
+//!   la détection de mouvement wakele la caméra sur chaque véhicule.
 //!
 //! Le verrou, pas la session. Ce module ne peut pas promettre une session : il
 //! peut seulement tenir la porte ouverte et attendre. Les quatre chronos relevés
@@ -33,7 +33,7 @@
 //! 2 413 ms, 604 ms, et une fois **rien du tout au bout de 20 s**, la caméra
 //! répondant à la sollicitation douze secondes après qu'on eut renoncé. D'où la
 //! politique : tenir une fenêtre bornée, regarder la session arriver sans en
-//! dépendre, et **ne pas consommer l'intervalle quand rien n'a été obtenu** —
+//! dépendre, et **ne pas consommer l'intervalle quand rien n'a dst obtenu** —
 //! une tentative qui n'a rien payé ne doit pas interdire la suivante, qui sera
 //! peut‑être la bonne.
 //!
@@ -248,7 +248,7 @@ mod tests {
 	#[test]
 	fn the_interval_only_punishes_a_won_session() {
 		// Le coeur de la politique : une tentative qui n'a pas eu de session
-		// n'écrit rien, la prochaine annonce de réveil repart donc.
+		// n'écrit rien, la prochaine annonce de wake repart donc.
 		let guard = Guard::new();
 		let now = Instant::now();
 		assert!(guard.reserve(Duration::from_secs(30), now));

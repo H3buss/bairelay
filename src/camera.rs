@@ -269,9 +269,9 @@ pub struct CameraHandle {
 	/// is strictly less than this, so zero disables it for tests that
 	/// want short-grace timing.
 	prune_grace: Duration,
-	/// Garde de la salve de réveil : une salve à la fois, et pas deux dans la
+	/// Garde de la salve de wake : une salve à la fois, et pas deux dans la
 	/// fenêtre de [`crate::burst::GUARD_WINDOW`]. Trois sources annoncent le
-	/// même réveil (l'alarme de session, le webhook, la poussée du faux cloud) ;
+	/// même wake (l'alarme de session, le webhook, la poussée du faux cloud) ;
 	/// c'est cet objet qui décide laquelle paie la lecture. Voir [`crate::burst`].
 	burst: Arc<crate::burst::BurstGuard>,
 }
@@ -494,7 +494,7 @@ impl CameraHandle {
 		// very first discovery publishes them as sliders instead of read-only
 		// sensors. Disk read only — no camera command, which is the whole point
 		// on a battery doorbell.
-		crate::family_state::amorcer(publisher, &self.config.name);
+		crate::family_state::prime(publisher, &self.config.name);
 		let Some(caps) = self.capabilities() else {
 			return Ok(());
 		};
@@ -522,7 +522,7 @@ impl CameraHandle {
 		*self.capabilities.write_recover() = Some(caps);
 	}
 
-	/// Enregistre le résultat de lectures de réglages et republie la découverte
+	/// Enregistre le résultat de lectures de réglages et republie la discovery
 	/// **une seule fois**, si au moins une famille a changé d'état. Répond `false`
 	/// quand rien n'a bougé (et donc quand aucun publisher n'est attaché).
 	///
@@ -530,7 +530,7 @@ impl CameraHandle {
 	/// [`crate::settings::Verdict`] : modifiable, verrouillée par une preuve
 	/// locale (`<MdAlarm>`, `<OsdChannelName>` absent), **transitoire** — une
 	/// erreur de lecture passagère, qui compte comme modifiable puisque le motif
-	/// est publié à côté — ou **indéterminée**, et une famille indéterminée ne
+	/// est publié à côté — ou **undeterminede**, et une famille undeterminede ne
 	/// bouge pas. C'est le point que le premier jour
 	/// de terrain a fait tomber : quatre familles venaient d'être lues ou écrites
 	/// avec succès, une salve complète leur a valu un `400`, et le pont les
@@ -551,13 +551,13 @@ impl CameraHandle {
 	// interface privée (lint `private_interfaces`).
 	pub(crate) async fn mark_families_read(
 		&self,
-		lues: &[(bairelay_mqtt::settings::Family, crate::settings::Verdict)],
+		read: &[(bairelay_mqtt::settings::Family, crate::settings::Verdict)],
 	) -> bool {
 		let Some(publisher) = self.discovery_publisher.as_ref() else {
 			return false;
 		};
 		let mut a_change = false;
-		for &(family, verdict) in lues {
+		for &(family, verdict) in read {
 			let Some(writable) = verdict.writable() else {
 				continue;
 			};
@@ -570,7 +570,7 @@ impl CameraHandle {
 			tracing::debug!(
 				camera = %self.config.name,
 				error = %e,
-				"republier la découverte après lecture des réglages a échoué ; la prochaine relecture réessaiera"
+				"republier la discovery après lecture des réglages a échoué ; la prochaine relecture réessaiera"
 			);
 		}
 		// Persist the verdicts that just moved. This is the only place the bridge
@@ -758,7 +758,7 @@ impl CameraHandle {
 		&self.wake_lock
 	}
 
-	/// La garde de la salve de réveil ([`crate::burst`]). `pub(crate)` : la
+	/// La garde de la salve de wake ([`crate::burst`]). `pub(crate)` : la
 	/// garde est un type interne au bin, une méthode `pub` qui le montrerait
 	/// exposerait une interface privée (lint `private_interfaces`).
 	pub(crate) fn burst(&self) -> &Arc<crate::burst::BurstGuard> {
@@ -775,12 +775,12 @@ impl CameraHandle {
 
 	/// Un flux de cette caméra a-t-il des abonnés ?
 	///
-	/// C'est le garde-fou « jamais pendant un flux » de la salve de réveil :
+	/// C'est le garde-fou « jamais pendant un flux » de la salve de wake :
 	/// une caméra qui pousse déjà de la vidéo n'est pas le moment de lui
 	/// demander dix blocs XML. Les sources sans abonné (créées puis laissées
 	/// vide par un lecteur RTSP parti) ne comptent pas : elles ne font plus
 	/// rouler la radio.
-	pub(crate) fn flux_en_cours(&self) -> bool {
+	pub(crate) fn flux_in_flight(&self) -> bool {
 		self.stream_sources
 			.read_recover()
 			.values()
@@ -1393,11 +1393,11 @@ impl CameraHandle {
 					self.status_cache(),
 					caps,
 					self.held_press_window(),
-					// Un réveil entendu sur l'alarme de session (appui,
+					// Un wake entendu sur l'alarme de session (appui,
 					// mouvement) ouvre la fenêtre de lecture de la salve :
-					// c'est la seule batterie qu'on puisse lire sans réveil
+					// c'est la seule batterie qu'on puisse lire sans wake
 					// payé. La poignée est la caméra elle-même ; la garde
-					// d'une salve par réveil est dans `crate::burst`.
+					// d'une salve par wake est dans `crate::burst`.
 					Some(Arc::clone(self)),
 				));
 			}
@@ -1683,10 +1683,10 @@ impl CameraHandle {
 				}
 				Err(e) => {
 					// Renonciation : cette branche est le point le plus en amont qui
-					// rassemble tous les échecs de contact, délai dépassé, découverte en
+					// rassemble tous les échecs de contact, délai dépassé, discovery en
 					// échec, prise de connexion en échec ou identifiants refusés. Elle se
 					// présente une fois le déroulé normal de la tentative terminé, les rondes
-					// internes de découverte ayant eu leur budget. La présence passe ici, et
+					// internes de discovery ayant eu leur budget. La présence passe ici, et
 					// nulle part ailleurs.
 					self.publish_presence(false).await;
 					if is_login_failure(&e) {
@@ -2170,7 +2170,7 @@ mod tests {
 	}
 
 	#[test]
-	fn aggregate_stays_connecting_when_bridging_still_active() {
+	fn aggregate_stays_connecting_when_bridging_still_enables() {
 		assert_eq!(
 			aggregate_preview_state(
 				PreviewState::Connecting,
@@ -3527,7 +3527,7 @@ mod tests {
 	/// `bell` type marks the doorbell present when `<Support>` carries
 	/// no `doorbellVersion`; without it the same item reads absent.
 	#[tokio::test(flavor = "current_thread", start_paused = true)]
-	async fn run_connected_session_threads_device_type_to_doorbell_presence() {
+	async fn run_connected_session_threads_device_kind_to_doorbell_presence() {
 		use crate::capabilities::Presence;
 		use crate::config::test_helpers::minimal_camera_config;
 		use bairelay_neolink_core::bc::xml::{Support, SupportItem};

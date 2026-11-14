@@ -44,12 +44,12 @@ type CoreResult<T> = core::result::Result<T, Error>;
 
 /// Résultat d'une écriture de réglage. `Err` veut dire « la caméra a refusé » (ou
 /// a renvoyé un bloc incompréhensible) : le dispatch répondra `FAIL` sur le topic
-/// de commande, et **rien n'aura été publié**.
+/// de commande, et **rien n'aura dst publié**.
 pub(crate) type Result = core::result::Result<(), Error>;
 
 // ── Publication des feuilles ────────────────────────────────────────────
 //
-// Une feuille = un topic d'état = une entité découverte. Les erreurs de
+// Une feuille = un topic d'état = une entité discovery. Les erreurs de
 // publication sont journalisées mais ne remontent pas : ce qui décide de OK/FAIL,
 // c'est la caméra, pas le broker.
 
@@ -261,7 +261,7 @@ async fn publish_battery(publ: &StatusPublisher<'_>, cfg: &BatteryInfo) {
 	put(publ, Family::Battery, "low_power", Some(&cfg.low_power.to_string())).await;
 }
 
-/// La liste des carillons appairés, en JSON.
+/// La liste des carillons paired, en JSON.
 ///
 /// `chimes == None` (le msg 484 a refusé) ne publie **rien** : c'est « la caméra
 /// n'a pas répondu », et non « il n'y a pas de carillon ». `Some(vec![])` publie
@@ -295,7 +295,7 @@ async fn publish_chime(publ: &StatusPublisher<'_>, cfg: &DingDongCfg) {
 		None => put(publ, Family::Chime, "list", None).await,
 	}
 	// Volume et mélodie viennent du 485 (`dingdongDeviceOpt`), qui n'est interrogé
-	// que si un carillon a été trouvé. Absent = aucun état, pas un « 0 ».
+	// que si un carillon a dst trouvé. Absent = aucun état, pas un « 0 ».
 	let params = cfg.params.as_ref();
 	put(publ, Family::Chime, "volume", params.and_then(|p| p.vol_level.as_deref())).await;
 	put(publ, Family::Chime, "music", params.and_then(|p| p.music_id.as_deref())).await;
@@ -303,7 +303,7 @@ async fn publish_chime(publ: &StatusPublisher<'_>, cfg: &DingDongCfg) {
 	// `<alarminCfg>` (486), plus celui de son 485. C'est la seule liste de
 	// mélodies que ce pont publie — aucune table locale, aucun id inventé (§1.4 :
 	// le listing des mélodies est `id introuvable`). Vide = rien, pas « 0 ».
-	let param_melodie =
+	let param_melody =
 		params.and_then(|p| p.music_id.as_deref()).map(str::trim).filter(|m| !m.is_empty());
 	let evenements = cfg.events.as_deref().unwrap_or(&[]);
 	let mut melodies: Vec<&str> = evenements
@@ -312,7 +312,7 @@ async fn publish_chime(publ: &StatusPublisher<'_>, cfg: &DingDongCfg) {
 		.filter_map(|alarme| alarme.music_id.as_deref())
 		.map(str::trim)
 		.filter(|m: &&str| !m.is_empty())
-		.chain(param_melodie)
+		.chain(param_melody)
 		.collect();
 	melodies.sort_by_key(|m: &&str| m.parse::<u32>().ok().map_or(u32::MAX, |n| n));
 	melodies.dedup();
@@ -326,7 +326,7 @@ async fn publish_chime(publ: &StatusPublisher<'_>, cfg: &DingDongCfg) {
 
 // ── Verdict seule : synchronisation à la demande ────────────────────────
 
-/// Les feuilles que la découverte Home Assistant déclare pour une famille, hors
+/// Les feuilles que la discovery Home Assistant déclare pour une famille, hors
 /// boutons (un bouton n'a pas d'état à effacer).
 fn leaves_of(family: Family) -> impl Iterator<Item = &'static str> {
 	SPECS
@@ -353,7 +353,7 @@ pub(crate) async fn clear_family(publ: &StatusPublisher<'_>, family: Family) {
 pub(crate) const REASON_TIMEOUT: &str = "the camera did not answer in time";
 
 /// Met une famille en état d'être lue sans être écrite, et le dit.
-pub(crate) const REASON_LECTURE_SEULE: &str =
+pub(crate) const REASON_READ_SEULE: &str =
 	"the camera reads this setting but refuses the block back: read-only";
 
 /// Le pont n'a pas de session Baïchuan en cours : la commande n'a pas pu partir.
@@ -391,28 +391,28 @@ pub(crate) const REASON_SANS_OSDCHANNEL: &str = concat!(
 );
 
 /// Refus **local**, lui aussi : la caméra a bien répondu au 484 (liste des
-/// carillons appairés), mais aucune entrée de cette réponse n'a porté un
+/// carillons paired), mais aucune entrée de cette réponse n'a porté un
 /// identifiant exploitable — sous l'une comme sous l'autre orthographe
 /// documentées du porteur (`<dingdongDeviceInfo>`, `<dingdongList>`). C'est
 /// exactement la situation de terrain observée : un carillon physique appairé
 /// et une liste publiée vide. Le motif le dit au lieu de publier `[]` en
 /// silence, parce que `[]` se lit « aucun carillon » alors qu'il faut lire « la
 /// caméra n'énumère pas celui-ci ».
-pub(crate) const REASON_CARILLON_SANS_ENTREE: &str = concat!(
+pub(crate) const REASON_CHIME_SANS_ENTRY: &str = concat!(
 	"484 answered with nothing recognised: chime not enumerated, ",
 	"donc rien à adresser en 485"
 );
 
 /// Même verdict, autre cause : le 484 n'a pas répondu du tout (modèle sans
 /// carillon sans fil, ou refus). La nuance compte, elle est donc distincte.
-pub(crate) const REASON_CARILLON_SANS_ID: &str = concat!(
+pub(crate) const REASON_CHIME_SANS_ID: &str = concat!(
 	"the camera did not answer 484: no chime id, ",
 	"donc rien à adresser en 485"
 );
 
 /// Les entités de reconnaissance publient un état et **aucun** topic de
 /// commande, et ce n'est pas un oubli du pont : la balise qui allume un type de
-/// reconnaissance n'a jamais été lue. `342`/`343` (`<AiDetectCfg>`, interrogé
+/// reconnaissance n'a jamais dst lue. `342`/`343` (`<AiDetectCfg>`, interrogé
 /// **par type**) ne documentent que `<sensitivity>`, `<stayTime>` et les tailles
 /// de cible. Publier un `command_topic` ici serait promettre l'écriture d'une
 /// balise inventée ; le motif nomme donc ce qu'il faut rapporter du terrain.
@@ -522,7 +522,7 @@ pub(crate) fn cause(err: &Error) -> String {
 	}
 }
 
-/// Ce que la découverte doit retenir d'une tentative de lecture d'une famille.
+/// Ce que la discovery doit retenir d'une tentative de lecture d'une famille.
 ///
 /// Quatre verdicts, pas deux, parce que quatre situations n'enseignent pas la
 /// même chose. Les confondre est la régression relevée sur le terrain : une
@@ -556,12 +556,12 @@ pub(crate) enum Verdict {
 	/// Rien n'a pu être tenté du tout : pas de session Baïchuan, identification
 	/// refusée, caméra injoignable, capacité absente. Ce n'est pas une réponse de
 	/// la caméra, donc le pont ne promet rien qu'il n'ait pu vérifier : la
-	/// découverte ne change **rien** ; le motif, lui, se publie.
+	/// discovery ne change **rien** ; le motif, lui, se publie.
 	Unknown,
 }
 
 impl Verdict {
-	/// Le booléen que comprend le publieur de découverte. `None` = « ne change
+	/// Le booléen que comprend le publieur de discovery. `None` = « ne change
 	/// rien à ce qui est publié » ([`Verdict::Unknown`]).
 	pub(crate) fn writable(self) -> Option<bool> {
 		match self {
@@ -601,7 +601,7 @@ impl Writability {
 
 /// Lit une famille, publie ses feuilles, et met le topic `reason` à jour : vide
 /// quand la famille est en bonne santé, la phrase du refus sinon. Répond
-/// `(famille, verdict)`, c'est-à-dire ce que la découverte doit publier — ou ne
+/// `(famille, verdict)`, c'est-à-dire ce que la discovery doit publier — ou ne
 /// pas publier du tout ([`Verdict::Unknown`]).
 ///
 /// C'est **là**, et pas chez l'appelant, que la famille bascule : lecture
@@ -619,13 +619,13 @@ impl Writability {
 ///   publie modifiable, comme avant, avec la raison du refus écrit à côté ;
 /// * **la tentative impossible** — pas de session, caméra injoignable : le pont
 ///   n'a rien pu vérifier et rend [`Verdict::Unknown`], qui ne change rien à
-///   la découverte.
+///   la discovery.
 ///
 /// Sur un refus qui ressemble à un « pas maintenant », une **seconde** tentative
 /// est faite ici même : les GET des réglages n'ont pas la boucle de rejeu que le
 /// dépôt applique déjà ailleurs au même code, et sans elle une salve complète
 /// perd les quatre blocs que la caméra finit par donner quand elle s'est
-/// réveillée. Une seule tentative de plus, pas davantage : `query/settings` est
+/// wakelée. Une seule tentative de plus, pas davantage : `query/settings` est
 /// déjà une quinzaine de commandes radio sur une sonnette sur batterie. Le délai
 /// dépassé, lui, n'est pas rejoué — re-tenter une commande à laquelle la caméra
 /// n'a pas répondu, c'est payer deux fois une radio qui dort.
@@ -636,16 +636,16 @@ pub(crate) async fn read_family(
 ) -> (Family, Verdict) {
 	let mut scope = Writability::new();
 	match sync_family(bc, publ, family, &mut scope).await {
-		Ok(n) => promettre(publ, family, scope, n).await,
+		Ok(n) => promise(publ, family, scope, n).await,
 		Err(e) if is_retryable(&e) => {
 			tracing::debug!(
 				family = family.slug(),
 				error = %e,
 				"lecture de réglage refusée d'un code transitoire : une seconde tentative"
 			);
-			let mut seconde = Writability::new();
-			match sync_family(bc, publ, family, &mut seconde).await {
-				Ok(n) => promettre(publ, family, seconde, n).await,
+			let mut second = Writability::new();
+			match sync_family(bc, publ, family, &mut second).await {
+				Ok(n) => promise(publ, family, second, n).await,
 				Err(deuxieme) => repli(publ, family, &deuxieme).await,
 			}
 		}
@@ -656,7 +656,7 @@ pub(crate) async fn read_family(
 /// Batterie **déjà lue** par l'appelant : publie les cinq champs et rend le même
 /// verdict que [`read_family`], sans repayer la trame 253.
 ///
-/// Il existe parce que la salve de réveil ([`crate::burst`]) lit la batterie
+/// Il existe parce que la salve de wake ([`crate::burst`]) lit la batterie
 /// elle-même — c'est pour son niveau qu'elle se déclenche — et doit quand même
 /// publier les motifs et le verdict comme le fait `query/settings`. Deux chemins
 /// qui publient la batterie avec deux règles de verdict, c'est exactement la
@@ -666,7 +666,7 @@ pub(crate) async fn battery_read(
 	issu: &CoreResult<BatteryInfo>,
 ) -> (Family, Verdict) {
 	match issu {
-		Ok(_) => promettre(publ, Family::Battery, Writability::new(), 5).await,
+		Ok(_) => promise(publ, Family::Battery, Writability::new(), 5).await,
 		Err(e) => repli(publ, Family::Battery, e).await,
 	}
 }
@@ -674,15 +674,15 @@ pub(crate) async fn battery_read(
 /// La famille a répondu son bloc. Publie le verdict qui en découle : motif vidé
 /// si nous savons le lui renvoyer, sinon la phrase qui explique pourquoi l'écriture
 /// ne sera jamais promise. Les états, eux, restent en place — ils sont justes.
-async fn promettre(
+async fn promise(
 	publ: &StatusPublisher<'_>,
 	family: Family,
 	scope: Writability,
-	feuilles: usize,
+	leaves: usize,
 ) -> (Family, Verdict) {
 	tracing::debug!(
 		family = family.slug(),
-		leaves = feuilles,
+		leaves = leaves,
 		writable = scope.writable,
 		"réglages synchronisés"
 	);
@@ -691,7 +691,7 @@ async fn promettre(
 		return (family, Verdict::Writable);
 	}
 	// Pas un refus de la caméra : une promesse que nous ne ferons pas.
-	publish_reason(publ, family, scope.cause.unwrap_or(REASON_LECTURE_SEULE)).await;
+	publish_reason(publ, family, scope.cause.unwrap_or(REASON_READ_SEULE)).await;
 	(family, Verdict::NotWritable)
 }
 
@@ -707,7 +707,7 @@ async fn promettre(
 ///   **lecture** n'a jamais rien prouvé contre l'**écriture** ;
 /// * **tentative impossible** (pas de session, caméra injoignable, capacité
 ///   absente) → [`Verdict::Unknown`] : le pont ne peut promettre ce qu'il n'a
-///   pas pu tenter, la découverte garde ce qu'elle avait.
+///   pas pu tenter, la discovery garde ce qu'elle avait.
 async fn repli(publ: &StatusPublisher<'_>, family: Family, e: &Error) -> (Family, Verdict) {
 	clear_family(publ, family).await;
 	if is_transient(e) {
@@ -777,7 +777,7 @@ fn is_retryable(e: &Error) -> bool {
 /// `DingDongCfg`…) font plusieurs kilo-octets, et un cadre de pile non optimisé
 /// garde tous leurs temporaires vivants à la fois. Une seule fonction
 /// manipulant les quinze blocs ensemble dépassait la pile du thread qui
-/// dispatche — 2 Mo pour un worker tokio, et c'est exactement ce chemin-là qui
+/// dispatche — 2 Mo pour un worker tokio, et c'est exactement ce path-là qui
 /// doit tenir dedans. Un bloc par famille : chaque cadre ne connaît plus que le
 /// bloc qu'il est en train de relire.
 pub(crate) async fn sync_family(
@@ -815,7 +815,7 @@ pub(crate) async fn sync_family(
 			// cette balise nous n'avons rien à renvoyer : c'est notre refus, pas
 			// celui de la caméra, et c'est le seul qui verrouille une famille.
 			// L'interrupteur d'horodatage, lui, serait resté réglable ; la
-			// granularité de la découverte est la famille, il la paie avec les
+			// granularité de la discovery est la famille, il la paie avec les
 			// trois autres — compromis assumé et écrit au §8 du rapport.
 			if cfg.channel_name.is_none() {
 				scope.writable = false;
@@ -829,7 +829,7 @@ pub(crate) async fn sync_family(
 			let cfg = bc.get_motion_cfg().await?;
 			// Deux porteurs, un seul réécrivable : `<MD>` se renvoie, `<MdAlarm>`
 			// non (msg 47 attend un `<MD>`). Lire l'un des deux n'autorise donc
-			// pas à promettre l'écriture — c'est exactement ce que la découverte
+			// pas à promettre l'écriture — c'est exactement ce que la discovery
 			// ne doit plus faire.
 			scope.writable = matches!(cfg, MotionCfg::Md(_));
 			publish_motion(publ, &cfg).await;
@@ -903,9 +903,9 @@ pub(crate) async fn sync_family(
 			if cfg.chime_id.is_none() {
 				scope.writable = false;
 				scope.cause = Some(if cfg.list_answered_without_entry {
-					REASON_CARILLON_SANS_ENTREE
+					REASON_CHIME_SANS_ENTRY
 				} else {
-					REASON_CARILLON_SANS_ID
+					REASON_CHIME_SANS_ID
 				});
 			}
 			Ok(4)
@@ -917,7 +917,7 @@ pub(crate) async fn sync_family(
 			// Les entités `ai/*` publient leur état (elles viennent de la
 			// poussée 33) et n'ont **pas** de topic de commande. La cause n'est
 			// pas dans le pont : aucune balise d'activation d'un type n'a jamais
-			// été lue nulle part (`reglages-app-reolink.md` 55-58 ne documente
+			// dst lue nulle part (`reglages-app-reolink.md` 55-58 ne documente
 			// que `<sensitivity>`/`<stayTime>`/tailles sur 342/343, et 342 se
 			// interroge **par type**). Publier un `command_topic` serait promettre
 			// une écriture sur une balise inventée. D'où ce motif, qui remplace le
@@ -932,7 +932,7 @@ pub(crate) async fn sync_family(
 }
 
 /// Synchronisation complète, dans l'ordre de [`Family::ALL`] (la batterie d'abord :
-/// c'est la trame 253, celle qui ne réveille pas la caméra et dont l'opératrice a
+/// c'est la trame 253, celle qui ne wakele pas la caméra et dont l'opératrice a
 /// le plus souvent besoin).
 ///
 /// **Jamais périodique.** Sur une sonnette sur batterie, chaque famille est une
@@ -941,28 +941,28 @@ pub(crate) async fn sync_family(
 ///
 /// Le retour — un `Vec` que l'appelant fournit et qui se remplit au fil de l'eau
 /// — énumère **toutes** les familles dans l'ordre lu, chacune avec son verdict
-/// ([`Verdict`]) : c'est ce dont la découverte a besoin pour publier les réglages
+/// ([`Verdict`]) : c'est ce dont la discovery a besoin pour publier les réglages
 /// modifiables, en lecture seule, ou les laisser où ils sont. Une famille refusée
 /// d'un code passager y figure en [`Verdict::Transient`] et se publie
 /// **modifiable** avec sa raison à côté ; une famille qu'on n'a pas pu tenter du
 /// tout (pas de session, caméra injoignable) y figure en [`Verdict::Unknown`]
 /// et **ne change pas de statut**. Les confondre, c'était la régression du
 /// premier jour de terrain : quatre familles verrouillées par un `400` pendant que
-/// la caméra se réveillait.
+/// la caméra se wakelait.
 ///
 /// Le `Vec` est un paramètre et non une valeur de retour : quand la
 /// synchronisation complète est interrompue par le délai du dispatch, les
 /// familles déjà relues avant l'interruption sont quand même publiées par la
-/// découverte. Les jeter avec le reste laisserait Home Assistant promettre une
+/// discovery. Les jeter avec le reste laisserait Home Assistant promettre une
 /// écriture sur une famille qu'on vient justement de relire.
 pub(crate) async fn sync_all(
 	bc: &BcCamera,
 	publ: &StatusPublisher<'_>,
-	lues: &mut Vec<(Family, Verdict)>,
+	read: &mut Vec<(Family, Verdict)>,
 ) {
-	lues.reserve(Family::ALL.len());
+	read.reserve(Family::ALL.len());
 	for family in Family::ALL {
-		lues.push(read_family(bc, publ, family).await);
+		read.push(read_family(bc, publ, family).await);
 	}
 }
 
@@ -1001,7 +1001,7 @@ fn tag_present_opt<T>(current: &Option<T>, tag: &str) -> CoreResult<()> {
 /// Le `Err` remonte tel quel au dispatch, qui répond `FAIL` sur le topic de
 /// commande : c'est ce qui distingue une écriture refusée d'une écriture
 /// acceptée puis ignorée (dans ce dernier cas la valeur publiée n'est pas celle
-/// qui a été demandée, et le journal le dit).
+/// qui a dst demandée, et le journal le dit).
 pub(crate) async fn apply_setting(
 	bc: &BcCamera,
 	publ: &StatusPublisher<'_>,
@@ -1234,7 +1234,7 @@ pub(crate) async fn apply_setting(
 			cfg.synchronize_interval = Some(v.clone());
 			publish_ntp(publ, &bc.set_ntp(&cfg).await?).await;
 		}
-		// ── heure d'été (106 / 107) ─────────────────────────────────────
+		// ── heure d'dst (106 / 107) ─────────────────────────────────────
 		SettingCommand::DstEnable(on) => {
 			let mut cfg = bc.get_dst().await?;
 			tag_present_opt(&cfg.enable, "enable")?;
@@ -1391,12 +1391,12 @@ mod tests {
 	/// par bloc est le même que celui des blocs déjà là, mais la chaîne
 	/// `dispatch_control → famille → commande` est plus longue qu'avant.
 	///
-	/// Ce test est un réveil, pas un diplôme : si le bloc grossit encore, la
+	/// Ce test est un wake, pas un diplôme : si le bloc grossit encore, la
 	/// question « tient-on dans les 2 Mo d'un worker tokio ? » doit être reposée
 	/// — et ce sont les tests de `crate::mqtt_dispatch`, passés en release, qui
 	/// y répondent. Les chiffres sont imprimés pour le rapport.
 	#[test]
-	fn bcxml_garde_une_taille_connue() {
+	fn bcxml_guard_a_size_known() {
 		let blocs = [
 			("BcXml", core::mem::size_of::<BcXml>()),
 			("ImageCfg", core::mem::size_of::<ImageCfg>()),
@@ -1421,7 +1421,7 @@ mod tests {
 	/// d'une famille absente du micrologiciel — donc ça doit arriver jusqu'à
 	/// l'opératrice, et pas s'arrêter dans le journal d'un conteneur.
 	#[test]
-	fn le_motif_dun_refus_de_lecture_porte_la_reponse() {
+	fn the_cause_dun_refusal_of_read_carries_the_answer() {
 		let err = bairelay_neolink_core::Error::CameraRefused {
 			id: 26,
 			code: 400,

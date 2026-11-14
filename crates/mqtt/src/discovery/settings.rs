@@ -1,11 +1,11 @@
-//! Entités de réglages pour la découverte Home Assistant.
+//! Entités de réglages pour la discovery Home Assistant.
 //!
 //! Tout le cahier des charges des réglages vit dans
 //! `docs/protocole-reglages.md`; ce fichier n'en est que la vitrine MQTT. Il
 //! est **tableau-driven** pour une raison : chaque entité décrite ici doit
 //! tomber pile sur les topics que le binaire publie (`status/<famille>/<feuille>`)
 //! et accepte (`control/<famille>/<feuille>`). Une liste de spécifications
-//! unique, lue à la fois par l'émetteur de découverte et par les tests, est le
+//! unique, lue à la fois par l'émetteur de discovery et par les tests, est le
 //! seul moyen de garantir que les deux côtés ne dérivent pas l'un de l'autre.
 //!
 //! Deux plateformes HA absentes de la version d'origine sont ajoutées ici :
@@ -89,7 +89,7 @@ pub struct DiscoveryStateSensor {
 	/// `measurement` pour un nombre, `None` pour un état textuel. Home
 	/// Assistant refuse un `state_class` numérique sur un état qui ne l'est
 	/// pas : le publier sur une langue ou une liste de carillons serait remplacer
-	/// un silence par un avertissement répété dans le journal.
+	/// un silence par un avertissement répdst dans le journal.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub state_class: Option<&'static str>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -155,7 +155,7 @@ pub struct EntitySpec {
 /// construite sur l'un de ces genres ne peut pas être actionnée depuis Home
 /// Assistant : c'est la forme sous laquelle une famille de réglages est publiée
 /// tant que la caméra n'a pas prouvé qu'elle la relit et l'accepte en retour.
-pub fn est_en_lecture_seule(kind: &EntityKind) -> bool {
+pub fn is_read_only(kind: &EntityKind) -> bool {
 	matches!(
 		kind,
 		EntityKind::FlagSensor { .. } | EntityKind::OnOffSensor | EntityKind::StateSensor { .. }
@@ -197,7 +197,7 @@ impl EntitySpec {
 	/// construit décide, pas le genre du tableau : c'est ce qui fait qu'une
 	/// famille non relue se publie sans aucune commande.
 	pub fn command_topic(&self, ctx: &DiscoveryContext, kind: &EntityKind) -> Option<String> {
-		if est_en_lecture_seule(kind) {
+		if is_read_only(kind) {
 			return None;
 		}
 		Some(cam_topic(ctx, "control", &format!("{}/{}", self.family, self.leaf)))
@@ -228,15 +228,15 @@ impl EntitySpec {
 		if writable {
 			return Some(self.build(ctx, friendly));
 		}
-		let jumeau = self.jumeau_lecture_seule()?;
-		Some(self.build_kind(ctx, friendly, &jumeau))
+		let twin = self.read_only_twin()?;
+		Some(self.build_kind(ctx, friendly, &twin))
 	}
 
 	/// Le genre qui affiche la même feuille sans offrir de commande. Les bornes
 	/// d'un `number` n'y figurent pas : ce sont des bornes d'**écriture**, et une
 	/// entité qui ne peut pas écrire n'a rien à en faire. L'unité, elle, reste :
 	/// elle dit ce que le nombre lu veut dire.
-	fn jumeau_lecture_seule(&self) -> Option<EntityKind> {
+	fn read_only_twin(&self) -> Option<EntityKind> {
 		Some(match self.kind {
 			EntityKind::Number { unit, .. } => {
 				EntityKind::StateSensor { unit, device_class: None, class: Some("measurement") }
@@ -392,8 +392,8 @@ impl EntitySpec {
 	/// pour les tests et le journal. `None` = aucune entité lisible : seul le
 	/// bouton, qui n'a pas d'état, disparaît complètement tant que la famille
 	/// n'est pas relue.
-	pub fn plateforme_lecture_seule(&self) -> Option<&'static str> {
-		Some(Self::ha_platform(&self.jumeau_lecture_seule()?))
+	pub fn read_only_platform(&self) -> Option<&'static str> {
+		Some(Self::ha_platform(&self.read_only_twin()?))
 	}
 }
 
@@ -634,7 +634,7 @@ pub const SPECS: &[EntitySpec] = &[
 			slider: false,
 		},
 	},
-	// ── Heure d'été (106 / 107) ─────────────────────────────────────────
+	// ── Heure d'dst (106 / 107) ─────────────────────────────────────────
 	EntitySpec {
 		feature: Feature::Dst,
 		family: "dst",
@@ -892,7 +892,7 @@ pub const SPECS: &[EntitySpec] = &[
 	},
 ];
 
-/// Toutes les spécifications d'une famille de découverte, dans l'ordre.
+/// Toutes les spécifications d'une famille de discovery, dans l'ordre.
 pub fn specs_for(feature: Feature) -> impl Iterator<Item = &'static EntitySpec> {
 	SPECS.iter().filter(move |s| s.feature == feature)
 }
@@ -904,7 +904,7 @@ pub fn specs_for(feature: Feature) -> impl Iterator<Item = &'static EntitySpec> 
 /// qu'elle accepte de réécrire. Une famille absente de cet ensemble sort en
 /// lecture seule (et un bouton n'en sort pas du tout) : c'est la règle
 /// « rien d'actionnable avant preuve », appliquée là où elle est vérifiable —
-/// la plateforme publiée suit ce qui a été lu, jamais ce qui est espéré.
+/// la plateforme publiée suit ce qui a dst lu, jamais ce qui est espéré.
 pub fn build_feature_entities(
 	ctx: &DiscoveryContext,
 	feature: Feature,
@@ -915,7 +915,7 @@ pub fn build_feature_entities(
 		.filter_map(|spec| {
 			// Une famille que le parsing ne connaît pas ne peut pas être
 			// relue ni écrite : elle reste lisible, indéfiniment. Le test
-			// `toute_famille_d_une_spec_est_connue_du_parsing` vérifie que ce
+			// `every_family_of_a_spec_is_known_of_parsing` vérifie que ce
 			// cas ne se présente pas.
 			let writable =
 				Family::from_slug(spec.family).is_some_and(|f| writable.contains(&f));
@@ -938,7 +938,7 @@ mod tests {
 	};
 	static PRESETS: [(u8, String); 0] = [];
 
-	/// Un contexte de découverte minimal, les mêmes valeurs que les tests du
+	/// Un contexte de discovery minimal, les mêmes valeurs que les tests du
 	/// publisher, pour que les topics attendus se lisent d'un coup d'œil.
 	fn ctx() -> DiscoveryContext<'static> {
 		DiscoveryContext {
@@ -954,7 +954,7 @@ mod tests {
 	}
 
 	#[test]
-	fn chaque_spec_a_un_unique_id_unique() {
+	fn each_spec_has_a_unique_id() {
 		let mut ids: Vec<String> = Vec::new();
 		for spec in SPECS {
 			let c = ctx();
@@ -968,7 +968,7 @@ mod tests {
 	}
 
 	#[test]
-	fn famille_et_feuille_sont_des_slugs_ascii() {
+	fn family_and_leaf_sont_the_slugs_ascii() {
 		for spec in SPECS {
 			for slug in [spec.family, spec.leaf] {
 				assert!(
@@ -976,14 +976,14 @@ mod tests {
 						&& slug
 							.chars()
 							.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
-					"slug invalide dans la découverte : {slug:?}"
+					"slug invalide dans la discovery : {slug:?}"
 				);
 			}
 		}
 	}
 
 	#[test]
-	fn les_topics_de_control_correspondent_au_parsing() {
+	fn the_topics_of_control_correspondent_au_parsing() {
 		// Le pont `control/<famille>/<feuille>` n'est accepté que pour les
 		// familles/feuilles que `crate::settings` sait parser : une spec qui
 		// diverge créerait une entité HA dont la commande est ignorée.
@@ -998,14 +998,14 @@ mod tests {
 			let (family, leaf) = (spec.family, spec.leaf);
 			assert!(
 				crate::settings::accepts(family, leaf),
-				"découverte émet control/{family}/{leaf} que le parsing refuse"
+				"discovery émet control/{family}/{leaf} que le parsing refuse"
 			);
 		}
 	}
 
 	#[test]
-	fn toute_famille_d_une_spec_est_connue_du_parsing() {
-		// Une famille du tableau de découverte que `Family` ne connaît pas ne
+	fn every_family_of_a_spec_is_known_of_parsing() {
+		// Une famille du tableau de discovery que `Family` ne connaît pas ne
 		// pourrait jamais être marquée « lue et écrivable » : ses entités
 		// resteraient muettes en écriture pour toujours, sans que rien ne le
 		// dise. Ce test est la barrière qui empêche cet état.
@@ -1020,7 +1020,7 @@ mod tests {
 	}
 
 	#[test]
-	fn les_numbers_sont_bornes_et_coherents() {
+	fn the_numbers_sont_bounds_and_coherents() {
 		for spec in SPECS {
 			if let EntityKind::Number { min, max, step, .. } = spec.kind {
 				assert!(
@@ -1034,7 +1034,7 @@ mod tests {
 	}
 
 	#[test]
-	fn payload_number_serialise_les_champs_ha() {
+	fn payload_number_serialise_the_champs_ha() {
 		let c = ctx();
 		let spec = SPECS
 			.iter()
@@ -1080,13 +1080,13 @@ mod tests {
 	}
 
 	#[test]
-	fn un_capteur_en_lecture_seule_n_a_pas_de_command_topic() {
+	fn a_sensor_en_read_seule_a_not_of_command_topic() {
 		let c = ctx();
 		let mut vus = 0;
 		for spec in SPECS {
 			// Le même prédicat que le constructeur : si la règle change ici, ce
 			// test change avec elle, au lieu de laisser filer un genre nouveau.
-			if !est_en_lecture_seule(&spec.kind) {
+			if !is_read_only(&spec.kind) {
 				continue;
 			}
 			vus += 1;
@@ -1103,7 +1103,7 @@ mod tests {
 	}
 
 	#[test]
-	fn le_capteur_wifi_n_affiche_aucune_unite() {
+	fn the_sensor_wifi_affiche_no_unite() {
 		let c = ctx();
 		let spec = SPECS
 			.iter()
@@ -1118,7 +1118,7 @@ mod tests {
 	}
 
 	#[test]
-	fn le_bouton_carillon_publie_un_id_de_melodie() {
+	fn the_button_chime_publishes_a_id_of_melody() {
 		let c = ctx();
 		let spec = SPECS
 			.iter()
@@ -1132,7 +1132,7 @@ mod tests {
 	}
 
 	#[test]
-	fn les_options_de_select_sont_les_textes_camera() {
+	fn the_options_of_select_sont_the_textes_camera() {
 		let c = ctx();
 		let spec = SPECS
 			.iter()
@@ -1150,7 +1150,7 @@ mod tests {
 	/// entité, et « Volume interphone » écrivait `<talkAndReplyVolume>` sans le
 	/// dire à personne.
 	#[test]
-	fn les_trois_volumes_sont_trois_entites_distinctes() {
+	fn the_trois_volumes_sont_trois_entities_distinctes() {
 		let c = ctx();
 		let audio: Vec<&EntitySpec> = specs_for(Feature::Audio).collect();
 		let attendus = [
@@ -1161,23 +1161,23 @@ mod tests {
 			("visitor_volume", "Visitor volume", "bairelay_cam1_audio_visitor_volume"),
 		];
 		let mut ids: Vec<&str> = Vec::new();
-		for (feuille, label, identifiant) in attendus {
+		for (leaf, label, identifiant) in attendus {
 			let spec = audio
 				.iter()
-				.find(|s| s.leaf == feuille)
-				.unwrap_or_else(|| panic!("aucune spec audio/{feuille}"));
-			assert_eq!(spec.label, label, "audio/{feuille}");
+				.find(|s| s.leaf == leaf)
+				.unwrap_or_else(|| panic!("aucune spec audio/{leaf}"));
+			assert_eq!(spec.label, label, "audio/{leaf}");
 			assert_eq!(spec.unique_id(&c), identifiant);
 			assert!(
-				crate::settings::accepts("audio", feuille),
-				"la découverte publie audio/{feuille} que le parsing refuse"
+				crate::settings::accepts("audio", leaf),
+				"la discovery publie audio/{leaf} que le parsing refuse"
 			);
 			// Et trois commandes distinctes, sinon deux entités écriraient la
 			// même balise sous deux noms différents.
-			let cmd = crate::settings::SettingCommand::parse(Family::Audio, feuille, "50")
-				.unwrap_or_else(|| panic!("audio/{feuille} refusé au parsing"));
+			let cmd = crate::settings::SettingCommand::parse(Family::Audio, leaf, "50")
+				.unwrap_or_else(|| panic!("audio/{leaf} refusé au parsing"));
 			assert_eq!(cmd.family(), Family::Audio);
-			assert_eq!(cmd.leaf(), feuille);
+			assert_eq!(cmd.leaf(), leaf);
 			ids.push(spec.leaf);
 		}
 		let mut tri = ids.clone();
@@ -1191,14 +1191,14 @@ mod tests {
 	/// bouton n'est pas publié du tout. Relue, la même famille retrouve ses
 	/// commandes **sans changer d'identifiant**.
 	#[test]
-	fn une_famille_non_relue_se_publie_sans_aucune_commande() {
+	fn a_family_not_reread_itself_publishes_without_no_command() {
 		let c = ctx();
-		let non_lues: HashSet<Family> = HashSet::new();
-		let lues: HashSet<Family> = [Family::Audio].into_iter().collect();
+		let non_read: HashSet<Family> = HashSet::new();
+		let read: HashSet<Family> = [Family::Audio].into_iter().collect();
 
-		let lectes = build_feature_entities(&c, Feature::Audio, &non_lues);
+		let lectes = build_feature_entities(&c, Feature::Audio, &non_read);
 		assert!(!lectes.is_empty(), "la famille audio ne publie plus rien du tout");
-		let mut ids_lus: Vec<String> = Vec::new();
+		let mut ids_read: Vec<String> = Vec::new();
 		for (topic, payload) in &lectes {
 			let v: serde_json::Value = serde_json::from_slice(payload).expect("json");
 			assert!(
@@ -1210,12 +1210,12 @@ mod tests {
 					|| topic.starts_with("homeassistant/binary_sensor/"),
 				"plateforme modifiable publiée sans lecture : {topic}"
 			);
-			ids_lus.push(v["unique_id"].as_str().expect("unique_id").to_string());
+			ids_read.push(v["unique_id"].as_str().expect("unique_id").to_string());
 		}
 
-		let modifiables = build_feature_entities(&c, Feature::Audio, &lues);
+		let writable = build_feature_entities(&c, Feature::Audio, &read);
 		let mut ids_modifs: Vec<String> = Vec::new();
-		for (topic, payload) in &modifiables {
+		for (topic, payload) in &writable {
 			let v: serde_json::Value = serde_json::from_slice(payload).expect("json");
 			assert!(v.get("command_topic").is_some(), "{topic} n'offre toujours pas de commande");
 			ids_modifs.push(v["unique_id"].as_str().expect("unique_id").to_string());
@@ -1223,11 +1223,11 @@ mod tests {
 
 		// Le bouton `chime/ring` est le seul à disparaître en lecture seule ; la
 		// famille audio n'en a pas, donc les deux ensembles se correspondent.
-		ids_lus.sort();
+		ids_read.sort();
 		ids_modifs.sort();
 		assert_eq!(
-			ids_lus, ids_modifs,
-			"les identifiants ne doivent pas dépendre de ce qui a été lu"
+			ids_read, ids_modifs,
+			"les identifiants ne doivent pas dépendre de ce qui a dst lu"
 		);
 	}
 
@@ -1235,7 +1235,7 @@ mod tests {
 	/// l'état compréhensible (l'unité) et perd ce qui serait un mensonge (les
 	/// bornes d'écriture, et un `state_class` sur du texte).
 	#[test]
-	fn la_copie_lisible_conserve_l_unite_et_perd_les_bornes() {
+	fn the_copie_lisible_kept_the_unite_and_perd_the_bounds() {
 		let c = ctx();
 		let spec = SPECS
 			.iter()
@@ -1275,14 +1275,14 @@ mod tests {
 			.find(|s| matches!(s.kind, EntityKind::Button { .. }))
 			.expect("une spec button");
 		assert!(bouton.build_selon(&c, "Porche", false).is_none());
-		assert_eq!(bouton.plateforme_lecture_seule(), None);
+		assert_eq!(bouton.read_only_platform(), None);
 	}
 
 	/// Un `text` et un `select` lus deviennent des capteurs **textuels** : un
 	/// `state_class: measurement` sur une langue ou un jour de la semaine
 	/// remplirait le journal de Home Assistant d'avertissements d'incompatibilité.
 	#[test]
-	fn un_etat_textuel_n_est_jamais_marque_mesure() {
+	fn a_state_textual_is_never_marks_mesure() {
 		let c = ctx();
 		let mut vus = 0;
 		for spec in SPECS {
@@ -1308,7 +1308,7 @@ mod tests {
 	/// les deux blocs, le pont puis la présence, comme les entités historiques.
 	/// Un oubli ici se répéterait sur toutes les entités du tableau.
 	#[test]
-	fn chaque_entite_de_reglage_porte_les_deux_blocs_de_disponibilite() {
+	fn each_entity_of_setting_carries_the_deux_blocks_of_availability() {
 		let c = ctx();
 		let mut vues = 0;
 		for spec in SPECS {
@@ -1341,6 +1341,6 @@ mod tests {
 			);
 			vues += 1;
 		}
-		assert!(vues > 0, "aucune spec de réglage n'a été vérifiée");
+		assert!(vues > 0, "aucune spec de réglage n'a dst vérifiée");
 	}
 }

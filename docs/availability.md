@@ -74,3 +74,39 @@ With these two blocks, "no doorbell event for a day" can be told apart:
 | `online` | `unreachable` | the camera stopped answering: battery, Wi-Fi, or it was moved |
 | `offline` | (last value) | the bridge is down: the camera may be perfectly fine |
 | missing | missing | the broker or the add-on is not running at all |
+
+## What stops Home Assistant from accumulating ghost entities
+
+Three mechanisms, and they are not equally strong. Knowing which one is doing the
+work matters the next time an entity's identity moves.
+
+**The wire contract is pinned by tests, and that is the real protection.** Every
+`unique_id` is built from english slugs — `{prefix}_{camera}_{family}_{leaf}` — and
+`object_id` from the same slugs. `topic_names_match_spec`, `each_spec_has_a_unique_id`
+and `ai_sensor_gating_by_presence` fail the build if a slug moves. A label is free to
+change because it is not part of the identity; a slug is not free, because it is.
+`AiObject::topic_name()` and `SettingSpec::unique_id()` are wire surface, not labels:
+they mint topics and `unique_id`s. `topic_name()` used to have a sibling
+`short_name()` that was the display form; the label now comes from `display_name()`
+and the wire form is documented as wire, because a rename sweep that reached
+`topic_name()` would silently move `…_ai_animal` and leave the old entity stranded
+while its automation stops firing.
+
+**Home Assistant keeps `entity_id` stable.** It fixes the entity id at first
+discovery and does not rename it when the `name` field changes. So the switch of
+every label to english renames what the owner reads on the dashboard and changes
+nothing that an automation refers to. Automations keyed on `entity_id` survive; only
+manual dashboards built on entity *names* need a click.
+
+**Discovery publishes retractions, but only within one run.** `publish()` records the
+topic set it published per camera and writes an empty retained payload over every
+topic that disappears, which covers a known entity whose identity changed while the
+process was up. It cannot diff against the previous *process*: that record is
+in-memory, so an identity change shipped in a new version is invisible to it. This
+is a documented blind spot, not a bug to fix here — no slug moved in the label
+switch, so there was nothing to retract, and inventing a retired-identity table
+before an identity has actually been retired would be guessing at the schema.
+
+If an identity does move for real, the migration is a manual step: keep publishing
+the old `unique_id` for one release, or delete the stale entity in Home Assistant.
+The retraction mechanism is a safety net for in-process churn, not a migration tool.

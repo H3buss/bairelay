@@ -123,7 +123,7 @@ impl SharedMqttClient {
 	/// to attach an observable capture sink. Not part of the public
 	/// API — the double-underscore prefix flags it as internal.
 	#[doc(hidden)]
-	pub fn __test_new_with_capture(client: AsyncClient, capture: CaptureSink) -> Self {
+	pub fn test_new_with_capture(client: AsyncClient, capture: CaptureSink) -> Self {
 		Self {
 			client,
 			capture: Some(capture),

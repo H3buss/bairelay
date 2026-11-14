@@ -115,7 +115,7 @@ pub(crate) fn motion_hold(
 	);
 }
 
-/// Le corps partagé des trois chemins de réveil mouvementé : tenir le verrou,
+/// Le corps partagé des trois chemins de wake mouvementé : tenir le verrou,
 /// publier l'état de mouvement s'il le faut, **puis** proposer la salve de
 /// lecture ([`crate::burst`]).
 ///
@@ -148,7 +148,7 @@ fn spawn_motion_hold(
 			}
 			handle.status_cache().set_motion(true);
 		}
-		// L'événement est publié : la salve peut commencer, si ce réveil n'a pas
+		// L'événement est publié : la salve peut commencer, si ce wake n'a pas
 		// déjà payé la sienne.
 		crate::burst::trigger(Arc::clone(&handle), reason);
 

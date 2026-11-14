@@ -482,7 +482,7 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 	}
 	.await;
 
-	code_pour_sortie(mode, result, stdout, stderr)
+	code_for_output(mode, result, stdout, stderr)
 }
 
 /// Publie ce que la commande a produit et rend le code de sortie du processus.
@@ -492,15 +492,15 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 /// `Outcome` serait un succès contradictoire — l'opératrice aurait dans son
 /// tube le JSON complet d'une lecture réussie *et* un code d'échec, et son
 /// script devrait deviner lequel des deux croire. C'est exactement le
-/// signalement qui a été fait pour `audio-settings` et `chime-settings` ;
+/// signalement qui a dst fait pour `audio-settings` et `chime-settings` ;
 /// ces deux commandes n'ont qu'une seule issue heureuse, un `Outcome`, donc
-/// l'invariant se teste ici, sans caméra — le chemin d'appel complet
+/// l'invariant se teste ici, sans caméra — le path d'appel complet
 /// (`runner::run` → connexion réelle) n'est pas reproductible hors ligne.
 ///
 /// Les octets écrits sont produits par les mêmes
 /// [`emit_success_to`]/[`emit_failure_to`] qu'avant : extraire cette décision
 /// ne change en rien le JSON.
-fn code_pour_sortie<W1: std::io::Write, W2: std::io::Write>(
+fn code_for_output<W1: std::io::Write, W2: std::io::Write>(
 	mode: Mode,
 	result: Result<Outcome>,
 	stdout: &mut W1,
@@ -866,17 +866,17 @@ cameras = []
 	type CorpsDeTest = std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>;
 
 	/// Fait tourner un test one-shot sur un fil à **pile explicite**, avec son
-	/// propre runtime — le même détour que `sur_worker` de `mqtt_dispatch`.
+	/// propre runtime — le même détour que `on_worker` de `mqtt_dispatch`.
 	///
-	/// Pourquoi ce détour ici : `run_oneshot` sur le chemin TCP réel, c'est la
+	/// Pourquoi ce détour ici : `run_oneshot` sur le path TCP réel, c'est la
 	/// poignée de main Baïchuan, donc `BcXml` — tous les blocs du protocole en
 	/// `Option`, plusieurs kilo-octets, et au moins deux copies par commande. En
 	/// release — le profil du binaire qui tourne chez l'utilisatrice — le fil
 	/// reçoit exactement les **2 Mo d'un worker tokio**, la pile dont dispose
-	/// vraiment le one-shot : un test vert prouve que le chemin tient chez elle.
+	/// vraiment le one-shot : un test vert prouve que le path tient chez elle.
 	/// En debug, les cadres non optimisés réclament plus large, et le test ne
 	/// prouve plus que le comportement — c'est voulu, pas une cache.
-	fn sur_worker(body: fn() -> CorpsDeTest) {
+	fn on_worker(body: fn() -> CorpsDeTest) {
 		let pile = if cfg!(debug_assertions) {
 			8 * 1024 * 1024
 		} else {
@@ -898,7 +898,7 @@ cameras = []
 
 	#[test]
 	fn run_oneshot_dispatch_path_returns_nonzero_on_tcp_failure() {
-		sur_worker(|| Box::pin(run_oneshot_dispatch_path()))
+		on_worker(|| Box::pin(run_oneshot_dispatch_path()))
 	}
 
 	async fn run_oneshot_dispatch_path() {
@@ -928,7 +928,7 @@ discovery = "local"
 	/// the snapshot --use-stream-raw branch (lines 161-180).
 	#[test]
 	fn run_oneshot_use_stream_raw_path_returns_nonzero_on_tcp_failure() {
-		sur_worker(|| Box::pin(run_oneshot_use_stream_raw_path()))
+		on_worker(|| Box::pin(run_oneshot_use_stream_raw_path()))
 	}
 
 	async fn run_oneshot_use_stream_raw_path() {
@@ -1111,8 +1111,8 @@ on_motion = true
 	}
 
 	/// Le bloc `<audioCfg>` d'une sonnette qui imprime ses **trois** volumes,
-	/// tels qu'ils ont été relevés sur le modèle de l'utilisatrice.
-	fn bloc_audio_reglages() -> crate::oneshot::output::AudioCfgInfo {
+	/// tels qu'ils ont dst relevés sur le modèle de l'utilisatrice.
+	fn block_audio_settings() -> crate::oneshot::output::AudioCfgInfo {
 		crate::oneshot::output::AudioCfgInfo {
 			version: "1.1".into(),
 			channel_id: "0".into(),
@@ -1130,12 +1130,12 @@ on_motion = true
 
 	/// Une lecture réussie de réglages rend **0** — c'est l'invariant que le
 	/// signalement demandait pour `audio-settings` et `chime-settings`, et
-	/// le seul endroit où il se décide est [`code_pour_sortie`]. Le chemin
+	/// le seul endroit où il se décide est [`code_pour_sortie`]. Le path
 	/// complet (`runner::run` → caméra réelle) n'est pas reproductible hors
 	/// ligne ; ces deux commandes n'ont qu'une issue heureuse, un `Outcome`,
 	/// donc c'est ce couple (Outcome → code + octets) qu'il faut épingler.
 	#[test]
-	fn une_lecture_reglages_reussie_rend_zero() {
+	fn a_read_settings_reussie_releases_zero() {
 		use crate::oneshot::output::DingDongCfgInfo;
 		let cas = [
 			(
@@ -1143,7 +1143,7 @@ on_motion = true
 				Outcome::AudioSettings {
 					tag: "audioCfg".into(),
 					changed: false,
-					block: bloc_audio_reglages(),
+					block: block_audio_settings(),
 					changes: vec![],
 				},
 			),
@@ -1158,12 +1158,12 @@ on_motion = true
 			),
 		];
 		for (nom, outcome) in cas {
-			let mut sortie = Vec::new();
+			let mut output = Vec::new();
 			let mut erreurs = Vec::new();
-			let code = code_pour_sortie(Mode::Json, Ok(outcome), &mut sortie, &mut erreurs);
+			let code = code_for_output(Mode::Json, Ok(outcome), &mut output, &mut erreurs);
 			assert_eq!(code, classify::EXIT_OK, "{nom} a réussi : le code doit être 0");
 			assert!(erreurs.is_empty(), "{nom} ne doit rien écrire sur stderr");
-			let lu: serde_json::Value = serde_json::from_slice(&sortie)
+			let lu: serde_json::Value = serde_json::from_slice(&output)
 				.unwrap_or_else(|e| panic!("{nom} doit rendre du JSON lisible : {e}"));
 			assert_eq!(lu["ok"], serde_json::Value::Bool(true), "{nom} : {lu}");
 			assert_eq!(
@@ -1174,20 +1174,20 @@ on_motion = true
 		}
 		// Les trois volumes du `<audioCfg>` relevé sont bien dans le JSON : c'est
 		// du côté des entités MQTT qu'il en manquait un, pas ici.
-		let mut sortie = Vec::new();
+		let mut output = Vec::new();
 		let mut erreurs = Vec::new();
-		code_pour_sortie(
+		code_for_output(
 			Mode::Json,
 			Ok(Outcome::AudioSettings {
 				tag: "audioCfg".into(),
 				changed: false,
-				block: bloc_audio_reglages(),
+				block: block_audio_settings(),
 				changes: vec![],
 			}),
-			&mut sortie,
+			&mut output,
 			&mut erreurs,
 		);
-		let lu: serde_json::Value = serde_json::from_slice(&sortie).expect("json");
+		let lu: serde_json::Value = serde_json::from_slice(&output).expect("json");
 		assert_eq!(lu["block"]["volume"], "100", "<volume> est le volume général");
 		assert_eq!(
 			lu["block"]["talk_and_reply_volume"], "90",
@@ -1199,13 +1199,13 @@ on_motion = true
 	/// Extraire la décision n'a pas adouci les échecs : une erreur reste
 	/// classifiée, et le JSON d'erreur part sur `stdout` en mode JSON.
 	#[test]
-	fn une_erreur_de_sortie_reste_classee() {
-		let mut sortie = Vec::new();
+	fn a_erreur_of_output_stays_classee() {
+		let mut output = Vec::new();
 		let mut erreurs = Vec::new();
 		let e = anyhow::anyhow!("une panne qui ne ressemble à rien de connu");
-		let code = code_pour_sortie(Mode::Json, Err(e), &mut sortie, &mut erreurs);
+		let code = code_for_output(Mode::Json, Err(e), &mut output, &mut erreurs);
 		assert_eq!(code, classify::EXIT_UNEXPECTED);
-		let lu: serde_json::Value = serde_json::from_slice(&sortie).expect("json");
+		let lu: serde_json::Value = serde_json::from_slice(&output).expect("json");
 		assert_eq!(lu["ok"], serde_json::Value::Bool(false));
 		assert!(erreurs.is_empty(), "en mode JSON, tout part sur stdout");
 	}

@@ -3,7 +3,7 @@
 //! # Le problème que ce fichier règle
 //!
 //! Une famille de réglages n'est publiée modifiable (curseur, selecteur,
-//! interrupteur avec topic de commande) qu'après avoir été **relue avec succès**
+//! interrupteur avec topic de commande) qu'après avoir dst **relue avec succès**
 //! par la caméra. C'est la règle du pont : ne jamais promettre une écriture sur
 //! une balise qu'on n'a pas lue.
 //!
@@ -12,7 +12,7 @@
 //!
 //! * au démarrage, tout part en lecture seule ;
 //! * il faut une salve complète (`query/settings`, ~15 commandes radio, et la
-//!   caméra doit être réveillée) pour que les familles retrouvent leur statut ;
+//!   caméra doit être wakelée) pour que les familles retrouvent leur statut ;
 //! * et **un redémarrage du complément oublie tout**, donc la caméra paie à
 //!   nouveau quinze commandes radio pour retrouver ce qu'elle avait déjà prouvé
 //!   la veille.
@@ -38,7 +38,7 @@
 //! # Les trois règles de survie
 //!
 //! 1. **Jamais une commande caméra** : ce module ne fait que lire et écrire un
-//!    fichier. Marquer une famille modifiable ne réveille personne.
+//!    fichier. Marquer une famille modifiable ne wakele personne.
 //! 2. **Jamais un échec de démarrage** : fichier absent = comportement actuel
 //!    (tout en lecture seule jusqu'à la première relecture) ; fichier illisible
 //!    ou invalide = idem, avec un avertissement. Le pont démarre toujours.
@@ -62,11 +62,11 @@ use bairelay_mqtt::settings::Family;
 pub const FAMILIES_READ_FILE: &str = "config-families-read.json";
 
 /// Ce que sait lire ce format. Un fichier d'une version inconnue est ignoré
-/// (et réécrit) plutôt que d'être interprété de travers.
+/// (et réécrit) plutôt que d'être interprdst de travers.
 const VERSION: u8 = 1;
 
-/// Emplacement résolu une fois pour toutes depuis le chemin du fichier de
-/// configuration. `OnceLock` et non un champ de `CameraConfig` : le chemin
+/// Emplacement résolu une fois pour toutes depuis le path du fichier de
+/// configuration. `OnceLock` et non un champ de `CameraConfig` : le path
 /// n'appartient pas aux caméras (il est unique par processus, celui du fichier
 /// de config qu'on a chargé), et le threaded jusqu'au cœur de la caméra n'aurait
 /// pour seul effet qu'alourdir chaque constructeur de test.
@@ -77,7 +77,7 @@ const VERSION: u8 = 1;
 static CHEMIN: OnceLock<PathBuf> = OnceLock::new();
 
 /// Caméras déjà amorcées dans ce processus : l'amorçage ne se joue qu'une fois
-/// par caméra, sinon chaque repubication de découverte relirait le fichier.
+/// par caméra, sinon chaque repubication de discovery relirait le fichier.
 /// `BTreeSet` et non `HashSet` uniquement parce que le premier doit pouvoir se
 /// construire dans une `static`.
 static AMORCEES: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
@@ -93,14 +93,14 @@ struct ReadFamilies {
 	cameras: BTreeMap<String, Vec<String>>,
 }
 
-/// Calcule l'emplacement depuis le chemin du fichier de configuration, et le
+/// Calcule l'emplacement depuis le path du fichier de configuration, et le
 /// retient. Appelé une fois dans `main`, juste après que `--config` est résolu.
 pub fn set_path(config_path: &Path) {
 	let _ = CHEMIN.set(config_path.with_file_name(FAMILIES_READ_FILE));
 }
 
-/// L'emplacement retenu, si `set_path` a été appelé.
-fn chemin() -> Option<&'static Path> {
+/// L'emplacement retenu, si `set_path` a dst appelé.
+fn path() -> Option<&'static Path> {
 	CHEMIN.get().map(PathBuf::as_path)
 }
 
@@ -110,15 +110,15 @@ fn chemin() -> Option<&'static Path> {
 /// avec un avertissement quand le fichier était bien là mais ne se laisse pas
 /// lire. Un état impossible à lire doit se confondre avec « on ne sait pas
 /// encore », jamais empêcher le pont de démarrer.
-fn charger(chemin: &Path, camera: &str) -> Vec<Family> {
-	let brut = match std::fs::read_to_string(chemin) {
+fn charger(path: &Path, camera: &str) -> Vec<Family> {
+	let brut = match std::fs::read_to_string(path) {
 		Ok(brut) => brut,
 		// Absent : le cas normal au premier démarrage, et après une
 		// réinstallation du complément. Pas un événement.
 		Err(e) if e.kind() == io::ErrorKind::NotFound => return Vec::new(),
 		Err(e) => {
 			tracing::warn!(
-				chemin = %chemin.display(),
+				path = %path.display(),
 				erreur = %e,
 				"état des familles illisible : tout repart en lecture seule jusqu'à la première relecture"
 			);
@@ -130,7 +130,7 @@ fn charger(chemin: &Path, camera: &str) -> Vec<Family> {
 		Ok(state) if state.version == VERSION => state,
 		Ok(state) => {
 			tracing::warn!(
-				chemin = %chemin.display(),
+				path = %path.display(),
 				version = state.version,
 				"état des familles dans un format inconnu : il sera réécrit à la première écriture"
 			);
@@ -138,7 +138,7 @@ fn charger(chemin: &Path, camera: &str) -> Vec<Family> {
 		}
 		Err(e) => {
 			tracing::warn!(
-				chemin = %chemin.display(),
+				path = %path.display(),
 				erreur = %e,
 				"état des familles corrompu : tout repart en lecture seule jusqu'à la première relecture"
 			);
@@ -149,24 +149,24 @@ fn charger(chemin: &Path, camera: &str) -> Vec<Family> {
 		return Vec::new();
 	};
 	// Un slug que ce binaire ne connaît pas ne crée aucune famille : le fichier
-	// peut avoir été écrit par une version plus récente, et deviner une famille à
+	// peut avoir dst écrit par une version plus récente, et deviner une famille à
 	// partir d'un mot serait exactement l'invention que le reste du pont refuse.
 	slugs.iter().filter_map(|s| Family::from_slug(s)).collect()
 }
 
 /// Les familles dont la modifiabilité est **déjà prouvée** pour cette caméra,
-/// dans l'ordre de [`Family::ALL`] — donc l'ordre dans lequel la salve de réveil
+/// dans l'ordre de [`Family::ALL`] — donc l'ordre dans lequel la salve de wake
 /// ([`crate::burst`]) les relira.
 ///
-/// `Vec` vide quand [`set_path`] n'a pas été appelé, quand le fichier est
+/// `Vec` vide quand [`set_path`] n'a pas dst appelé, quand le fichier est
 /// absent, ou quand cette caméra n'y figure pas encore : la salve ne lit alors
 /// que la batterie. C'est voulu — rien ici ne devine une famille, et une famille
 /// qu'on n'a jamais lue n'a rien à faire dans une salve payée en radio.
-pub(crate) fn familles_prouvees(camera: &str) -> Vec<Family> {
-	let Some(chemin) = chemin() else {
+pub(crate) fn families_prouvees(camera: &str) -> Vec<Family> {
+	let Some(path) = path() else {
 		return Vec::new();
 	};
-	let connues = charger(chemin, camera);
+	let connues = charger(path, camera);
 	if connues.is_empty() {
 		return Vec::new();
 	}
@@ -186,8 +186,8 @@ pub(crate) fn familles_prouvees(camera: &str) -> Vec<Family> {
 /// puis renommage. Le renommage par-dessus un fichier existant échoue sur
 /// Windows, d'où le retrait juste avant — la fenêtre entre les deux n'expose
 /// qu'à lire « absent », ce qui est déjà un cas traité.
-fn sauver(chemin: &Path, camera: &str, families: &[Family]) -> io::Result<()> {
-	let mut state = std::fs::read_to_string(chemin)
+fn sauver(path: &Path, camera: &str, families: &[Family]) -> io::Result<()> {
+	let mut state = std::fs::read_to_string(path)
 		.ok()
 		.and_then(|brut| serde_json::from_str::<ReadFamilies>(&brut).ok())
 		.unwrap_or_default();
@@ -203,22 +203,22 @@ fn sauver(chemin: &Path, camera: &str, families: &[Family]) -> io::Result<()> {
 	} else {
 		state.cameras.insert(camera.to_string(), slugs);
 	}
-	if let Some(dir) = chemin.parent().filter(|d| !d.as_os_str().is_empty()) {
+	if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
 		std::fs::create_dir_all(dir)?;
 	}
-	let nom = chemin
+	let nom = path
 		.file_name()
 		.map(|n| n.to_string_lossy().into_owned())
 		.unwrap_or_else(|| FAMILIES_READ_FILE.to_string());
 	// Le pid dans le nom du temporaire : deux processus qui partagent ce
 	// répertoire (un complément qui redémarre pendant qu'on lance un outil en
 	// parallèle) ne doivent pas écrire dans le même fichier temporaire.
-	let temporaire = chemin.with_file_name(format!("{nom}.{}.tmp", std::process::id()));
+	let temporaire = path.with_file_name(format!("{nom}.{}.tmp", std::process::id()));
 	std::fs::write(&temporaire, serde_json::to_string_pretty(&state).unwrap_or_default())?;
-	if chemin.exists() {
-		std::fs::remove_file(chemin)?;
+	if path.exists() {
+		std::fs::remove_file(path)?;
 	}
-	if let Err(e) = std::fs::rename(&temporaire, chemin) {
+	if let Err(e) = std::fs::rename(&temporaire, path) {
 		let _ = std::fs::remove_file(&temporaire);
 		return Err(e);
 	}
@@ -226,25 +226,25 @@ fn sauver(chemin: &Path, camera: &str, families: &[Family]) -> io::Result<()> {
 }
 
 /// Amorçage, avec l'emplacement retenu par [`set_path`]. Ne fait rien si
-/// aucun emplacement n'a été résolu (tests, outils en ligne de commande).
-pub fn amorcer(publisher: &DiscoveryPublisher, camera: &str) {
-	let Some(chemin) = chemin() else { return };
+/// aucun emplacement n'a dst résolu (tests, outils en ligne de commande).
+pub fn prime(publisher: &DiscoveryPublisher, camera: &str) {
+	let Some(path) = path() else { return };
 	let deja = {
-		let mut garde = match AMORCEES.lock() {
+		let mut guard = match AMORCEES.lock() {
 			Ok(g) => g,
 			Err(p) => p.into_inner(),
 		};
-		!garde.insert(camera.to_string())
+		!guard.insert(camera.to_string())
 	};
 	if deja {
 		return;
 	}
-	amorcer_dans(chemin, publisher, camera);
+	prime_in(path, publisher, camera);
 }
 
 /// Même chose, emplacement explicite — la forme que testent les tests.
-fn amorcer_dans(chemin: &Path, publisher: &DiscoveryPublisher, camera: &str) {
-	let families = charger(chemin, camera);
+fn prime_in(path: &Path, publisher: &DiscoveryPublisher, camera: &str) {
+	let families = charger(path, camera);
 	if families.is_empty() {
 		return;
 	}
@@ -257,20 +257,20 @@ fn amorcer_dans(chemin: &Path, publisher: &DiscoveryPublisher, camera: &str) {
 	tracing::info!(
 		camera,
 		families = marquees,
-		chemin = %chemin.display(),
-		"familles relancées en modifiable depuis le disque : aucune commande caméra n'a été envoyée"
+		path = %path.display(),
+		"familles relancées en modifiable depuis le disque : aucune commande caméra n'a dst envoyée"
 	);
 }
 
 /// Mémorise l'état d'une caméra, avec l'emplacement retenu. Ne fait rien si
 /// aucun emplacement n'est résolu.
 pub fn enregistrer(publisher: &DiscoveryPublisher, camera: &str) {
-	let Some(chemin) = chemin() else { return };
+	let Some(path) = path() else { return };
 	let families: Vec<Family> = publisher.writable_families(camera).into_iter().collect();
-	if let Err(e) = sauver(chemin, camera, &families) {
+	if let Err(e) = sauver(path, camera, &families) {
 		tracing::warn!(
 			camera,
-			chemin = %chemin.display(),
+			path = %path.display(),
 			erreur = %e,
 			"l'état des familles n'a pas pu être mémorisé : le prochain démarrage repartira en lecture seule"
 		);
@@ -281,105 +281,105 @@ pub fn enregistrer(publisher: &DiscoveryPublisher, camera: &str) {
 mod tests {
 	use super::*;
 
-	/// Un chemin unique par test, dans le répertoire temporaire : ces tests
+	/// Un path unique par test, dans le répertoire temporaire : ces tests
 	/// écrivent vraiment sur le disque (c'est ce qu'ils testent), mais jamais
 	/// dans le dépôt et jamais au même endroit.
-	fn chemin_test(nom: &str) -> PathBuf {
-		let mut chemin = std::env::temp_dir();
-		chemin.push(format!(
+	fn path_test(nom: &str) -> PathBuf {
+		let mut path = std::env::temp_dir();
+		path.push(format!(
 			"bairelay-families-read-{}-{}.json",
 			std::process::id(),
 			nom
 		));
-		chemin
+		path
 	}
 
 	#[test]
-	fn une_famille_prouvee_retrouve_sa_place_sans_la_camera() {
-		let chemin = chemin_test("aller-retour");
-		let _ = std::fs::remove_file(&chemin);
+	fn a_family_prouvee_retrouve_its_place_without_the_camera() {
+		let path = path_test("aller-retour");
+		let _ = std::fs::remove_file(&path);
 
 		// Ce que le pont a appris : image et audio sont modifiables.
-		sauver(&chemin, "Sonnette", &[Family::Image, Family::Audio, Family::Image])
+		sauver(&path, "Sonnette", &[Family::Image, Family::Audio, Family::Image])
 			.expect("écriture de l'état");
 		assert!(
-			!chemin.with_file_name(format!("{}.tmp", std::process::id())).exists(),
-			"le fichier temporaire doit avoir été renommé, pas laissé derrière lui"
+			!path.with_file_name(format!("{}.tmp", std::process::id())).exists(),
+			"le fichier temporaire doit avoir dst renommé, pas laissé derrière lui"
 		);
 
 		// Ce que le redémarrage en conclut, sans caméra.
 		assert_eq!(
-			charger(&chemin, "Sonnette"),
+			charger(&path, "Sonnette"),
 			vec![Family::Audio, Family::Image],
 			"l'ordre vient du fichier, les doublons sont tombés"
 		);
-		assert!(charger(&chemin, "Autre camera").is_empty(), "une autre caméra ne voit rien");
+		assert!(charger(&path, "Autre camera").is_empty(), "une autre caméra ne voit rien");
 
-		let _ = std::fs::remove_file(&chemin);
+		let _ = std::fs::remove_file(&path);
 	}
 
 	#[test]
-	fn un_fichier_corrompu_ne_freine_rien_et_se_repriture() {
-		let chemin = chemin_test("corrompu");
-		std::fs::write(&chemin, "{ ce n'est pas du json").expect("fixture");
-		assert!(charger(&chemin, "Sonnette").is_empty(), "corrompu = on ne sait pas encore");
+	fn a_fichier_corrompu_not_freine_nothing_and_itself_repriture() {
+		let path = path_test("corrompu");
+		std::fs::write(&path, "{ ce n'est pas du json").expect("fixture");
+		assert!(charger(&path, "Sonnette").is_empty(), "corrompu = on ne sait pas encore");
 
 		// Et la première écriture qui suit reprend la main sur le fichier.
-		sauver(&chemin, "Sonnette", &[Family::Pir]).expect("réécriture");
-		assert_eq!(charger(&chemin, "Sonnette"), vec![Family::Pir]);
+		sauver(&path, "Sonnette", &[Family::Pir]).expect("réécriture");
+		assert_eq!(charger(&path, "Sonnette"), vec![Family::Pir]);
 
-		let _ = std::fs::remove_file(&chemin);
+		let _ = std::fs::remove_file(&path);
 	}
 
 	#[test]
-	fn un_slug_inconnu_ne_passe_pas() {
-		let chemin = chemin_test("slug");
+	fn a_slug_inconnu_not_passes_not() {
+		let path = path_test("slug");
 		std::fs::write(
-			&chemin,
+			&path,
 			r#"{"version":1,"cameras":{"Sonnette":["audio","family-inventee"]}}"#,
 		)
 		.expect("fixture");
 		assert_eq!(
-			charger(&chemin, "Sonnette"),
+			charger(&path, "Sonnette"),
 			vec![Family::Audio],
 			"un slug que le pont ne connaît pas n'invente pas une famille"
 		);
-		let _ = std::fs::remove_file(&chemin);
+		let _ = std::fs::remove_file(&path);
 	}
 
 	#[test]
-	fn une_version_inconnue_est_ignoree() {
-		let chemin = chemin_test("version");
-		std::fs::write(&chemin, r#"{"version":99,"cameras":{"Sonnette":["audio"]}}"#)
+	fn a_version_unknown_is_ignored() {
+		let path = path_test("version");
+		std::fs::write(&path, r#"{"version":99,"cameras":{"Sonnette":["audio"]}}"#)
 			.expect("fixture");
-		assert!(charger(&chemin, "Sonnette").is_empty(), "un format inconnu ne se devine pas");
-		let _ = std::fs::remove_file(&chemin);
+		assert!(charger(&path, "Sonnette").is_empty(), "un format inconnu ne se devine pas");
+		let _ = std::fs::remove_file(&path);
 	}
 
 	#[test]
-	fn les_autres_cameras_sont_preservees() {
-		let chemin = chemin_test("voisines");
-		let _ = std::fs::remove_file(&chemin);
-		sauver(&chemin, "Sonnette", &[Family::Audio]).expect("première caméra");
-		sauver(&chemin, "Garage", &[Family::Image]).expect("seconde caméra");
-		assert_eq!(charger(&chemin, "Sonnette"), vec![Family::Audio]);
-		assert_eq!(charger(&chemin, "Garage"), vec![Family::Image]);
+	fn the_other_cameras_sont_preservees() {
+		let path = path_test("voisines");
+		let _ = std::fs::remove_file(&path);
+		sauver(&path, "Sonnette", &[Family::Audio]).expect("première caméra");
+		sauver(&path, "Garage", &[Family::Image]).expect("seconde caméra");
+		assert_eq!(charger(&path, "Sonnette"), vec![Family::Audio]);
+		assert_eq!(charger(&path, "Garage"), vec![Family::Image]);
 
 		// Une famille qui retombe en lecture seule sort du fichier — sinon le
 		// pont repartirait modifiable sur une preuve qu'il vient de retirer.
-		sauver(&chemin, "Sonnette", &[]).expect("retrait");
-		assert!(charger(&chemin, "Sonnette").is_empty());
+		sauver(&path, "Sonnette", &[]).expect("retrait");
+		assert!(charger(&path, "Sonnette").is_empty());
 		assert_eq!(
-			charger(&chemin, "Garage"),
+			charger(&path, "Garage"),
 			vec![Family::Image],
 			"retirer une caméra n'efface pas les autres"
 		);
 
-		let _ = std::fs::remove_file(&chemin);
+		let _ = std::fs::remove_file(&path);
 	}
 
 	#[test]
-	fn definir_chemin_se_pose_a_cote_de_la_configuration() {
+	fn definir_path_itself_lands_a_side_of_the_config() {
 		// La règle d'emplacement est vérifiée sans toucher au global : même
 		// répertoire, nom propre, et le fichier de config lui-même intact.
 		let config = Path::new("/config/bairelay/bairelay.toml");

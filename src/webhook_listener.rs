@@ -1540,7 +1540,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn eof_before_a_complete_request_gets_400() {
+	async fn eof_before_a_completes_request_gets_400() {
 		let rig = rig().await;
 		let mut sock = TcpStream::connect(("127.0.0.1", rig.port)).await.unwrap();
 		sock.write_all(format!("POST {} HTTP/1.1\r\n", rig.hook_path()).as_bytes())
@@ -1557,7 +1557,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn non_post_methods_get_405() {
+	async fn not_post_methods_get_405() {
 		let rig = rig().await;
 		let path = rig.hook_path();
 		for method in ["GET", "PUT", "HEAD", "post"] {

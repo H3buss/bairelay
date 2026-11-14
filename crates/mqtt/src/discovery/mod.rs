@@ -1025,7 +1025,7 @@ mod tests {
 	}
 
 	#[test]
-	fn chaque_fonctionnalite_de_reglage_produit_des_entites() {
+	fn each_feature_of_setting_produces_the_entities() {
 		// `Feature::ALL` sans entrée dans `SPECS` = une fonctionnalité activée
 		// dans la config qui n'émet rien, sans le moindre message.
 		for f in Feature::ALL {
@@ -1579,7 +1579,7 @@ mod tests {
 	/// rendrait une entité disponible alors que la caméra est injoignable, et aucun
 	/// autre test ne le verrait.
 	#[test]
-	fn toutes_les_entites_portent_les_deux_blocs_de_disponibilite() {
+	fn all_the_entities_carry_the_deux_blocks_of_availability() {
 		let f = Fixture::new("bairelay");
 		let caps = CameraCapabilitiesView {
 			has_ptz: true,

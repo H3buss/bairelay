@@ -1065,8 +1065,8 @@ mod tests {
 		use crate::bc::xml::DingDongDevice;
 		// A device block that carries a name and no numeric id: a real shape for
 		// « the camera described the chime but did not address it ».
-		let mut muet = DingDongDevice::default();
-		muet.name = Some("Carillon".into());
+		let mut silent = DingDongDevice::default();
+		silent.name = Some("Carillon".into());
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_DING_DONG_CTRL)
 			.reply_with(|req| reply_err_code(req, 400))
@@ -1076,7 +1076,7 @@ mod tests {
 					req,
 					BcXml {
 						dingdong_list: Some(crate::bc::xml::DingDongList {
-							device_info: vec![muet.clone()],
+							device_info: vec![silent.clone()],
 							..Default::default()
 						}),
 						..Default::default()
@@ -1253,7 +1253,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_silent_sends_time_and_hardcoded_type_only_when_changed() {
+	async fn set_silent_sends_time_and_hardcoded_kind_only_when_changed() {
 		let before = Arc::new(paired_fixture());
 		let mut after = (*before).clone();
 		after.silent.as_mut().unwrap().time = Some("600".into());
@@ -1298,7 +1298,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_melodie_writes_one_full_devicecfg_per_changed_device() {
+	async fn set_melody_writes_one_full_devicecfg_per_changed_device() {
 		let before = Arc::new(paired_fixture());
 		let mut after = (*before).clone();
 		let mut want = (*before).clone();

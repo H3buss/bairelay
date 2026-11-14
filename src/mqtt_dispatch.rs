@@ -103,7 +103,7 @@ pub async fn dispatch_control(
 	// Une relecture de réglages est une douzaine de commandes en série (et le
 	// carillon en est cinq à lui seul) ; le plafond d'une écriture simple ne lui
 	// suffit pas. Borné quand même : une synchronisation qui pendouille n'est pas
-	// une synchronisation qui attendra le prochain réveil.
+	// une synchronisation qui attendra le prochain wake.
 	const SETTINGS_TIMEOUT: Duration = Duration::from_secs(120);
 
 	let result = match cmd {
@@ -267,7 +267,7 @@ pub async fn dispatch_control(
 					// Le délai est distingué de la réponse de la caméra : le
 					// motif publié doit dire lequel des deux s'est produit, et
 					// `timeout_to_result` fond les deux en une seule erreur.
-					let en_delai = brut.is_err();
+					let en_delay = brut.is_err();
 					let resultat = timeout_to_result(brut);
 					match &resultat {
 						Ok(()) => {
@@ -284,7 +284,7 @@ pub async fn dispatch_control(
 							// Le `FAIL` sur le topic de commande est éphémère :
 							// personne ne le retrouve dix minutes plus tard dans
 							// Home Assistant. Le motif, lui, est conservé.
-							let phrase = if en_delai {
+							let phrase = if en_delay {
 								crate::settings::REASON_TIMEOUT.to_string()
 							} else {
 								crate::settings::cause(e)
@@ -304,9 +304,9 @@ pub async fn dispatch_control(
 					tracing::warn!(
 						camera = %camera_name,
 						leaf = setting.leaf(),
-						"réglage sans session Baïchuan concrète : rien n'a été envoyé"
+						"réglage sans session Baïchuan concrète : rien n'a dst envoyé"
 					);
-					// Rien n'a été envoyé, et ce n'est pas la caméra qui a dit
+					// Rien n'a dst envoyé, et ce n'est pas la caméra qui a dit
 					// non : c'est le pont. Le FAIL est éphémère, la phrase reste.
 					let publisher = StatusPublisher::new(mqtt, topic_prefix, &camera_name);
 					crate::settings::publish_reason(
@@ -382,40 +382,40 @@ pub async fn dispatch_control(
 				Some(bc_cfg) => {
 					let publisher = StatusPublisher::new(mqtt, topic_prefix, &camera_name);
 					// Une entrée par famille relue, avec son verdict : modifiable,
-					// verrouillée par une preuve locale, ou indéterminée (la
-					// découverte ne bouge alors pas). Le `Vec` se remplit au fil
+					// verrouillée par une preuve locale, ou undeterminede (la
+					// discovery ne bouge alors pas). Le `Vec` se remplit au fil
 					// de l'eau : une synchronisation complète interrompue par le
-					// délai conserve quand même ce qui a été lu avant l'arrêt.
-					let mut lues: Vec<(Family, crate::settings::Verdict)> = Vec::new();
+					// délai conserve quand même ce qui a dst lu avant l'arrêt.
+					let mut read: Vec<(Family, crate::settings::Verdict)> = Vec::new();
 					match family {
-						Some(f) => lues.push(sync_one(&bc_cfg, &publisher, f).await),
+						Some(f) => read.push(sync_one(&bc_cfg, &publisher, f).await),
 						None => {
 							// Le `fut` emprunte `lues` : il doit être relâché
 							// avant de lire le vecteur, d'où le `let`.
 							let interrompue = timeout(
 								SETTINGS_TIMEOUT,
-								crate::settings::sync_all(&bc_cfg, &publisher, &mut lues),
+								crate::settings::sync_all(&bc_cfg, &publisher, &mut read),
 							)
 							.await
 							.is_err();
 							if interrompue {
 								tracing::warn!(
 									camera = %camera_name,
-									lues = lues.len(),
+									read = read.len(),
 									"synchronisation des réglages interrompue"
 								);
 							}
 						}
 					}
-					// La découverte suit la lecture : c'est ici que les familles
+					// La discovery suit la lecture : c'est ici que les familles
 					// relues passent des capteurs de bonne foi aux entités
 					// modifiables, en une seule rafale (payload vide sur l'ancien
-					// topic de découverte avant la nouvelle configuration).
-					cam.mark_families_read(&lues).await;
+					// topic de discovery avant la nouvelle configuration).
+					cam.mark_families_read(&read).await;
 					tracing::info!(
 						camera = %camera_name,
-						lues = lues.len(),
-						modifiables = lues
+						read = read.len(),
+						writable = read
 							.iter()
 							.filter(|(_, v)| matches!(v, crate::settings::Verdict::Writable))
 							.count(),
@@ -423,11 +423,11 @@ pub async fn dispatch_control(
 						// famille est modifiable et son topic `reason` porte la
 						// raison. Les compter à part est ce qui fait voir, dans un
 						// journal, une salve maussade sans avoir à relire MQTT.
-						passageres = lues
+						passageres = read
 							.iter()
 							.filter(|(_, v)| matches!(v, crate::settings::Verdict::Transient))
 							.count(),
-						indetermines = lues
+						indetermines = read
 							.iter()
 							.filter(|(_, v)| matches!(v, crate::settings::Verdict::Unknown))
 							.count(),
@@ -539,7 +539,7 @@ async fn wait_for_bc_camera(
 	}
 }
 
-/// La relecture qui suit une écriture est bornée court : la caméra est réveillée
+/// La relecture qui suit une écriture est bornée court : la caméra est wakelée
 /// (le wake lock est tenu), et une relecture qui traîne ne doit pas rendre
 /// l'opératrice impatiente — elle a déjà son OK/FAIL.
 const REREAD_TIMEOUT: Duration = Duration::from_secs(10);
@@ -598,7 +598,7 @@ async fn publish_pir_after_write(
 	cache.set_pir(kept);
 }
 
-/// Relit une seule famille et rend le verdict que la découverte doit publier.
+/// Relit une seule famille et rend le verdict que la discovery doit publier.
 ///
 /// Échec = états effacés **et** motif publié ; `reglages::read_family` s'en
 /// charge pour ce que la caméra a refusé, et le délai, qui se déclenche **ici**,
@@ -607,7 +607,7 @@ async fn publish_pir_after_write(
 /// refus passager, [`crate::settings::Verdict::Transient`] : la famille reste
 /// modifiable et la raison s'affiche à côté. Ce qui ne doit plus se promettre,
 /// c'est l'inverse : une famille dont on n'a **jamais** rien lu, et cette règle-là
-/// tient parce qu'une famille jamais relue reste absente de la découverte
+/// tient parce qu'une famille jamais relue reste absente de la discovery
 /// modifiable jusqu'à son premier verdict.
 async fn sync_one(
 	bc: &bairelay_neolink_core::bc_protocol::BcCamera,
@@ -615,7 +615,7 @@ async fn sync_one(
 	family: Family,
 ) -> (Family, crate::settings::Verdict) {
 	match timeout(REREAD_TIMEOUT * 3, crate::settings::read_family(bc, publ, family)).await {
-		Ok(lue) => lue,
+		Ok(read) => read,
 		Err(_) => {
 			tracing::warn!(
 				family = family.slug(),
@@ -1934,11 +1934,11 @@ mod tests {
 	// ── Réglages : la loi de la relecture ──────────────────────────────
 	//
 	// Tous ces tests branchent le dispatch sur une caméra **simulée** :
-	// `MockConnection` est un canal en mémoire (aucune prise réseau, aucune
+	// `MockConnection` est un channel en mémoire (aucune prise réseau, aucune
 	// trame sur un socket), et `FakeCamera` un pilote entièrement scripté.
 	// Le scénario central est le même partout : la caméra acquitte l'écriture
 	// en 200, et ce qu'elle répond à la relecture qui suit n'est pas ce qui
-	// avait été demandé.
+	// avait dst demandé.
 
 	use bairelay_mqtt::settings::{Family, SettingCommand};
 	use bairelay_neolink_core::bc::model::{
@@ -1969,7 +1969,7 @@ mod tests {
 	/// Le même bloc, dans l'orthographe v1.1 qui porte `<interval>` : le temps
 	/// de repos entre deux alarmes PIR, en secondes, et les bornes que le
 	/// firmware annonce pour ce curseur.
-	fn pir_cfg_avec_intervalle(repos: u32, max: u32) -> RfAlarmCfg {
+	fn pir_cfg_with_interval(repos: u32, max: u32) -> RfAlarmCfg {
 		RfAlarmCfg {
 			interval: Some(repos),
 			intervalSecMin: Some(5),
@@ -1980,7 +1980,7 @@ mod tests {
 
 	/// Une réponse 200 du msg 212 : le bloc dans `<RfAlarmCfg>`, comme le
 	/// renvoie un vrai firmware.
-	fn reponse_pir(req: &Bc, bloc: RfAlarmCfg) -> Bc {
+	fn answer_pir(req: &Bc, bloc: RfAlarmCfg) -> Bc {
 		reply_200_xml(
 			req,
 			BcXml {
@@ -2024,11 +2024,11 @@ mod tests {
 	/// release — le profil du binaire qui tourne chez l'utilisatrice — le fil
 	/// reçoit exactement les **2 Mo d'un worker tokio**, la pile dont dispose
 	/// vraiment `dispatch_control` puisque `mqtt_loop` l'englobe dans un
-	/// `tokio::spawn` : un test vert est donc la preuve que le chemin tient dans
+	/// `tokio::spawn` : un test vert est donc la preuve que le path tient dans
 	/// la pile de la production (`cargo test --release` est la passe qui le
 	/// démontre). En debug, les cadres non optimisés réclament plus large, et le
 	/// test ne prouve plus que le comportement — c'est voulu, pas une cache.
-	fn sur_worker(body: fn() -> CorpsDeTest) {
+	fn on_worker(body: fn() -> CorpsDeTest) {
 		let stack = if cfg!(debug_assertions) {
 			8 * 1024 * 1024
 		} else {
@@ -2084,7 +2084,7 @@ mod tests {
 	/// `state`, et un firmware qui hochait la tête sans rien écrire était
 	/// invisible, d'autant que le topic est conservé.
 	#[tokio::test]
-	async fn dispatch_pir_publie_la_relecture_et_non_la_demande() {
+	async fn dispatch_pir_publishes_the_reread_and_not_the_request() {
 		let fake = FakeCameraBuilder::new()
 			// Le matériel répond « activé, sensibilité 4 » à chaque relecture,
 			// quelle que soit la commande : c'est le firmware qui ignore
@@ -2110,7 +2110,7 @@ mod tests {
 		let rows = mock.published();
 		assert!(
 			rows.iter().any(|(t, p, _)| t == "bairelay/cam-pir-kept/control/pir" && p == b"OK"),
-			"l'écriture a été acquittée : OK attendu ; observations : {rows:?}"
+			"l'écriture a dst acquittée : OK attendu ; observations : {rows:?}"
 		);
 		assert!(
 			rows.iter().any(|(t, p, r)| t == "bairelay/cam-pir-kept/status/pir"
@@ -2141,7 +2141,7 @@ mod tests {
 	/// Assistant un état qui date d'hier (et dont le journal dit qu'il n'a pas
 	/// pu être rafraîchi) qu'un état fabriqué avec la valeur demandée.
 	#[tokio::test]
-	async fn dispatch_pir_sans_relecture_ne_publie_aucun_etat() {
+	async fn dispatch_pir_without_reread_publishes_no_state() {
 		// `get_pirstate` est scripté en erreur : une caméra qui ne répond pas à
 		// la relecture, ou qui la refuse.
 		let fake = FakeCameraBuilder::new()
@@ -2168,7 +2168,7 @@ mod tests {
 		let rows = mock.published();
 		assert!(
 			rows.iter().any(|(t, p, _)| t == "bairelay/cam-pir-nord/control/pir" && p == b"OK"),
-			"la commande a été acquittée, donc OK ; observations : {rows:?}"
+			"la commande a dst acquittée, donc OK ; observations : {rows:?}"
 		);
 		assert!(
 			!rows
@@ -2184,11 +2184,11 @@ mod tests {
 	/// forme du bloc parti sur le fil : la balise demandée changée, et
 	/// `<volume>` — qu'on ne pilote pas ici — toujours à sa place.
 	#[test]
-	fn dispatch_reglage_audio_ecrit_puis_publie_la_relecture() {
-		sur_worker(|| Box::pin(audio_ecrit_puis_relit()));
+	fn dispatch_setting_audio_writes_then_publishes_the_reread() {
+		on_worker(|| Box::pin(audio_writes_then_rereads()));
 	}
 
-	async fn audio_ecrit_puis_relit() {
+	async fn audio_writes_then_rereads() {
 		let sent = StdArc::new(std::sync::Mutex::new(String::new()));
 		let capture = StdArc::clone(&sent);
 		let mock = MockConnection::new()
@@ -2258,11 +2258,11 @@ mod tests {
 	/// indistinguable d'un pont mort, et le `FAIL` du topic de commande est
 	/// éphémère — personne ne le retrouve le lendemain dans Home Assistant.
 	#[test]
-	fn dispatch_reglage_refuse_par_la_camera_ne_publie_rien() {
-		sur_worker(|| Box::pin(camera_refuse_ecriture_audio()));
+	fn dispatch_setting_refuse_by_the_camera_not_publishes_nothing() {
+		on_worker(|| Box::pin(camera_refuse_write_audio()));
 	}
 
-	async fn camera_refuse_ecriture_audio() {
+	async fn camera_refuse_write_audio() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_AUDIO_CFG)
 			.reply_with(|req| audio_reply(req, audio_cfg("10", "7")))
@@ -2293,15 +2293,15 @@ mod tests {
 		// Aucun état publié : la caméra n'a rien confirmé, donc rien ne doit
 		// laisser croire que 42 est la valeur en cours. Le seul topic de la
 		// famille qui ait le droit de recevoir quelque chose est le motif.
-		let etats: Vec<_> = rows
+		let states: Vec<_> = rows
 			.iter()
 			.filter(|(t, _, _)| {
 				t.starts_with("bairelay/cam-audio-400/status/") && !t.ends_with("/reason")
 			})
 			.collect();
 		assert!(
-			etats.is_empty(),
-			"rien n'a été stocké, donc aucun état ; observations : {rows:?}"
+			states.is_empty(),
+			"rien n'a dst stocké, donc aucun état ; observations : {rows:?}"
 		);
 		let cause = rows
 			.iter()
@@ -2323,12 +2323,12 @@ mod tests {
 	/// Elle publie quand même le motif : un réglage refusé ne doit plus être «
 	/// juste silencieux », même quand le coupable est le pont lui-même.
 	#[test]
-	fn dispatch_reglage_valeur_refusee_nenvoie_rien() {
-		sur_worker(|| Box::pin(valeur_refusee_rien_envoye()));
+	fn dispatch_setting_value_refused_sends_not_nothing() {
+		on_worker(|| Box::pin(value_refused_nothing_envoye()));
 	}
 
-	async fn valeur_refusee_rien_envoye() {
-		// Script vide : la moindre trame fermerait le canal de la mock
+	async fn value_refused_nothing_envoye() {
+		// Script vide : la moindre trame fermerait le channel de la mock
 		// connexion, et la commande ne pourrait plus aboutir.
 		let mock = MockConnection::new().build().await;
 		let cameras = cameras_with_mock("cam-rej", mock).await;
@@ -2352,14 +2352,14 @@ mod tests {
 				&& p == b"FAIL"),
 			"le refus doit être visible sur le topic d'origine ; observations : {rows:?}"
 		);
-		let trames: Vec<_> = rows
+		let frames: Vec<_> = rows
 			.iter()
 			.filter(|(t, _, _)| {
 				t.starts_with("bairelay/cam-rej/status/") && !t.ends_with("/reason")
 			})
 			.collect();
 		assert!(
-			trames.is_empty(),
+			frames.is_empty(),
 			"une valeur refusée n'écrit et ne publie rien ; observations : {rows:?}"
 		);
 		let Some((_, payload, conserve)) = rows
@@ -2379,11 +2379,11 @@ mod tests {
 	/// `query/settings/ntp` : les trois feuilles de la famille sont publiées
 	/// depuis la seule lecture, plus le JSON du bloc pour les automates.
 	#[test]
-	fn dispatch_query_reglages_publie_les_feuilles_de_la_famille() {
-		sur_worker(|| Box::pin(query_ntp_publie_ses_feuilles()));
+	fn dispatch_query_settings_publishes_the_leaves_of_the_family() {
+		on_worker(|| Box::pin(query_ntp_publishes_its_leaves()));
 	}
 
-	async fn query_ntp_publie_ses_feuilles() {
+	async fn query_ntp_publishes_its_leaves() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_NTP)
 			.reply_with(|req| {
@@ -2447,11 +2447,11 @@ mod tests {
 	/// vide conservé) : Home Assistant affiche « inconnu », et non la valeur de
 	/// la semaine dernière qui n'a plus rien à voir avec le matériel.
 	#[test]
-	fn dispatch_query_reglages_famille_refusee_efface_les_etats() {
-		sur_worker(|| Box::pin(query_ntp_refuse_efface()));
+	fn dispatch_query_settings_refused_family_clears_states() {
+		on_worker(|| Box::pin(query_ntp_refuse_clears()));
 	}
 
-	async fn query_ntp_refuse_efface() {
+	async fn query_ntp_refuse_clears() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_NTP)
 			.reply_with(|req| reply_err_code(req, 404))
@@ -2489,11 +2489,11 @@ mod tests {
 	/// et « vide » doivent rester deux choses distinctes. C'est exactement ce
 	/// qu'a répondu la caméra de l'utilisatrice, relue en lecture seule.
 	#[test]
-	fn dispatch_query_carillon_sans_reponse_ne_publie_aucune_liste() {
-		sur_worker(|| Box::pin(carillon_sans_reponse()));
+	fn dispatch_query_chime_without_answer_not_publishes_no_list() {
+		on_worker(|| Box::pin(chime_without_answer()));
 	}
 
-	async fn carillon_sans_reponse() {
+	async fn chime_without_answer() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_DING_DONG_CTRL)
 			.reply_with(|req| reply_err_code(req, 400))
@@ -2537,7 +2537,7 @@ mod tests {
 
 	// ── Les trois promesses que ce lot répare ────────────────────────────
 
-	/// Caméra simulée **avec** un éditeur de découverte attaché et des capacités
+	/// Caméra simulée **avec** un éditeur de discovery attaché et des capacités
 	/// connues. Sans publisher, ou sans capacités, `publish_discovery` ne publie
 	/// rien (deux retours anticipés) : le test ne prouverait que la moitié du
 	/// correctif — les états, jamais les entités.
@@ -2577,11 +2577,11 @@ mod tests {
 	/// entité propres. Il s'écrit en lecture-modification-écriture, et c'est la
 	/// **relecture** qui est publiée — ici 88, jamais la valeur demandée 77.
 	#[test]
-	fn dispatch_reglage_volume_general_ecrit_puis_publie_la_relecture() {
-		sur_worker(|| Box::pin(volume_general_ecrit_puis_relit()));
+	fn dispatch_setting_volume_general_writes_then_publishes_the_reread() {
+		on_worker(|| Box::pin(volume_general_writes_then_rereads()));
 	}
 
-	async fn volume_general_ecrit_puis_relit() {
+	async fn volume_general_writes_then_rereads() {
 		let sent = StdArc::new(std::sync::Mutex::new(String::new()));
 		let capture = StdArc::clone(&sent);
 		let mock = MockConnection::new()
@@ -2660,18 +2660,18 @@ mod tests {
 	/// Une caméra qui n'imprime pas `<volume>` voit l'écriture refusée **sans
 	/// qu'aucune trame d'écriture parte** : le pont n'invente pas au firmware une
 	/// balise qu'il n'a jamais déclarée. Le motif publié le dit ; aucun état
-	/// n'est publié, parce que rien n'a été lu de nouveau.
+	/// n'est publié, parce que rien n'a dst lu de nouveau.
 	#[test]
-	fn dispatch_reglage_volume_general_refuse_sans_balise() {
-		sur_worker(|| Box::pin(volume_general_sans_balise_refuse()));
+	fn dispatch_setting_volume_general_refuse_without_tag() {
+		on_worker(|| Box::pin(volume_general_without_tag_refuse()));
 	}
 
-	async fn volume_general_sans_balise_refuse() {
+	async fn volume_general_without_tag_refuse() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_AUDIO_CFG)
 			.reply_with(|req| audio_reply(req, audio_cfg_general("", "10", "7")))
 			// Un seul message attendu : la moindre trame de plus fermerait le
-			// canal de la connexion simulée, et le FAIL ne pourrait plus venir.
+			// channel de la connexion simulée, et le FAIL ne pourrait plus venir.
 			.build()
 			.await;
 		let cameras = cameras_with_mock("cam-vol3-absent", mock).await;
@@ -2714,15 +2714,15 @@ mod tests {
 
 	/// Une famille jamais relue se découvre **sans aucune commande**. Ce n'est
 	/// qu'après une lecture réussie que ses entités deviennent modifiables, et le
-	/// basculement de plateforme vide l'ancien topic de découverte **avant** de
+	/// basculement de plateforme vide l'ancien topic de discovery **avant** de
 	/// publier le nouveau : sinon Home Assistant garde une entité fantôme qui
 	/// pointe vers un interrupteur qui n'existe plus.
 	#[test]
-	fn decouverte_ntp_sans_commande_jusqua_la_premiere_lecture() {
-		sur_worker(|| Box::pin(decouverte_ntp_devient_modifiable()));
+	fn discovery_ntp_without_command_until_the_first_read() {
+		on_worker(|| Box::pin(discovery_ntp_becomes_writable()));
 	}
 
-	async fn decouverte_ntp_devient_modifiable() {
+	async fn discovery_ntp_becomes_writable() {
 		let connexion = MockConnection::new()
 			.expect_msg(MSG_ID_GET_NTP)
 			.reply_with(|req| {
@@ -2756,8 +2756,8 @@ mod tests {
 		let ancien = "homeassistant/binary_sensor/bairelay_cam-lecture_ntp_enable/config";
 		let nouveau = "homeassistant/switch/bairelay_cam-lecture_ntp_enable/config";
 
-		// La découverte du démarrage, avant la moindre lecture de réglages.
-		cam.publish_discovery().await.expect("première découverte");
+		// La discovery du démarrage, avant la moindre lecture de réglages.
+		cam.publish_discovery().await.expect("première discovery");
 		let rows = mock.published();
 		let Some((_, payload, _)) = rows.iter().find(|(t, _, _)| t == ancien) else {
 			panic!("l'interrupteur se découvre d'abord en binary_sensor ; observations : {rows:?}");
@@ -2815,11 +2815,11 @@ mod tests {
 	/// sont justes), le motif explique pourquoi elles ne sont pas réglables, et
 	/// aucune entité ne promet de commande.
 	#[test]
-	fn md_alarm_reste_en_lecture_seule_et_le_dit() {
-		sur_worker(|| Box::pin(md_alarm_lecture_seule()));
+	fn md_alarm_stays_en_read_seule_and_the_says() {
+		on_worker(|| Box::pin(md_alarm_read_seule()));
 	}
 
-	async fn md_alarm_lecture_seule() {
+	async fn md_alarm_read_seule() {
 		let connexion = MockConnection::new()
 			.expect_msg(MSG_ID_GET_MOTION_DETECT)
 			.reply_with(|req| {
@@ -2850,8 +2850,8 @@ mod tests {
 		)
 		.await;
 
-		// La découverte du démarrage, telle qu'elle a lieu en production.
-		cam.publish_discovery().await.expect("première découverte");
+		// La discovery du démarrage, telle qu'elle a lieu en production.
+		cam.publish_discovery().await.expect("première discovery");
 		dispatch_control(
 			ControlCommand::QuerySettings {
 				camera: "cam-md".to_string(),
@@ -2864,10 +2864,10 @@ mod tests {
 		.await;
 
 		let rows = mock.published();
-		for (leaf, valeur) in [("enable", "on"), ("sensitivity", "3")] {
+		for (leaf, value) in [("enable", "on"), ("sensitivity", "3")] {
 			let topic = format!("bairelay/cam-md/status/motion/{leaf}");
 			assert!(
-				rows.iter().any(|(t, p, _)| t == &topic && p == valeur.as_bytes()),
+				rows.iter().any(|(t, p, _)| t == &topic && p == value.as_bytes()),
 				"la lecture a bien eu lieu, la feuille est publiée : {topic} ; observations : {rows:?}"
 			);
 		}
@@ -2885,7 +2885,7 @@ mod tests {
 			"le motif doit dire la lecture seule, pas un défaut de lecture : {:?}",
 			String::from_utf8_lossy(cause)
 		);
-		// Et la découverte reste ce qu'elle a toujours été pour cette famille.
+		// Et la discovery reste ce qu'elle a toujours dst pour cette famille.
 		assert!(
 			rows.iter().any(|(t, p, r)| t
 				== "homeassistant/binary_sensor/bairelay_cam-md_motion_enable/config"
@@ -2935,11 +2935,11 @@ mod tests {
 	/// moitié que l'opératrice regarde et qu'elle doit survivre à la coupe à 160
 	/// caractères.
 	#[test]
-	fn lecture_refusee_en_400_ne_verrouille_pas_et_le_dit() {
-		sur_worker(|| Box::pin(image_quarante_cent_ne_verrouille_rien()));
+	fn read_refused_en_400_not_locks_not_and_the_says() {
+		on_worker(|| Box::pin(image_quarante_hundred_not_locks_nothing()));
 	}
 
-	async fn image_quarante_cent_ne_verrouille_rien() {
+	async fn image_quarante_hundred_not_locks_nothing() {
 		let connexion = MockConnection::new()
 			// Première relecture : la caméra répond, la famille devient modifiable.
 			.expect_msg(MSG_ID_GET_IMAGE)
@@ -2962,13 +2962,13 @@ mod tests {
 		.await;
 
 		let curseur = "homeassistant/number/bairelay_cam-400_image_bright/config";
-		let motif_topic = "bairelay/cam-400/status/image/reason";
+		let cause_topic = "bairelay/cam-400/status/image/reason";
 		let relire = || ControlCommand::QuerySettings {
 			camera: "cam-400".to_string(),
 			family: Some(Family::Image),
 		};
 
-		cam.publish_discovery().await.expect("première découverte");
+		cam.publish_discovery().await.expect("première discovery");
 		let rows = mock.published();
 		assert!(
 			!rows.iter().any(|(t, _, _)| t == curseur),
@@ -2986,27 +2986,27 @@ mod tests {
 			"la lecture a rendu le curseur réglable"
 		);
 		assert!(
-			rows.iter().any(|(t, p, r)| t == motif_topic && p.is_empty() && *r),
+			rows.iter().any(|(t, p, r)| t == cause_topic && p.is_empty() && *r),
 			"une lecture réussie vide le motif ; observations : {rows:?}"
 		);
 		// Marqueur : tout ce qui est publié à partir d ici suit la relecture qui
 		// va échouer.
-		let apres = rows.len();
+		let after = rows.len();
 
 		dispatch_control(relire(), &cameras, &mqtt, "bairelay").await;
 
 		let rows = mock.published();
-		let burst: Vec<&(String, Vec<u8>, bool)> = rows.iter().skip(apres).collect();
-		for (topic, _, _) in rows.iter().skip(apres) {
+		let burst: Vec<&(String, Vec<u8>, bool)> = rows.iter().skip(after).collect();
+		for (topic, _, _) in rows.iter().skip(after) {
 			assert!(
 				!topic.starts_with("homeassistant/"),
-				"une relecture qui rate ne doit publier aucune découverte, \
+				"une relecture qui rate ne doit publier aucune discovery, \
 				 donc n'en rétracter et n'en rétrograder aucune : {topic} ; \
 				 observations : {burst:?}"
 			);
 		}
 		let Some((_, cause, conserve)) =
-			rows.iter().rev().find(|(t, _, _)| t == motif_topic)
+			rows.iter().rev().find(|(t, _, _)| t == cause_topic)
 		else {
 			panic!("un refus ne doit pas être silencieux ; observations : {rows:?}");
 		};
@@ -3018,7 +3018,7 @@ mod tests {
 		);
 		assert!(
 			!mot.contains("not locked"),
-			"le refused passager a sa propre phrase, celle du verdict indéterminé \
+			"le refused passager a sa propre phrase, celle du verdict undetermined \
 			 ne doit pas resservir : {mot}"
 		);
 		assert!(*conserve, "un motif se publie conservé");
@@ -3036,11 +3036,11 @@ mod tests {
 	/// vérifiée deux fois sur le terrain. La commande est donc publiée, et la
 	/// raison du refus avec.
 	#[test]
-	fn quarante_cent_sur_une_famille_jamais_lue_la_publie_modifiable() {
-		sur_worker(|| Box::pin(jamais_lue_puis_quarante_cent()));
+	fn quarante_hundred_on_a_family_never_read_the_publishes_writable() {
+		on_worker(|| Box::pin(never_read_then_quarante_hundred()));
 	}
 
-	async fn jamais_lue_puis_quarante_cent() {
+	async fn never_read_then_quarante_hundred() {
 		let connexion = MockConnection::new()
 			// Les deux tentatives de `read_family` : le rejeu unique après un 400.
 			.expect_msg(MSG_ID_GET_IMAGE)
@@ -3058,7 +3058,7 @@ mod tests {
 		)
 		.await;
 
-		cam.publish_discovery().await.expect("première découverte");
+		cam.publish_discovery().await.expect("première discovery");
 		let rows = mock.published();
 		assert!(
 			!rows.iter().any(|(t, _, _)| t
@@ -3106,11 +3106,11 @@ mod tests {
 	/// rien n'est verrouillé. Sans ce test, la correction serait une promesse
 	/// générale d'écrire sans jamais rien avoir lu.
 	#[test]
-	fn cinq_cents_ne_promet_rien_et_le_dit() {
-		sur_worker(|| Box::pin(image_cinq_cents_ne_verrouille_rien()));
+	fn cinq_hundred_not_promises_nothing_and_the_says() {
+		on_worker(|| Box::pin(image_cinq_hundred_not_locks_nothing()));
 	}
 
-	async fn image_cinq_cents_ne_verrouille_rien() {
+	async fn image_cinq_hundred_not_locks_nothing() {
 		let connexion = MockConnection::new()
 			// Une seule tentative : le rejeu est réservé au 400, re-tenter un `500`
 			// serait payer deux fois une radio qui va mal.
@@ -3127,10 +3127,10 @@ mod tests {
 		)
 		.await;
 
-		cam.publish_discovery().await.expect("première découverte");
-		// Marqueur : la découverte de démarrage publie les jumeaux en lecture
+		cam.publish_discovery().await.expect("première discovery");
+		// Marqueur : la discovery de démarrage publie les jumeaux en lecture
 		// seule ; seul ce qui suit la salve compte ici.
-		let apres = mock.published().len();
+		let after = mock.published().len();
 		dispatch_control(
 			ControlCommand::QuerySettings {
 				camera: "cam-500".to_string(),
@@ -3143,11 +3143,11 @@ mod tests {
 		.await;
 
 		let rows = mock.published();
-		for (topic, payload, _) in rows.iter().skip(apres) {
+		for (topic, payload, _) in rows.iter().skip(after) {
 			assert!(
 				!(topic.starts_with("homeassistant/") && !payload.is_empty()),
-				"un verdict indéterminé ne publie aucune découverte : {topic} ; observations : {:?}",
-				&rows[apres..]
+				"un verdict undetermined ne publie aucune discovery : {topic} ; observations : {:?}",
+				&rows[after..]
 			);
 		}
 		let Some((_, cause, _)) =
@@ -3157,7 +3157,7 @@ mod tests {
 		};
 		let mot = String::from_utf8_lossy(cause).to_string();
 		assert!(mot.contains("500"), "le motif cite le code : {mot}");
-		assert!(mot.contains("not locked"), "et le verdict indéterminé garde sa phrase : {mot}");
+		assert!(mot.contains("not locked"), "et le verdict undetermined garde sa phrase : {mot}");
 	}
 
 	/// La suite du même incident, à l'endroit où le terrain l'a vérifié : une
@@ -3166,11 +3166,11 @@ mod tests {
 	/// l'opératrice, sans quoi une caméra bien portante continuerait d'afficher
 	/// sa bouderie d'hier.
 	#[test]
-	fn relecture_ok_apres_un_refus_rend_modifiable_et_vide_le_motif() {
-		sur_worker(|| Box::pin(relecture_ok_apres_quarante_cent()));
+	fn reread_ok_after_a_refusal_releases_writable_and_empty_the_cause() {
+		on_worker(|| Box::pin(reread_ok_after_quarante_hundred()));
 	}
 
-	async fn relecture_ok_apres_quarante_cent() {
+	async fn reread_ok_after_quarante_hundred() {
 		let connexion = MockConnection::new()
 			// Premier essai : « pas maintenant ».
 			.expect_msg(MSG_ID_GET_IMAGE)
@@ -3189,7 +3189,7 @@ mod tests {
 		)
 		.await;
 
-		cam.publish_discovery().await.expect("première découverte");
+		cam.publish_discovery().await.expect("première discovery");
 		dispatch_control(
 			ControlCommand::QuerySettings {
 				camera: "cam-rejeu".to_string(),
@@ -3229,11 +3229,11 @@ mod tests {
 	/// seule, le motif nomme la balise manquante, et l'état lu (l'horodatage) est
 	/// quand même publié.
 	#[test]
-	fn osd_sans_osdchannelname_reste_en_lecture_seule_et_le_dit() {
-		sur_worker(|| Box::pin(osd_sans_balise_lecture_seule()));
+	fn osd_without_osdchannelname_stays_en_read_seule_and_the_says() {
+		on_worker(|| Box::pin(osd_without_tag_read_seule()));
 	}
 
-	async fn osd_sans_balise_lecture_seule() {
+	async fn osd_without_tag_read_seule() {
 		let connexion = MockConnection::new()
 			.expect_msg(MSG_ID_GET_OSD)
 			.reply_with(|req| {
@@ -3263,7 +3263,7 @@ mod tests {
 		)
 		.await;
 
-		cam.publish_discovery().await.expect("première découverte");
+		cam.publish_discovery().await.expect("première discovery");
 		dispatch_control(
 			ControlCommand::QuerySettings {
 				camera: "cam-osd".to_string(),
@@ -3311,7 +3311,7 @@ mod tests {
 	/// l'utilisatrice ; une connexion simulée ne la reçoit pas, donc on la
 	/// déclare ici. C'est l'équivalent d'un `abilityInfo` qui annonce `rfAlarm`,
 	/// pas une façon de sauter la porte.
-	async fn cameras_avec_rf_alarm(
+	async fn cameras_with_rf_alarm(
 		name: &str,
 		mock: MockConnection,
 	) -> HashMap<String, Arc<CameraHandle>> {
@@ -3335,16 +3335,16 @@ mod tests {
 	/// ne sont pas des entités ; elles se lisent dans `status/pir/json`, et ce
 	/// test le vérifie aussi.
 	#[test]
-	fn dispatch_reglage_intervalle_pir_ecrit_puis_publie_la_relecture() {
-		sur_worker(|| Box::pin(intervalle_pir_ecrit_puis_relit()));
+	fn dispatch_setting_interval_pir_writes_then_publishes_the_reread() {
+		on_worker(|| Box::pin(interval_pir_writes_then_rereads()));
 	}
 
-	async fn intervalle_pir_ecrit_puis_relit() {
+	async fn interval_pir_writes_then_rereads() {
 		let sent = StdArc::new(std::sync::Mutex::new(String::new()));
 		let capture = StdArc::clone(&sent);
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_PIR_ALARM)
-			.reply_with(|req| reponse_pir(req, pir_cfg_avec_intervalle(30, 120)))
+			.reply_with(|req| answer_pir(req, pir_cfg_with_interval(30, 120)))
 			.expect_msg(MSG_ID_START_PIR_ALARM)
 			.reply_with_xml(move |_req, xml| {
 				let bloc = xml
@@ -3364,10 +3364,10 @@ mod tests {
 			// La relecture : la caméra a ramené l'intervalle à 60 s et annonce
 			// maintenant 60 comme maximum.
 			.expect_msg(MSG_ID_GET_PIR_ALARM)
-			.reply_with(|req| reponse_pir(req, pir_cfg_avec_intervalle(60, 60)))
+			.reply_with(|req| answer_pir(req, pir_cfg_with_interval(60, 60)))
 			.build()
 			.await;
-		let cameras = cameras_avec_rf_alarm("cam-pir-int", mock).await;
+		let cameras = cameras_with_rf_alarm("cam-pir-int", mock).await;
 		let (mqtt, mock) = bairelay_mqtt::test_support::mock_client();
 
 		dispatch_control(
@@ -3384,7 +3384,7 @@ mod tests {
 		assert_eq!(
 			sent.lock().unwrap().as_str(),
 			"enable=1|sensi=Some(21)|interval=Some(45)|min=Some(5)|max=Some(120)",
-			"le bloc renvoyé est celui qui a été lu, avec <interval> seul touché"
+			"le bloc renvoyé est celui qui a dst lu, avec <interval> seul touché"
 		);
 		let rows = mock.published();
 		assert!(
@@ -3421,17 +3421,17 @@ mod tests {
 	/// l'écriture refusée **sans qu'aucune trame 213 parte** : le pont n'invente
 	/// pas au firmware une balise qu'il n'a jamais déclarée.
 	#[test]
-	fn dispatch_reglage_intervalle_pir_refuse_sans_balise() {
-		sur_worker(|| Box::pin(intervalle_pir_sans_balise_refuse()));
+	fn dispatch_setting_interval_pir_refuse_without_tag() {
+		on_worker(|| Box::pin(interval_pir_without_tag_refuse()));
 	}
 
-	async fn intervalle_pir_sans_balise_refuse() {
+	async fn interval_pir_without_tag_refuse() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_PIR_ALARM)
 			.reply_with(|req| {
 				// Orthographe de l'ancien firmware : `sensitivity`, et aucun
 				// `<interval>` — le réglage n'existe pas ici.
-				reponse_pir(
+				answer_pir(
 					req,
 					RfAlarmCfg {
 						version: "1.0".to_string(),
@@ -3442,10 +3442,10 @@ mod tests {
 				)
 			})
 			// Un seul message attendu : la moindre trame de plus fermerait le
-			// canal simulé, et le FAIL ne pourrait plus venir.
+			// channel simulé, et le FAIL ne pourrait plus venir.
 			.build()
 			.await;
-		let cameras = cameras_avec_rf_alarm("cam-pir-int-absent", mock).await;
+		let cameras = cameras_with_rf_alarm("cam-pir-int-absent", mock).await;
 		let (mqtt, mock) = bairelay_mqtt::test_support::mock_client();
 
 		dispatch_control(

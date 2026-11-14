@@ -1562,7 +1562,7 @@ mod pick_sockets_tests {
 	}
 
 	#[test]
-	fn tcp_non_standard_port_falls_back_to_9000() {
+	fn tcp_not_standard_port_falls_back_to_9000() {
 		let addrs = [v4("10.0.0.5")];
 		let out = pick_tcp_sockets(&addrs, Some(9500));
 		assert_eq!(
@@ -1609,7 +1609,7 @@ mod pick_sockets_tests {
 	}
 
 	#[test]
-	fn udp_non_standard_port_tries_override_then_both_fallbacks() {
+	fn udp_not_standard_port_tries_override_then_both_fallbacks() {
 		let addrs = [v4("10.0.0.5")];
 		let out = pick_udp_sockets(&addrs, Some(2020));
 		assert_eq!(

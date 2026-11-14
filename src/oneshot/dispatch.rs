@@ -662,7 +662,7 @@ mod tests {
 	}
 
 	#[test]
-	fn snapshot_json_preflight_allows_non_snapshot_in_json_mode() {
+	fn snapshot_json_preflight_allows_not_snapshot_in_json_mode() {
 		// --json on any non-Snapshot command is fine.
 		snapshot_json_preflight(true, &Command::Reboot(args())).unwrap();
 	}

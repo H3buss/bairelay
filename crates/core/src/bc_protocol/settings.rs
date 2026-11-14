@@ -143,8 +143,8 @@ impl BcCamera {
 		// La forme de la demande n'est plus uniforme : voir
 		// [`forme_de_trame`], mesurée à la sonde MQTT le 13/11 sur cette
 		// sonnette. Quatre lectures changeaient d'avis rien qu'en ajoutant
-		// l'extension qui nomme le canal.
-		let (canal_entete, canal_extension) = forme_de_trame(msg_id, self.channel_id);
+		// l'extension qui nomme le channel.
+		let (canal_entete, canal_extension) = forme_of_frame(msg_id, self.channel_id);
 		let req = Bc {
 			meta: BcMeta {
 				msg_id,
@@ -156,9 +156,9 @@ impl BcCamera {
 			},
 			body: BcBody::ModernMsg(match canal_extension {
 				None => ModernMsg::default(),
-				Some(canal) => {
+				Some(channel) => {
 					let mut ext = Extension::default();
-					ext.channel_id = Some(canal);
+					ext.channel_id = Some(channel);
 					ModernMsg { extension: Some(ext), payload: None }
 				}
 			}),
@@ -175,29 +175,29 @@ impl BcCamera {
 			//
 			// Une ligne par refus, au niveau `warn` : c'est le seul indice qui
 			// distingue « forme de requête mauvaise » de « famille absente de ce
-			// firmware » de « caméra pas réveillée ». Le texte est celui que la
+			// firmware » de « caméra pas wakelée ». Le texte est celui que la
 			// caméra a envoyé, pas une paraphrase.
-			let rendu = match &msg.body {
+			let returned = match &msg.body {
 				BcBody::ModernMsg(moderne) => {
 					let extension = moderne
 						.extension
 						.as_ref()
-						.map(texte_extension)
+						.map(text_extension)
 						.unwrap_or_default();
-					let corps = match &moderne.payload {
-						Some(BcPayloads::BcXml(bloc)) => texte_xml(bloc),
-						Some(BcPayloads::Binary(octets)) => format!("<{} octets>", octets.len()),
+					let body = match &moderne.payload {
+						Some(BcPayloads::BcXml(bloc)) => text_xml(bloc),
+						Some(BcPayloads::Binary(bytes)) => format!("<{} octets>", bytes.len()),
 						None => "<pas de corps>".to_string(),
 					};
-					format!("{extension} {corps}")
+					format!("{extension} {body}")
 				}
-				autre => format!("{autre:?}"),
+				other => format!("{other:?}"),
 			};
 			log::warn!(
 				"msg {} refusé en {} — réponse de la caméra : {}",
 				msg.meta.msg_id,
 				msg.meta.response_code,
-				couper(&rendu, 400)
+				couper(&returned, 400)
 			);
 			// Le texte voyage avec l'erreur, et pas seulement dans le journal :
 			// c'est lui que l'opératrice lira sur `status/<famille>/reason`,
@@ -205,7 +205,7 @@ impl BcCamera {
 			return Err(Error::CameraRefused {
 				id: msg.meta.msg_id,
 				code: msg.meta.response_code,
-				detail: couper(&rendu, 200),
+				detail: couper(&returned, 200),
 			});
 		}
 		Ok(msg)
@@ -218,7 +218,7 @@ impl BcCamera {
 	/// [`raw_get`](Self::raw_get) n'a qu'une forme : en-tête de 24
 	/// octets, ni extension ni corps. Quand une famille refuse, cette forme
 	/// unique est la seule variable qu'on ait jamais variée — c'est-à-dire
-	/// aucune. Cette sonde varie précisément ce qui n'a jamais été mesuré :
+	/// aucune. Cette sonde varie précisément ce qui n'a jamais dst mesuré :
 	///
 	/// * [`RawRequest::extension_channel`] — `<Extension><channelId>0</channelId></Extension>`,
 	///   la forme qu'envoient **toutes** les commandes que cette caméra sert
@@ -253,7 +253,7 @@ impl BcCamera {
 			stream_type: 0,
 			class: d.classe.unwrap_or(0x6414),
 		};
-		let req = match (ext.channel_id.is_some() || ext.rf_id.is_some(), d.corps) {
+		let req = match (ext.channel_id.is_some() || ext.rf_id.is_some(), d.body) {
 			(true, Some(xml)) => Bc::new_from_ext_xml(meta, ext, xml),
 			(true, None) => Bc::new_from_ext(meta, ext),
 			(false, Some(xml)) => Bc::new_from_xml(meta, xml),
@@ -265,18 +265,18 @@ impl BcCamera {
 			code: msg.meta.response_code,
 			msg_id: msg.meta.msg_id,
 			classe_recue: msg.meta.class,
-			espece: match &msg.body {
+			kind: match &msg.body {
 				BcBody::ModernMsg(_) => "modern".to_string(),
 				BcBody::LegacyMsg(_) => "herite".to_string(),
 			},
 			..Default::default()
 		};
 		if let BcBody::ModernMsg(m) = &msg.body {
-			brut.extension = m.extension.as_ref().map(|e| texte_extension(e));
-			brut.corps = match &m.payload {
-				Some(BcPayloads::BcXml(xml)) => Some(texte_xml(xml)),
-				Some(BcPayloads::Binary(octets)) => {
-					Some(format!("<{} octets binaires>", octets.len()))
+			brut.extension = m.extension.as_ref().map(|e| text_extension(e));
+			brut.body = match &m.payload {
+				Some(BcPayloads::BcXml(xml)) => Some(text_xml(xml)),
+				Some(BcPayloads::Binary(bytes)) => {
+					Some(format!("<{} octets binaires>", bytes.len()))
 				}
 				None => None,
 			};
@@ -314,7 +314,7 @@ impl BcCamera {
 		// Même règle que la lecture ([`forme_de_trame`]) : le SET partait avec
 		// la trame d'avant et la caméra répondait `400`, mesuré le 13/11 au
 		// soir en basculant la détection de mouvement depuis Home Assistant.
-		let (canal_entete, canal_extension) = forme_de_trame(msg_id, self.channel_id);
+		let (canal_entete, canal_extension) = forme_of_frame(msg_id, self.channel_id);
 		let meta = BcMeta {
 			msg_id,
 			channel_id: canal_entete,
@@ -325,9 +325,9 @@ impl BcCamera {
 		};
 		let set = match canal_extension {
 			None => Bc::new_from_xml(meta, xml),
-			Some(canal) => {
+			Some(channel) => {
 				let mut ext = Extension::default();
-				ext.channel_id = Some(canal);
+				ext.channel_id = Some(channel);
 				Bc::new_from_ext_xml(meta, ext, xml)
 			}
 		};
@@ -425,7 +425,7 @@ impl BcCamera {
 	///
 	/// Verdict seule : aucun setter n'est documenté, et endormir un appareil
 	/// sur batterie par une écriture de réglage n'est pas le rôle de ce pont.
-	/// C'est aussi la seule façon de le savoir **sans le réveiller**.
+	/// C'est aussi la seule façon de le savoir **sans le wakeler**.
 	pub async fn get_sleep_state(&self) -> Result<SleepState> {
 		let msg = self.raw_get(MSG_ID_GET_SLEEP_STATE).await?;
 		Self::settings_block(msg, |xml| xml.sleep_state.clone())
@@ -604,7 +604,7 @@ impl BcCamera {
 			})
 	}
 
-	// ── Heure d'été (106 / 107) ─────────────────────────────────────────
+	// ── Heure d'dst (106 / 107) ─────────────────────────────────────────
 
 	/// Écrit `<Dst>` (msg 107) puis relit (106) et renvoie la relecture.
 	///
@@ -717,7 +717,7 @@ mod tests {
 	// ── NTP ─────────────────────────────────────────────────────────────
 
 	#[tokio::test]
-	async fn get_ntp_relaye_le_texte_camera() {
+	async fn get_ntp_relaye_the_text_camera() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_NTP)
 			.reply_with(ntp_reply)
@@ -732,7 +732,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn get_ntp_distingue_refus_et_vide() {
+	async fn get_ntp_distingue_refusal_and_empty() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_NTP)
 			.reply_with(|req| reply_err_code(req, 400))
@@ -757,7 +757,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn get_ntp_200_sans_bloc_est_inintelligible() {
+	async fn get_ntp_200_without_block_is_inintelligible() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_NTP)
 			.reply_with(reply_200_empty)
@@ -771,7 +771,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_ntp_retourne_la_relecture_et_pas_la_demande() {
+	async fn set_ntp_retourne_the_reread_and_not_the_request() {
 		// Caméra têtue : elle acquitte le 39 mais garde son serveur. La valeur
 		// retournée doit être celle de la relecture.
 		let mock = MockConnection::new()
@@ -807,7 +807,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_ntp_rejete_ne_relit_pas() {
+	async fn set_ntp_rejete_not_rereads_not() {
 		// Le script ne prévoit délibérément aucun 38 : une relecture après un
 		// refus échouerait le mock — c'est l'assertion voulue (une octave de
 		// radio économisée sur un appareil sur batterie).
@@ -827,7 +827,7 @@ mod tests {
 	// ── Débruitage micro ────────────────────────────────────────────────
 
 	#[tokio::test]
-	async fn get_ai_denoise_accepte_la_version_majuscule() {
+	async fn get_ai_denoise_accepts_the_version_majuscule() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_AI_DENOISE)
 			.reply_with(|req| {
@@ -848,7 +848,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_ai_denoise_renvoie_la_casse_lue_sans_inventer_l_autre() {
+	async fn set_ai_denoise_renvoie_the_casse_read_without_inventer_the_other() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_AI_DENOISE)
 			.reply_with(|req| {
@@ -925,7 +925,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn get_image_cfg_apporte_les_deux_blocs() {
+	async fn get_image_cfg_apporte_the_deux_blocks() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_IMAGE)
 			.reply_with(image_reply)
@@ -945,7 +945,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_image_cfg_renvoie_les_deux_blocs_au_25() {
+	async fn set_image_cfg_renvoie_the_deux_blocks_au_25() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_IMAGE)
 			.reply_with(|req| {
@@ -982,7 +982,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn get_image_cfg_200_sans_bloc_est_inintelligible() {
+	async fn get_image_cfg_200_without_block_is_inintelligible() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_IMAGE)
 			.reply_with(reply_200_empty)
@@ -1035,7 +1035,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn get_osd_cfg_apporte_les_deux_blocs() {
+	async fn get_osd_cfg_apporte_the_deux_blocks() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_OSD)
 			.reply_with(osd_reply)
@@ -1051,7 +1051,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_osd_cfg_renvoie_les_deux_blocs_sans_recalculer_les_coordonnees() {
+	async fn set_osd_cfg_renvoie_the_deux_blocks_without_recalculer_the_coordonnees() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_OSD)
 			.reply_with(|req| {
@@ -1112,7 +1112,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn motion_sur_md_ecrit_sans_abimer_les_zones() {
+	async fn motion_on_md_writes_without_abimer_the_zones() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_MOTION_DETECT)
 			.reply_with(md_reply)
@@ -1142,9 +1142,9 @@ mod tests {
 	}
 
 	#[test]
-	fn la_forme_de_trame_est_bornee_aux_quatre_familles_mesurees() {
+	fn the_forme_of_frame_is_bornee_aux_quatre_families_mesurees() {
 		// Ces quatre familles refusaient sans rien dire ; la mesure du 13/11 dit
-		// qu'il leur faut le canal, dans l'extension et dans l'en-tête — en
+		// qu'il leur faut le channel, dans l'extension et dans l'en-tête — en
 		// lecture, et en écriture par symétrie (le `47` refuse sans lui).
 		for id in [
 			MSG_ID_GET_IMAGE,
@@ -1157,9 +1157,9 @@ mod tests {
 			MSG_ID_SET_PRIVACY_MASK,
 		] {
 			assert_eq!(
-				forme_de_trame(id, 7),
+				forme_of_frame(id, 7),
 				(0, Some(0)),
-				"le msg {id} doit partir avec le canal 0 partout"
+				"le msg {id} doit partir avec le channel 0 partout"
 			);
 		}
 		// Et ce qui répond déjà ne bouge pas : aucune mesure ne dit que ces
@@ -1171,7 +1171,7 @@ mod tests {
 			MSG_ID_BATTERY_INFO,
 		] {
 			assert_eq!(
-				forme_de_trame(id, 7),
+				forme_of_frame(id, 7),
 				(7, None),
 				"le msg {id} doit garder sa trame d'aujourd'hui"
 			);
@@ -1179,7 +1179,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn ecrire_le_mouvement_port_le_canal_comme_la_lecture() {
+	async fn ecrire_the_mouvement_port_the_channel_comme_the_read() {
 		// Home Assistant basculait l'interrupteur sans effet : le `47` partait
 		// sans l'extension et la caméra répondait `400`. Le SET doit donc partir
 		// avec la même forme que le GET — et c'est la relecture, déjà dans
@@ -1210,9 +1210,9 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn motion_46_part_le_canal_qui_lui_fait_respondre() {
+	async fn motion_46_part_the_channel_qui_lui_fait_respondre() {
 		// Le 46 répond 400 **sans corps** tant que la demande ne nomme pas le
-		// canal. Ce test porte la forme sur la vraie chaîne d'envoi, pas
+		// channel. Ce test porte la forme sur la vraie chaîne d'envoi, pas
 		// seulement sur la table : une table juste mal appliquée ne se verrait
 		// pas, la caméra ne disant jamais pourquoi elle refuse.
 		let mock = MockConnection::new()
@@ -1224,9 +1224,9 @@ mod tests {
 				assert_eq!(
 					msg.extension.as_ref().and_then(|e| e.channel_id),
 					Some(0),
-					"sans le canal dans l'extension, la caméra répond 400 sans corps"
+					"sans le channel dans l'extension, la caméra répond 400 sans corps"
 				);
-				assert_eq!(req.meta.channel_id, 0, "l'en-tête doit porter le même canal");
+				assert_eq!(req.meta.channel_id, 0, "l'en-tête doit porter le même channel");
 				md_reply(req)
 			})
 			.build()
@@ -1237,7 +1237,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn motion_sur_mdalarm_refuse_sans_rien_envoyer() {
+	async fn motion_on_md_alarm_refuse_without_nothing_send() {
 		// Le script ne prévoit QUE le 46 : l'envoi d'un 47 ferait échouer le
 		// mock, ce qui est exactement l'assertion voulue.
 		let mock = MockConnection::new()
@@ -1276,7 +1276,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn motion_200_sans_porteur_est_inintelligible() {
+	async fn motion_200_without_porteur_is_inintelligible() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_MOTION_DETECT)
 			.reply_with(reply_200_empty)
@@ -1292,7 +1292,7 @@ mod tests {
 	// ── Veille, Wi-Fi, masques ──────────────────────────────────────────
 
 	#[tokio::test]
-	async fn sleep_state_et_wifi_signal_se_lisent() {
+	async fn sleep_state_and_wifi_signal_itself_lisent() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_SLEEP_STATE)
 			.reply_with(|req| {
@@ -1339,7 +1339,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn masques_se_lisent() {
+	async fn masques_itself_lisent() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_PRIVACY_MASK)
 			.reply_with(|req| {
@@ -1389,7 +1389,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn auto_reboot_ecrit_sur_le_bon_id_et_relit() {
+	async fn auto_reboot_writes_on_the_right_id_and_rereads() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_AUTO_REBOOT)
 			.reply_with(reboot_reply)
@@ -1416,10 +1416,10 @@ mod tests {
 		assert_eq!(after.week_day.as_deref(), Some("everyday"));
 	}
 
-	// ── Heure d'été ─────────────────────────────────────────────────────
+	// ── Heure d'dst ─────────────────────────────────────────────────────
 
 	#[tokio::test]
-	async fn set_dst_relit_le_106_apres_le_107() {
+	async fn set_dst_rereads_the_106_after_the_107() {
 		let dst = Dst {
 			version: "1.1".into(),
 			enable: Some(1),
@@ -1487,7 +1487,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_general_ne_touche_pas_horloge_et_marque_le_renommage_seul() {
+	async fn set_general_not_touches_not_horloge_and_marks_the_renommage_seul() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_GENERAL)
 			.reply_with(|req| {
@@ -1522,7 +1522,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_general_ne_marque_pas_renommage_seul_quand_il_y_a_autre_chose() {		let mock = MockConnection::new()
+	async fn set_general_not_marks_not_renommage_seul_quand_il_y_a_other_thing() {		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_GENERAL)
 			.reply_with(|req| {
 				let sent = inspect_xml(req);
@@ -1555,7 +1555,7 @@ mod tests {
 	/// `<aiDenoise Version>` majuscule), et surtout l'absence totale de balise
 	/// qu'une caméra n'a pas imprimée.
 	#[test]
-	fn le_wire_n_invente_aucune_balise() {
+	fn the_wire_invente_no_tag() {
 		let xml = BcXml {
 			ntp: Some(ntp_block()),
 			ai_denoise: Some(denoise_block()),
@@ -1581,14 +1581,14 @@ mod tests {
 		for absente in ["<Shelter", "<sleepState", "<WifiSignal", "<VideoInput"] {
 			assert!(
 				!wire.contains(absente),
-				"{absente} n'a pas été lu donc ne doit pas être écrit : {wire}"
+				"{absente} n'a pas dst lu donc ne doit pas être écrit : {wire}"
 			);
 		}
 	}
 }
 
 /// Ce que la caméra a répondu à une [`RawRequest`] : le code, et les deux
-/// moitiés du corps **telles qu'elles ont été comprises**.
+/// moitiés du corps **telles qu'elles ont dst comprises**.
 #[derive(Debug, Default, Clone)]
 pub struct RawResponse {
 	/// Le `response_code` de l'en-tête : 200, 400, 405…
@@ -1599,13 +1599,13 @@ pub struct RawResponse {
 	/// répondrait dans une autre classe que celle demandée parle un autre
 	/// dialecte, et ça ne se voit nulle part ailleurs.
 	pub classe_recue: u16,
-	/// De quelle variété était le corps reçu : `modern`, `herite`, ou `rien`.
+	/// De quelle varidst était le corps reçu : `modern`, `herite`, ou `rien`.
 	///
 	/// Sans ce champ, une réponse **héritée** se lirait comme un corps vide —
 	/// le décodage ci-dessous ne regarde que `ModernMsg`. La mesure du 13/11
-	/// (« pas de corps ») n'a de sens que parce que cette variété-là était bien
+	/// (« pas de corps ») n'a de sens que parce que cette varidst-là était bien
 	/// `modern` : en-tête moderne, aucun bloc derrière.
-	pub espece: String,
+	pub kind: String,
 	/// L'`<Extension>` décryptée, en XML.
 	pub extension: Option<String>,
 	/// Le corps décrypté, rendu en XML.
@@ -1616,7 +1616,7 @@ pub struct RawResponse {
 	/// se lira ici comme un corps vide — le texte intégral de la caméra ne sort
 	/// que de la trace `Payload Txt`, et c'est justement ce que cette sonde est
 	/// là pour rendre inutile de payer deux fois.
-	pub corps: Option<String>,
+	pub body: Option<String>,
 }
 
 /// Une variante de la demande de lecture. Tout à `None` = exactement la trame
@@ -1631,7 +1631,7 @@ pub struct RawRequest {
 	/// `Some(n)` : ajoute `<rfId>n</rfId>` à l'extension.
 	pub extension_rf: Option<u8>,
 	/// `Some(xml)` : le corps à envoyer, typé donc chiffré.
-	pub corps: Option<BcXml>,
+	pub body: Option<BcXml>,
 	/// `class` de l'en-tête. `None` = `0x6414`, la classe XML moderne.
 	///
 	/// La variable qui restait à varier après la mesure du 13/11 : les quatre
@@ -1650,7 +1650,7 @@ impl RawRequest {
 	}
 
 	/// Extension avec `<channelId>`, la forme des commandes qui passent.
-	pub fn canal(n: u8) -> Self {
+	pub fn channel(n: u8) -> Self {
 		Self { extension_channel: Some(n), ..Default::default() }
 	}
 
@@ -1660,14 +1660,14 @@ impl RawRequest {
 	}
 
 	/// Un corps qui nomme le bloc, sans extension.
-	pub fn corps(xml: BcXml) -> Self {
-		Self { corps: Some(xml), ..Default::default() }
+	pub fn body(xml: BcXml) -> Self {
+		Self { body: Some(xml), ..Default::default() }
 	}
 
 	/// La forme complète attendue par les clients de référence : extension
 	/// **et** corps.
-	pub fn canal_et_corps(n: u8, xml: BcXml) -> Self {
-		Self { extension_channel: Some(n), corps: Some(xml), ..Default::default() }
+	pub fn channel_and_body(n: u8, xml: BcXml) -> Self {
+		Self { extension_channel: Some(n), body: Some(xml), ..Default::default() }
 	}
 }
 
@@ -1678,7 +1678,7 @@ impl RawRequest {
 ///
 /// Quatre familles refusaient `400` sans jamais écrire de réponse. La variable
 /// n'était ni l'éveil, ni le corps : c'est l'absence d'`<Extension>` nommant le
-/// canal. Séance du 13/11, caméra éveillée, session unique tenue par le pont :
+/// channel. Séance du 13/11, caméra éveillée, session unique tenue par le pont :
 ///
 /// | demande | réponse |
 /// |---|---|
@@ -1691,7 +1691,7 @@ impl RawRequest {
 /// | `msg 52` + extension seule | `400` |
 /// | `msg 52` + extension et en‑tête à `0` | `200` — `<OsdDatetime>…` |
 /// | `msg 38` (ntp) et `104` (general) dans la même forme | `200` — la forme ne casse pas ce qui marchait |
-/// | `msg 44` avec `<channelId>1</channelId>` | `421` — le micrologiciel lit le canal et le refuse |
+/// | `msg 44` avec `<channelId>1</channelId>` | `421` — le micrologiciel lit le channel et le refuse |
 /// | `msg 47` (SET mouvement) **sans** extension, depuis Home Assistant | `400` — l'interrupteur reste à `on` |
 ///
 /// La règle appliquée est donc **restreinte à ces quatre familles**, en lecture
@@ -1713,7 +1713,7 @@ impl RawRequest {
 /// le `52` répond `<OsdDatetime>`, là où la bibliothèque attendait
 /// `<VideoInput>` et `<Shelter>` ; et rien ici ne dit où ce micrologiciel sert
 /// les réglages d'image.
-fn forme_de_trame(msg_id: u32, canal_camera: u8) -> (u8, Option<u8>) {
+fn forme_of_frame(msg_id: u32, canal_camera: u8) -> (u8, Option<u8>) {
 	match msg_id {
 		MSG_ID_GET_IMAGE
 		| MSG_ID_SET_IMAGE
@@ -1730,7 +1730,7 @@ fn forme_de_trame(msg_id: u32, canal_camera: u8) -> (u8, Option<u8>) {
 /// Rend le XML d'un bloc reçu. `pub(crate)` : la sonde est la seule à en avoir
 /// besoin, et le texte de la caméra n'a rien à faire dans les API de plus haut
 /// niveau (mêmes précautions que `publishable_reason` côté MQTT).
-fn texte_xml(xml: &BcXml) -> String {
+fn text_xml(xml: &BcXml) -> String {
 	let mut tampon = Vec::new();
 	match xml.serialize(&mut tampon) {
 		Ok(_) => String::from_utf8_lossy(&tampon).into_owned(),
@@ -1738,7 +1738,7 @@ fn texte_xml(xml: &BcXml) -> String {
 	}
 }
 
-fn texte_extension(ext: &Extension) -> String {
+fn text_extension(ext: &Extension) -> String {
 	let mut tampon = Vec::new();
 	match ext.serialize(&mut tampon) {
 		Ok(_) => String::from_utf8_lossy(&tampon).into_owned(),

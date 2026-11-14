@@ -295,7 +295,7 @@ fn legacy_neolink_prefix_subscribe_list_matches_pre_2g_paths() {
 	assert!(subs.contains(&"neolink/cam1/control/wakeup".to_string()));
 	assert!(subs.contains(&"neolink/cam1/query/battery".to_string()));
 	// Les topics de réglages s'ajoutent de la même façon sous les deux
-	// préfixes : une installation migrée reçoit la découverte des réglages
+	// préfixes : une installation migrée reçoit la discovery des réglages
 	// sans rien reconfigurer.
 	assert!(subs.contains(&"neolink/cam1/control/+/+".to_string()));
 	assert!(subs.contains(&"neolink/cam1/query/settings".to_string()));

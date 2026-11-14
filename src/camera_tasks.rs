@@ -252,8 +252,8 @@ pub(crate) struct AlarmReport {
 /// [`crate::status_cache::DOORBELL_PRESS_DEDUPE_WINDOW`].
 ///
 /// `reveil` est la poignée de la caméra, quand l'appelant la détient : un appui
-/// publié est un réveil de la caméra endormie, donc la seule occasion de lire sa
-/// batterie sans réveil payé. La salve est proposée **après** la publication du
+/// publié est un wake de la caméra endormie, donc la seule occasion de lire sa
+/// batterie sans wake payé. La salve est proposée **après** la publication du
 /// `press` — jamais avant : l'automatisation de l'opératrice doit recevoir
 /// l'appui avant le bruit de la lecture ([`crate::burst`]).
 pub(crate) async fn report_doorbell_press(
@@ -305,7 +305,7 @@ pub(crate) async fn report_alarm_update(
 				true,
 			)
 			.await;
-			// Le mouvement est publié : c'est un réveil, donc une fenêtre de
+			// Le mouvement est publié : c'est un wake, donc une fenêtre de
 			// lecture. Après la publication, comme pour l'appui.
 			if let Some(handle) = wake {
 				crate::burst::trigger(
@@ -392,7 +392,7 @@ pub async fn motion_listener(
 	status_cache: Arc<StatusCache>,
 	caps: CameraCapabilities,
 	held_press_window: Option<Duration>,
-	// La poignée de la caméra, quand l'appelant en a une : un réveil spontané
+	// La poignée de la caméra, quand l'appelant en a une : un wake spontané
 	// entendu sur l'alarme de session (mouvement, appui) doit pouvoir proposer la
 	// salve de lecture. `None` dans les tests qui n'ont pas de caméra complète —
 	// la salve est alors simplement absente.
@@ -2757,7 +2757,7 @@ mod tests {
 
 	/// A press during active motion leaves the release to the Stop.
 	#[tokio::test(start_paused = true)]
-	async fn motion_listener_doorbell_press_never_shortens_active_motion() {
+	async fn motion_listener_doorbell_press_never_shortens_enables_motion() {
 		let rig = AlarmRig::spawn(Duration::from_secs(30));
 
 		rig.send(now_start(), None, false).await;

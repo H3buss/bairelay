@@ -619,7 +619,7 @@ mod tests {
 	}
 
 	#[test]
-	fn nom_error_conversion_branches() {
+	fn name_error_conversion_branches() {
 		use nom::Needed;
 		// Incomplete(Size) → NomIncomplete(n)
 		let e: Error = nom::Err::Incomplete::<NomErrorType>(Needed::new(42)).into();

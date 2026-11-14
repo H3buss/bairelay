@@ -52,9 +52,9 @@ use super::output::{AudioCfgChange, AudioCfgInfo, Outcome};
 // The four tags this command writes, named the way the camera names them, so
 // the report and the XML agree.
 const TAG_VOLUME: &str = "volume";
-const TAG_INTERPHONE: &str = "talkAndReplyVolume";
+const TAG_INTERCOM: &str = "talkAndReplyVolume";
 const TAG_MESSAGES: &str = "visitorVolume";
-const TAG_VISITEUR: &str = "visitorLoudspeaker";
+const TAG_VISITOR: &str = "visitorLoudspeaker";
 
 /// What the operator asked for. Every volume is an override; `None` means
 /// "leave the camera's text alone".
@@ -139,10 +139,10 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 	if let Some(v) = edit.talk {
 		let from = present(
 			patched.talk_and_reply_volume.as_deref(),
-			TAG_INTERPHONE,
+			TAG_INTERCOM,
 			"--talk",
 		)?;
-		asked.push((TAG_INTERPHONE, from, v.to_string()));
+		asked.push((TAG_INTERCOM, from, v.to_string()));
 		patched.talk_and_reply_volume = Some(v.to_string());
 	}
 	if let Some(v) = edit.visitor_volume {
@@ -157,10 +157,10 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 	if let Some(v) = edit.loudspeaker {
 		let from = present(
 			patched.visitor_loudspeaker.as_deref(),
-			TAG_VISITEUR,
+			TAG_VISITOR,
 			"--loudspeaker",
 		)?;
-		asked.push((TAG_VISITEUR, from, v.to_string()));
+		asked.push((TAG_VISITOR, from, v.to_string()));
 		patched.visitor_loudspeaker = Some(v.to_string());
 	}
 
@@ -212,9 +212,9 @@ fn present(current: Option<&str>, tag: &str, flag: &str) -> Result<String> {
 fn value_of(cfg: &AudioCfg, tag: &str) -> Option<String> {
 	match tag {
 		TAG_VOLUME => Some(cfg.volume.clone()),
-		TAG_INTERPHONE => cfg.talk_and_reply_volume.clone(),
+		TAG_INTERCOM => cfg.talk_and_reply_volume.clone(),
 		TAG_MESSAGES => cfg.visitor_volume.clone(),
-		TAG_VISITEUR => cfg.visitor_loudspeaker.clone(),
+		TAG_VISITOR => cfg.visitor_loudspeaker.clone(),
 		_ => None,
 	}
 }
@@ -339,12 +339,12 @@ mod tests {
 		let cfg = block();
 		assert_eq!(value_of(&cfg, TAG_VOLUME).as_deref(), Some("50"));
 		assert_eq!(
-			value_of(&cfg, TAG_INTERPHONE).as_deref(),
+			value_of(&cfg, TAG_INTERCOM).as_deref(),
 			Some("40"),
 			"the intercom volume is the whole reason this command exists"
 		);
 		assert_eq!(value_of(&cfg, TAG_MESSAGES).as_deref(), Some("70"));
-		assert_eq!(value_of(&cfg, TAG_VISITEUR).as_deref(), Some("1"));
+		assert_eq!(value_of(&cfg, TAG_VISITOR).as_deref(), Some("1"));
 		assert_eq!(value_of(&cfg, "nope"), None);
 	}
 
@@ -354,12 +354,12 @@ mod tests {
 		cfg.talk_and_reply_volume = None;
 		let err = present(
 			cfg.talk_and_reply_volume.as_deref(),
-			TAG_INTERPHONE,
+			TAG_INTERCOM,
 			"--talk",
 		)
 		.expect_err("a tag the camera didn't print may not be invented");
 		let msg = format!("{:#}", err);
-		assert!(msg.contains(TAG_INTERPHONE), "{msg}");
+		assert!(msg.contains(TAG_INTERCOM), "{msg}");
 		assert!(msg.contains("--talk"), "{msg}");
 		// A tag that is present is copied out verbatim, including an empty one.
 		assert_eq!(present(Some(""), TAG_MESSAGES, "--visitor-volume").unwrap(), "");

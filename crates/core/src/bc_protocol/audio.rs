@@ -293,7 +293,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn get_audio_cfg_non_200_returns_err() {
+	async fn get_audio_cfg_not_200_returns_err() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_GET_AUDIO_CFG)
 			.reply_with(|req| reply_err_code(req, 405))
@@ -423,7 +423,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn set_audio_cfg_non_200_returns_err_and_does_not_read_back() {
+	async fn set_audio_cfg_not_200_returns_err_and_does_not_read_back() {
 		let mock = MockConnection::new()
 			.expect_msg(MSG_ID_SET_AUDIO_CFG)
 			.reply_with(|req| reply_err_code(req, 500))

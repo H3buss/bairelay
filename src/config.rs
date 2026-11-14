@@ -1821,7 +1821,7 @@ mod tests {
 	}
 
 	#[test]
-	fn non_cloud_camera_still_requires_password() {
+	fn not_cloud_camera_still_requires_password() {
 		let toml = r#"
 			bind = "0.0.0.0"
 
