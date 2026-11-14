@@ -694,7 +694,7 @@ pub fn build_ai_binary_sensors(ctx: &DiscoveryContext) -> Vec<(String, Vec<u8>)>
 		.map(|object| {
 			let (unique_id, topic) = ai_ids(ctx, object);
 			let payload = DiscoveryBinarySensor {
-				name: format!("Reconnaissance {}", object.nom_court()),
+				name: format!("Reconnaissance {}", object.short_name()),
 				unique_id,
 				device_class: Some(object.device_class().to_string()),
 				icon: Some(object.icon().to_string()),

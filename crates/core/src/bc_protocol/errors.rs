@@ -68,7 +68,7 @@ pub enum Error {
 	/// soliste.
 	///
 	/// Le `detail` est **déjà borné** (voir `couper` côté réglages) ; il
-	/// n'est jamais publié tel quel, `raison_publiable` s'en charge plus haut.
+	/// n'est jamais publié tel quel, `publishable_reason` s'en charge plus haut.
 	#[error(
 		"Camera refused msg {id} with code {code}: {detail}"
 	)]

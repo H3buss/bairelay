@@ -201,7 +201,7 @@ impl BcCamera {
 			);
 			// Le texte voyage avec l'erreur, et pas seulement dans le journal :
 			// c'est lui que l'opératrice lira sur `status/<famille>/reason`,
-			// nettoyé et borné une seconde fois plus haut par `raison_publiable`.
+			// nettoyé et borné une seconde fois plus haut par `publishable_reason`.
 			return Err(Error::CameraRefused {
 				id: msg.meta.msg_id,
 				code: msg.meta.response_code,
@@ -1729,7 +1729,7 @@ fn forme_de_trame(msg_id: u32, canal_camera: u8) -> (u8, Option<u8>) {
 
 /// Rend le XML d'un bloc reçu. `pub(crate)` : la sonde est la seule à en avoir
 /// besoin, et le texte de la caméra n'a rien à faire dans les API de plus haut
-/// niveau (mêmes précautions que `raison_publiable` côté MQTT).
+/// niveau (mêmes précautions que `publishable_reason` côté MQTT).
 fn texte_xml(xml: &BcXml) -> String {
 	let mut tampon = Vec::new();
 	match xml.serialize(&mut tampon) {

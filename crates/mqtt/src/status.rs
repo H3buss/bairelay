@@ -375,7 +375,7 @@ impl<'a> StatusPublisher<'a> {
 	/// Une famille dont les états sont effacés est silencieuse : Home Assistant
 	/// affiche « inconnu » et rien ne dit si la caméra a refusé, n'a pas répondu,
 	/// ou n'imprime pas la balise. Ce topic porte la phrase. Il est assaini par
-	/// [`raison_publiable`] — une ligne, sans XML, sans secret — parce qu'un
+	/// [`publishable_reason`] — une ligne, sans XML, sans secret — parce qu'un
 	/// topic conservé est relu des années plus tard.
 	pub async fn publish_family_reason(
 		&self,
@@ -384,7 +384,7 @@ impl<'a> StatusPublisher<'a> {
 	) -> Result<(), MqttError> {
 		let topic =
 			topics::status_setting_reason(&self.topic_prefix, &self.camera_name, family.slug());
-		let propre = raison_publiable(raison);
+		let propre = publishable_reason(raison);
 		self.client.publish_retained(&topic, propre.as_bytes()).await
 	}
 
@@ -420,22 +420,21 @@ const REASON_INTERDITS: [&str; 6] =
 /// `this camera's reply has no <OsdChannelName> tag` est précisément
 /// l'information qui explique un refus, et ce qui doit disparaître est le
 /// délimiteur XML, pas le nom de la balise.
-pub fn raison_publiable(raison: &str) -> String {
-	raison_publiable_borne(raison, REASON_MAX)
+pub fn publishable_reason(raison: &str) -> String {
+	publishable_reason_bounded(raison, REASON_MAX)
 }
 
-/// Même nettoyage, borne choisie par l'appelant.
+/// Same cleaning, with the bound chosen by the caller.
 ///
-/// [`raison_publiable`] borne à 160 caractères parce que ses phrases atterrissent
-/// sur des topics **conservés** que Home Assistant relit à chaque démarrage : une
-/// ligne, pas un dump. La sonde de protocole, elle, existe pour qu'on **lise** la
-/// réponse de la caméra, et son topic (`status/sonde`) n'est pas un topic
-/// d'entité — personne n'en fait un tableau de bord. La coupe à 160 lui coupait
-/// justement le corps qu'on cherchait : un `<MD>` complet tient dans les 400
-/// premiers caractères. Le nettoyage reste le même — pas de délimiteur XML nu,
-/// pas de caractère de contrôle, et le masque s'applique si le texte ressemble à
-/// un secret.
-pub fn raison_publiable_borne(raison: &str, maximal: usize) -> String {
+/// [`publishable_reason`] caps at 160 characters because its sentences land on
+/// **retained** topics that Home Assistant replays on every start: one line, not
+/// a dump. The wider bound is for the opposite case — reading the camera's own
+/// answer back, where the body worth seeing is longer than that cap leaves
+/// room for: a whole `<MD>` block fits in the first 400 characters. Neither path
+/// may become a channel for secrets, so the cleaning is identical in both: no
+/// bare XML delimiter, no control character, and the mask applies whenever the
+/// text looks like a credential.
+pub fn publishable_reason_bounded(raison: &str, maximal: usize) -> String {
 	let sans_balises: String = raison
 		.chars()
 		.map(|c| match c {
@@ -710,32 +709,32 @@ mod tests {
 	}
 
 	/// Un topic conservé ne verra jamais le XML brut de la caméra, un secret, ni
-	/// dix lignes de trace : `raison_publiable` est la dernière barrière, et
+	/// dix lignes de trace : `publishable_reason` est la dernière barrière, et
 	/// c'est elle qui tient la promesse, pas la vigilance des appelants.
 	#[test]
 	fn un_motif_ne_porte_ni_xml_ni_secret() {
 		// Le nom de la balise est l'information utile ; seuls ses délimiteurs
 		// disparaissent.
 		assert_eq!(
-			raison_publiable("no <OsdChannelName> tag here"),
+			publishable_reason("no <OsdChannelName> tag here"),
 			"no «OsdChannelName» tag here"
 		);
-		assert_eq!(raison_publiable("  \n\t  "), REASON_SANS_DETAIL);
+		assert_eq!(publishable_reason("  \n\t  "), REASON_SANS_DETAIL);
 		assert_eq!(
-			raison_publiable("could not auth with password hunter2"),
+			publishable_reason("could not auth with password hunter2"),
 			REASON_MASQUE
 		);
 		assert_eq!(
-			raison_publiable("<Wifi><key>mot de passe</key></Wifi>"),
+			publishable_reason("<Wifi><key>mot de passe</key></Wifi>"),
 			REASON_MASQUE,
 			"un bloc XML passé par erreur ne doit pas ressortir"
 		);
 		assert_eq!(
-			raison_publiable("MdAlarm: refus\nde réécriture"),
+			publishable_reason("MdAlarm: refus\nde réécriture"),
 			"MdAlarm: refus de réécriture",
 			"un motif tient sur une ligne"
 		);
-		let long = raison_publiable(&"a".repeat(4000));
+		let long = publishable_reason(&"a".repeat(4000));
 		assert!(long.chars().count() <= REASON_MAX, "{} caractères", long.chars().count());
 		assert!(long.ends_with('…'), "{long}");
 	}

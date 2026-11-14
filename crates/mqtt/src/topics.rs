@@ -219,7 +219,7 @@ pub fn status_settings_json(prefix: &str, cam: &str, family: &str) -> String {
 /// Effacer les états d'une famille dit qu'elle n'a pas de valeur, pas
 /// **pourquoi**. Cette feuille porte une phrase courte — jamais le XML de la
 /// caméra, jamais un identifiant, jamais un mot de passe (voir
-/// [`crate::status::raison_publiable`], qui l'assainit avant publication).
+/// [`crate::status::publishable_reason`], qui l'assainit avant publication).
 ///
 /// Ce n'est pas une feuille d'entité : aucune entité Home Assistant ne la
 /// découvre, et aucun `SettingCommand` ne l'accepte en écriture.

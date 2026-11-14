@@ -373,7 +373,7 @@ pub(crate) const REASON_SANS_VERROUILLAGE: &str =
 	" — réglage non verrouillé : la famille garde son état";
 
 /// La conséquence d'un refus **transitoire**, publiée cette fois **en tête** de
-/// la phrase : [`raison_publiable`] coupe à 160 caractères en gardant le début,
+/// la phrase : [`publishable_reason`] coupe à 160 caractères en gardant le début,
 /// donc une fin de phrase ne survit pas à un motif technique long (`la réponse
 /// de la caméra est incompréhensible : …`). Or c'est précisément la moitié que
 /// l'opératrice regarde : la famille est-elle utilisable ou non.
@@ -424,7 +424,7 @@ pub(crate) const REASON_AI_SANS_BALISE: &str = concat!(
 /// Publie le motif d'un refus sur `status/<famille>/reason` (conservé).
 ///
 /// La phrase est courte, en français quand le pont sait la former, et nettoyée
-/// par [`bairelay_mqtt::status::raison_publiable`] : ni XML brut, ni identifiant,
+/// par [`bairelay_mqtt::status::publishable_reason`] : ni XML brut, ni identifiant,
 /// ni secret. Une erreur de publication ne remonte pas — le broker n'est pas ce
 /// qui décide de OK/FAIL — mais elle est journalisée.
 pub(crate) async fn publish_reason(publ: &StatusPublisher<'_>, family: Family, raison: &str) {
@@ -478,7 +478,7 @@ pub(crate) async fn clear_reason(publ: &StatusPublisher<'_>, family: Family) {
 /// refus qu'on rencontre vraiment, et ils méritent d'être compris sans ouvrir
 /// la doc du protocole. Les autres cas gardent le message d'origine après une
 /// introduction française : c'est souvent le seul détail qui reste, et
-/// `raison_publiable` garantit qu'il ne débordera pas en XML ou en secret.
+/// `publishable_reason` garantit qu'il ne débordera pas en XML ou en secret.
 pub(crate) fn motif(err: &Error) -> String {
 	match err {
 		Error::Timeout(_)
@@ -491,7 +491,7 @@ pub(crate) fn motif(err: &Error) -> String {
 		// Le même refus, quand c'est une **lecture de réglage** qui l'a rencontré :
 		// la caméra a écrit une réponse avec son code, et ce texte est la seule
 		// chose qui dise pourquoi. Il arrive déjà borné du noyau et
-		// `raison_publiable` le met en une ligne sans balises avant qu'il touche
+		// `publishable_reason` le met en une ligne sans balises avant qu'il touche
 		// le broker — les noms de balises restent lisibles, ce sont souvent
 		// l'information.
 		Error::CameraRefused { code, detail, .. } => {
@@ -1435,7 +1435,7 @@ mod tests {
 			"la caméra doit être lisible dans le motif : {motif}"
 		);
 
-		let publie = bairelay_mqtt::status::raison_publiable(&motif);
+		let publie = bairelay_mqtt::status::publishable_reason(&motif);
 		assert!(!publie.contains('<'), "aucune balise ne part sur le broker : {publie}");
 		assert!(
 			publie.chars().count() <= 160,

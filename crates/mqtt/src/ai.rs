@@ -47,29 +47,13 @@ impl AiObject {
 	/// (« Reconnaissance personne »). The label must say what the entity is,
 	/// never which camera it belongs to, so the class word has to be readable
 	/// on its own — hence French here, like every other published label.
-	pub fn nom_court(self) -> &'static str {
+	pub fn short_name(self) -> &'static str {
 		match self {
 			AiObject::Person => "personne",
 			AiObject::Vehicle => "véhicule",
 			AiObject::Animal => "animal",
 			AiObject::Face => "figure",
 			AiObject::Package => "colis",
-		}
-	}
-
-	/// The `<type>` value this class carries inside `<AiDetectCfg>` (msg 342/343).
-	///
-	/// Documented spellings, never guessed: `people`, `vehicle`, `dog_cat`,
-	/// `package`. `face` is the one the reference notes list parenthetically —
-	/// if this firmware has no such type it answers `400` and the bridge
-	/// publishes that refusal, which is exactly the field measurement needed.
-	pub fn type_ai(self) -> &'static str {
-		match self {
-			AiObject::Person => "people",
-			AiObject::Vehicle => "vehicle",
-			AiObject::Animal => "dog_cat",
-			AiObject::Face => "face",
-			AiObject::Package => "package",
 		}
 	}
 
