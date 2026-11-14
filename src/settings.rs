@@ -427,8 +427,8 @@ pub(crate) const REASON_AI_SANS_BALISE: &str = concat!(
 /// par [`bairelay_mqtt::status::publishable_reason`] : ni XML brut, ni identifiant,
 /// ni secret. Une erreur de publication ne remonte pas — le broker n'est pas ce
 /// qui décide de OK/FAIL — mais elle est journalisée.
-pub(crate) async fn publish_reason(publ: &StatusPublisher<'_>, family: Family, raison: &str) {
-	if let Err(e) = publ.publish_family_reason(family, raison).await {
+pub(crate) async fn publish_reason(publ: &StatusPublisher<'_>, family: Family, reason: &str) {
+	if let Err(e) = publ.publish_family_reason(family, reason).await {
 		tracing::warn!(family = family.slug(), error = %e, "publication du motif d'un refus a échoué");
 	}
 }
@@ -443,9 +443,9 @@ pub(crate) async fn publish_reason(publ: &StatusPublisher<'_>, family: Family, r
 pub(crate) async fn publish_reason_unknown(
 	publ: &StatusPublisher<'_>,
 	family: Family,
-	raison: &str,
+	reason: &str,
 ) {
-	publish_reason(publ, family, &format!("{raison}{REASON_SANS_VERROUILLAGE}")).await;
+	publish_reason(publ, family, &format!("{reason}{REASON_SANS_VERROUILLAGE}")).await;
 }
 
 /// Publie le motif d'un refus **transitoire** : la caméra a répondu mauvais, trop
@@ -458,9 +458,9 @@ pub(crate) async fn publish_reason_unknown(
 pub(crate) async fn publish_reason_transient(
 	publ: &StatusPublisher<'_>,
 	family: Family,
-	raison: &str,
+	reason: &str,
 ) {
-	publish_reason(publ, family, &format!("{REASON_TRANSITOIRE}, {raison}")).await;
+	publish_reason(publ, family, &format!("{REASON_TRANSITOIRE}, {reason}")).await;
 }
 
 /// Fait disparaître le motif : la famille vient de répondre, la raison d'un
@@ -479,7 +479,7 @@ pub(crate) async fn clear_reason(publ: &StatusPublisher<'_>, family: Family) {
 /// la doc du protocole. Les autres cas gardent le message d'origine après une
 /// introduction française : c'est souvent le seul détail qui reste, et
 /// `publishable_reason` garantit qu'il ne débordera pas en XML ou en secret.
-pub(crate) fn motif(err: &Error) -> String {
+pub(crate) fn cause(err: &Error) -> String {
 	match err {
 		Error::Timeout(_)
 		| Error::TimeoutDisconnected
@@ -563,7 +563,7 @@ pub(crate) enum Verdict {
 impl Verdict {
 	/// Le booléen que comprend le publieur de découverte. `None` = « ne change
 	/// rien à ce qui est publié » ([`Verdict::Unknown`]).
-	pub(crate) fn ecrivable(self) -> Option<bool> {
+	pub(crate) fn writable(self) -> Option<bool> {
 		match self {
 			Verdict::Writable => Some(true),
 			Verdict::NotWritable => Some(false),
@@ -586,16 +586,16 @@ impl Verdict {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Writability {
 	/// La caméra accepte qu'on lui renvoie le bloc qu'elle vient d'envoyer.
-	pub ecrivable: bool,
+	pub writable: bool,
 	/// La phrase qui dit pourquoi elle ne l'accepte pas, quand le cas général
 	/// ([`REASON_LECTURE_SEULE`]) ne suffit pas à nommer la balise en cause.
-	pub motif: Option<&'static str>,
+	pub cause: Option<&'static str>,
 }
 
 impl Writability {
 	/// Verdict neuf : « réécrivable, sans rien à signaler ».
-	pub(crate) fn nouvelle() -> Self {
-		Writability { ecrivable: true, motif: None }
+	pub(crate) fn new() -> Self {
+		Writability { writable: true, cause: None }
 	}
 }
 
@@ -634,16 +634,16 @@ pub(crate) async fn read_family(
 	publ: &StatusPublisher<'_>,
 	family: Family,
 ) -> (Family, Verdict) {
-	let mut portee = Writability::nouvelle();
-	match sync_family(bc, publ, family, &mut portee).await {
-		Ok(n) => promettre(publ, family, portee, n).await,
+	let mut scope = Writability::new();
+	match sync_family(bc, publ, family, &mut scope).await {
+		Ok(n) => promettre(publ, family, scope, n).await,
 		Err(e) if is_retryable(&e) => {
 			tracing::debug!(
 				family = family.slug(),
 				error = %e,
 				"lecture de réglage refusée d'un code transitoire : une seconde tentative"
 			);
-			let mut seconde = Writability::nouvelle();
+			let mut seconde = Writability::new();
 			match sync_family(bc, publ, family, &mut seconde).await {
 				Ok(n) => promettre(publ, family, seconde, n).await,
 				Err(deuxieme) => repli(publ, family, &deuxieme).await,
@@ -666,7 +666,7 @@ pub(crate) async fn battery_read(
 	issu: &CoreResult<BatteryInfo>,
 ) -> (Family, Verdict) {
 	match issu {
-		Ok(_) => promettre(publ, Family::Battery, Writability::nouvelle(), 5).await,
+		Ok(_) => promettre(publ, Family::Battery, Writability::new(), 5).await,
 		Err(e) => repli(publ, Family::Battery, e).await,
 	}
 }
@@ -677,21 +677,21 @@ pub(crate) async fn battery_read(
 async fn promettre(
 	publ: &StatusPublisher<'_>,
 	family: Family,
-	portee: Writability,
+	scope: Writability,
 	feuilles: usize,
 ) -> (Family, Verdict) {
 	tracing::debug!(
 		family = family.slug(),
 		leaves = feuilles,
-		ecrivable = portee.ecrivable,
+		writable = scope.writable,
 		"réglages synchronisés"
 	);
-	if portee.ecrivable {
+	if scope.writable {
 		clear_reason(publ, family).await;
 		return (family, Verdict::Writable);
 	}
 	// Pas un refus de la caméra : une promesse que nous ne ferons pas.
-	publish_reason(publ, family, portee.motif.unwrap_or(REASON_LECTURE_SEULE)).await;
+	publish_reason(publ, family, scope.cause.unwrap_or(REASON_LECTURE_SEULE)).await;
 	(family, Verdict::NotWritable)
 }
 
@@ -716,7 +716,7 @@ async fn repli(publ: &StatusPublisher<'_>, family: Family, e: &Error) -> (Family
 			error = %e,
 			"lecture de réglages passagèrement refusée : états effacés, motif publié, famille laissée modifiable"
 		);
-		publish_reason_transient(publ, family, &motif(e)).await;
+		publish_reason_transient(publ, family, &cause(e)).await;
 		return (family, Verdict::Transient);
 	}
 	tracing::debug!(
@@ -724,7 +724,7 @@ async fn repli(publ: &StatusPublisher<'_>, family: Family, e: &Error) -> (Family
 		error = %e,
 		"lecture de réglages non concluante : états effacés, motif publié, verdict inchangé"
 	);
-	publish_reason_unknown(publ, family, &motif(e)).await;
+	publish_reason_unknown(publ, family, &cause(e)).await;
 	(family, Verdict::Unknown)
 }
 
@@ -784,7 +784,7 @@ pub(crate) async fn sync_family(
 	bc: &BcCamera,
 	publ: &StatusPublisher<'_>,
 	family: Family,
-	portee: &mut Writability,
+	scope: &mut Writability,
 ) -> Published {
 	match family {
 		Family::Audio => async {
@@ -818,8 +818,8 @@ pub(crate) async fn sync_family(
 			// granularité de la découverte est la famille, il la paie avec les
 			// trois autres — compromis assumé et écrit au §8 du rapport.
 			if cfg.channel_name.is_none() {
-				portee.ecrivable = false;
-				portee.motif = Some(REASON_SANS_OSDCHANNEL);
+				scope.writable = false;
+				scope.cause = Some(REASON_SANS_OSDCHANNEL);
 			}
 			publish_osd(publ, &cfg).await;
 			Ok(4)
@@ -831,7 +831,7 @@ pub(crate) async fn sync_family(
 			// non (msg 47 attend un `<MD>`). Lire l'un des deux n'autorise donc
 			// pas à promettre l'écriture — c'est exactement ce que la découverte
 			// ne doit plus faire.
-			portee.ecrivable = matches!(cfg, MotionCfg::Md(_));
+			scope.writable = matches!(cfg, MotionCfg::Md(_));
 			publish_motion(publ, &cfg).await;
 			Ok(2)
 		}
@@ -901,8 +901,8 @@ pub(crate) async fn sync_family(
 			// l'écrire serait envoyer une commande sans destinataire. Verdict
 			// local, comme `<MdAlarm>` et `<OsdChannelName>` — pas un 400.
 			if cfg.chime_id.is_none() {
-				portee.ecrivable = false;
-				portee.motif = Some(if cfg.list_answered_without_entry {
+				scope.writable = false;
+				scope.cause = Some(if cfg.list_answered_without_entry {
 					REASON_CARILLON_SANS_ENTREE
 				} else {
 					REASON_CARILLON_SANS_ID
@@ -923,8 +923,8 @@ pub(crate) async fn sync_family(
 			// une écriture sur une balise inventée. D'où ce motif, qui remplace le
 			// silence par la vérification à faire ; et d'où l'absence d'état
 			// touché ici — les états des capteurs d'événements ne se relisent pas.
-			portee.ecrivable = false;
-			portee.motif = Some(REASON_AI_SANS_BALISE);
+			scope.writable = false;
+			scope.cause = Some(REASON_AI_SANS_BALISE);
 			Ok(0)
 		}
 		.await,
@@ -1428,14 +1428,14 @@ mod tests {
 			detail: "<error><rspCode>-4</rspCode>\n<rspString>cmd not support</rspString></error>"
 				.to_string(),
 		};
-		let motif = super::motif(&err);
-		assert!(motif.contains("400"), "le code reste dans la phrase : {motif}");
+		let cause = super::cause(&err);
+		assert!(cause.contains("400"), "le code reste dans la phrase : {cause}");
 		assert!(
-			motif.contains("cmd not support"),
-			"la caméra doit être lisible dans le motif : {motif}"
+			cause.contains("cmd not support"),
+			"la caméra doit être lisible dans le motif : {cause}"
 		);
 
-		let publie = bairelay_mqtt::status::publishable_reason(&motif);
+		let publie = bairelay_mqtt::status::publishable_reason(&cause);
 		assert!(!publie.contains('<'), "aucune balise ne part sur le broker : {publie}");
 		assert!(
 			publie.chars().count() <= 160,

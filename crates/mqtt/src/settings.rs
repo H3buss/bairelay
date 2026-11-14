@@ -1,6 +1,6 @@
 //! Parsing des commandes de réglages arrivant sur MQTT.
 //!
-//! Le topic est `{prefix}/{cam}/control/{famille}/{feuille}` et le payload la
+//! Le topic est `{prefix}/{cam}/control/{family}/{feuille}` et le payload la
 //! valeur. Une seule chose est ajoutée au-delà du décodage : **la validation
 //! des bornes du protocole**, ici et pas plus loin. Une valeur hors plage ne
 //! part jamais vers la caméra, pour trois raisons :

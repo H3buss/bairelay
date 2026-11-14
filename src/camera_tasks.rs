@@ -260,7 +260,7 @@ pub(crate) async fn report_doorbell_press(
 	camera_name: &str,
 	publisher: &StatusPublisher<'_>,
 	status_cache: &StatusCache,
-	reveil: Option<&std::sync::Arc<crate::camera::CameraHandle>>,
+	wake: Option<&std::sync::Arc<crate::camera::CameraHandle>>,
 ) {
 	if !status_cache.claim_doorbell_press(tokio::time::Instant::now()) {
 		tracing::debug!(camera = %camera_name, "Doorbell press already reported");
@@ -270,7 +270,7 @@ pub(crate) async fn report_doorbell_press(
 	if let Err(e) = publisher.publish_doorbell_press().await {
 		tracing::warn!(camera = %camera_name, error = %e, "publish_doorbell_press failed");
 	}
-	if let Some(handle) = reveil {
+	if let Some(handle) = wake {
 		crate::burst::trigger(std::sync::Arc::clone(handle), crate::burst::Wake::Press);
 	}
 }
@@ -293,7 +293,7 @@ pub(crate) async fn report_alarm_update(
 	ai_caps: CameraCapabilitiesView,
 	report: &mut AlarmReport,
 	update: &AlarmUpdate,
-	reveil: Option<&std::sync::Arc<crate::camera::CameraHandle>>,
+	wake: Option<&std::sync::Arc<crate::camera::CameraHandle>>,
 ) {
 	match update.motion {
 		MotionStatus::Start(_) => {
@@ -307,7 +307,7 @@ pub(crate) async fn report_alarm_update(
 			.await;
 			// Le mouvement est publié : c'est un réveil, donc une fenêtre de
 			// lecture. Après la publication, comme pour l'appui.
-			if let Some(handle) = reveil {
+			if let Some(handle) = wake {
 				crate::burst::trigger(
 					std::sync::Arc::clone(handle),
 					crate::burst::Wake::Motion,
@@ -374,7 +374,7 @@ pub(crate) async fn report_alarm_update(
 			camera_name,
 			publisher,
 			status_cache,
-			reveil,
+			wake,
 		)
 		.await;
 	}
@@ -396,7 +396,7 @@ pub async fn motion_listener(
 	// entendu sur l'alarme de session (mouvement, appui) doit pouvoir proposer la
 	// salve de lecture. `None` dans les tests qui n'ont pas de caméra complète —
 	// la salve est alors simplement absente.
-	reveil: Option<Arc<crate::camera::CameraHandle>>,
+	wake: Option<Arc<crate::camera::CameraHandle>>,
 ) {
 	let publisher = StatusPublisher::new(&mqtt, &topic_prefix, &camera_name);
 	// Sustained network flap with N cameras × M retries/min produces a
@@ -488,7 +488,7 @@ pub async fn motion_listener(
 						ai_caps,
 						&mut report,
 						&update,
-						reveil.as_ref(),
+						wake.as_ref(),
 					)
 					.await;
 					wake_hold.apply(&update);

@@ -131,7 +131,7 @@ fn spawn_motion_hold(
 	hold: Duration,
 	cancel: &CancellationToken,
 	publish_on: bool,
-	raison: crate::burst::Wake,
+	reason: crate::burst::Wake,
 ) {
 	let seq = handle.push_seq().fetch_add(1, Ordering::SeqCst) + 1;
 	let mqtt = event_mqtt(&handle, mqtt).cloned();
@@ -150,7 +150,7 @@ fn spawn_motion_hold(
 		}
 		// L'événement est publié : la salve peut commencer, si ce réveil n'a pas
 		// déjà payé la sienne.
-		crate::burst::trigger(Arc::clone(&handle), raison);
+		crate::burst::trigger(Arc::clone(&handle), reason);
 
 		crate::run_support::sleep_or_cancel(hold, &cancel).await;
 

@@ -223,9 +223,9 @@ impl EntitySpec {
 		&self,
 		ctx: &DiscoveryContext,
 		friendly: &str,
-		ecrivable: bool,
+		writable: bool,
 	) -> Option<(String, Vec<u8>)> {
-		if ecrivable {
+		if writable {
 			return Some(self.build(ctx, friendly));
 		}
 		let jumeau = self.jumeau_lecture_seule()?;
@@ -908,7 +908,7 @@ pub fn specs_for(feature: Feature) -> impl Iterator<Item = &'static EntitySpec> 
 pub fn build_feature_entities(
 	ctx: &DiscoveryContext,
 	feature: Feature,
-	ecrivables: &HashSet<Family>,
+	writable: &HashSet<Family>,
 ) -> Vec<(String, Vec<u8>)> {
 	let friendly = super::title_case(ctx.camera_name);
 	specs_for(feature)
@@ -917,9 +917,9 @@ pub fn build_feature_entities(
 			// relue ni écrite : elle reste lisible, indéfiniment. Le test
 			// `toute_famille_d_une_spec_est_connue_du_parsing` vérifie que ce
 			// cas ne se présente pas.
-			let ecrivable =
-				Family::from_slug(spec.family).is_some_and(|f| ecrivables.contains(&f));
-			spec.build_selon(ctx, &friendly, ecrivable)
+			let writable =
+				Family::from_slug(spec.family).is_some_and(|f| writable.contains(&f));
+			spec.build_selon(ctx, &friendly, writable)
 		})
 		.collect()
 }
@@ -1161,12 +1161,12 @@ mod tests {
 			("visitor_volume", "Visitor volume", "bairelay_cam1_audio_visitor_volume"),
 		];
 		let mut ids: Vec<&str> = Vec::new();
-		for (feuille, libelle, identifiant) in attendus {
+		for (feuille, label, identifiant) in attendus {
 			let spec = audio
 				.iter()
 				.find(|s| s.leaf == feuille)
 				.unwrap_or_else(|| panic!("aucune spec audio/{feuille}"));
-			assert_eq!(spec.label, libelle, "audio/{feuille}");
+			assert_eq!(spec.label, label, "audio/{feuille}");
 			assert_eq!(spec.unique_id(&c), identifiant);
 			assert!(
 				crate::settings::accepts("audio", feuille),

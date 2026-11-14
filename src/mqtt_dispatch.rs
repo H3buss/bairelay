@@ -255,7 +255,7 @@ pub async fn dispatch_control(
 		// relire le bloc, n'y retoucher que la balise demandée, l'écrire, relire,
 		// et publier la relecture — jamais la valeur demandée.
 		ControlCommand::Setting { setting, .. } => {
-			let famille = setting.family();
+			let family = setting.family();
 			match cam.bc_camera_concrete() {
 				Some(bc_cfg) => {
 					let publisher = StatusPublisher::new(mqtt, topic_prefix, &camera_name);
@@ -275,10 +275,10 @@ pub async fn dispatch_control(
 							// la famille est donc connue et réécrivable. C'est ce
 							// moment — et pas un sondage périodique — qui fait
 							// passer ses entités de « lisibles » à « modifiables ».
-							cam.mark_family_read(famille, true).await;
+							cam.mark_family_read(family, true).await;
 							// Et la famille va bien : la raison d'un refus
 							// précédent n'a plus rien à faire sur le broker.
-							crate::settings::clear_reason(&publisher, famille).await;
+							crate::settings::clear_reason(&publisher, family).await;
 						}
 						Err(e) => {
 							// Le `FAIL` sur le topic de commande est éphémère :
@@ -287,9 +287,9 @@ pub async fn dispatch_control(
 							let phrase = if en_delai {
 								crate::settings::REASON_TIMEOUT.to_string()
 							} else {
-								crate::settings::motif(e)
+								crate::settings::cause(e)
 							};
-							crate::settings::publish_reason(&publisher, famille, &phrase).await;
+							crate::settings::publish_reason(&publisher, family, &phrase).await;
 							// Les états déjà lus ne sont pas effacés : la caméra
 							// n'a pas dit autre chose. En revanche une famille
 							// jamais relue ne devient pas modifiable pour autant.
@@ -311,7 +311,7 @@ pub async fn dispatch_control(
 					let publisher = StatusPublisher::new(mqtt, topic_prefix, &camera_name);
 					crate::settings::publish_reason(
 						&publisher,
-						famille,
+						family,
 						crate::settings::REASON_SANS_SESSION,
 					)
 					.await;
@@ -2303,10 +2303,10 @@ mod tests {
 			etats.is_empty(),
 			"rien n'a été stocké, donc aucun état ; observations : {rows:?}"
 		);
-		let motif = rows
+		let cause = rows
 			.iter()
 			.find(|(t, _, _)| t == "bairelay/cam-audio-400/status/audio/reason");
-		let Some((_, payload, conserve)) = motif else {
+		let Some((_, payload, conserve)) = cause else {
 			panic!("le refus doit être lisible : aucun motif publié ; observations : {rows:?}");
 		};
 		let texte = String::from_utf8_lossy(payload).to_string();
@@ -2648,12 +2648,12 @@ mod tests {
 		// Un refus antérieur ne doit pas survivre à une écriture réussie : la
 		// famille va bien, sa raison redevient vide (et toujours conservée, pour
 		// que Home Assistant efface l'ancienne phrase).
-		let Some((_, motif, conserve)) =
+		let Some((_, cause, conserve)) =
 			rows.iter().find(|(t, _, _)| t == "bairelay/cam-vol3/status/audio/reason")
 		else {
 			panic!("une écriture réussie efface aussi le motif ; observations : {rows:?}");
 		};
-		assert!(motif.is_empty(), "la famille va bien, le motif doit être vide");
+		assert!(cause.is_empty(), "la famille va bien, le motif doit être vide");
 		assert!(*conserve, "un topic effacé l'est par un payload vide conservé");
 	}
 
@@ -2700,15 +2700,15 @@ mod tests {
 				== "bairelay/cam-vol3-absent/status/audio/general_volume"),
 			"on ne publie pas une valeur que la caméra n'a pas imprimée ; observations : {rows:?}"
 		);
-		let Some((_, motif, _)) = rows.iter().find(|(t, _, _)| {
+		let Some((_, cause, _)) = rows.iter().find(|(t, _, _)| {
 			t == "bairelay/cam-vol3-absent/status/audio/reason"
 		}) else {
 			panic!("un refus ne doit pas être silencieux ; observations : {rows:?}");
 		};
 		assert!(
-			String::from_utf8_lossy(motif).contains("refusé"),
+			String::from_utf8_lossy(cause).contains("refusé"),
 			"le motif doit nommer le refus : {:?}",
-			String::from_utf8_lossy(motif)
+			String::from_utf8_lossy(cause)
 		);
 	}
 
@@ -2783,7 +2783,7 @@ mod tests {
 		.await;
 
 		let rows = mock.published();
-		let Some(vide) = rows
+		let Some(empty) = rows
 			.iter()
 			.position(|(t, p, r)| t == ancien && p.is_empty() && *r)
 		else {
@@ -2793,8 +2793,8 @@ mod tests {
 			panic!("la famille relue doit devenir modifiable ; observations : {rows:?}");
 		};
 		assert!(
-			vide < switch,
-			"la rétractation doit précéder la nouvelle config : vide={vide} switch={switch}"
+			empty < switch,
+			"la rétractation doit précéder la nouvelle config : vide={empty} switch={switch}"
 		);
 		let (_, payload, _) = &rows[switch];
 		let json: serde_json::Value =
@@ -2871,7 +2871,7 @@ mod tests {
 				"la lecture a bien eu lieu, la feuille est publiée : {topic} ; observations : {rows:?}"
 			);
 		}
-		let Some((_, motif, conserve)) = rows
+		let Some((_, cause, conserve)) = rows
 			.iter()
 			.find(|(t, _, _)| t == "bairelay/cam-md/status/motion/reason")
 		else {
@@ -2881,9 +2881,9 @@ mod tests {
 		};
 		assert!(*conserve, "le motif est conservé");
 		assert!(
-			String::from_utf8_lossy(motif).contains("read-only"),
+			String::from_utf8_lossy(cause).contains("read-only"),
 			"le motif doit dire la lecture seule, pas un défaut de lecture : {:?}",
-			String::from_utf8_lossy(motif)
+			String::from_utf8_lossy(cause)
 		);
 		// Et la découverte reste ce qu'elle a toujours été pour cette famille.
 		assert!(
@@ -2996,21 +2996,21 @@ mod tests {
 		dispatch_control(relire(), &cameras, &mqtt, "bairelay").await;
 
 		let rows = mock.published();
-		let salve: Vec<&(String, Vec<u8>, bool)> = rows.iter().skip(apres).collect();
+		let burst: Vec<&(String, Vec<u8>, bool)> = rows.iter().skip(apres).collect();
 		for (topic, _, _) in rows.iter().skip(apres) {
 			assert!(
 				!topic.starts_with("homeassistant/"),
 				"une relecture qui rate ne doit publier aucune découverte, \
 				 donc n'en rétracter et n'en rétrograder aucune : {topic} ; \
-				 observations : {salve:?}"
+				 observations : {burst:?}"
 			);
 		}
-		let Some((_, motif, conserve)) =
+		let Some((_, cause, conserve)) =
 			rows.iter().rev().find(|(t, _, _)| t == motif_topic)
 		else {
 			panic!("un refus ne doit pas être silencieux ; observations : {rows:?}");
 		};
-		let mot = String::from_utf8_lossy(motif).to_string();
+		let mot = String::from_utf8_lossy(cause).to_string();
 		assert!(mot.contains("400"), "le motif doit citer le code reçu : {mot}");
 		assert!(
 			mot.contains("stays published as writable"),
@@ -3018,13 +3018,13 @@ mod tests {
 		);
 		assert!(
 			!mot.contains("not locked"),
-			"le refus passager a sa propre phrase, celle du verdict indéterminé \
+			"le refused passager a sa propre phrase, celle du verdict indéterminé \
 			 ne doit pas resservir : {mot}"
 		);
 		assert!(*conserve, "un motif se publie conservé");
 		assert!(
-			salve.iter().any(|(t, p, _)| t == "bairelay/cam-400/status/image/bright" && p.is_empty()),
-			"des valeurs qu'on n'a pas pu relire ne restent pas affichées comme vraies : {salve:?}"
+			burst.iter().any(|(t, p, _)| t == "bairelay/cam-400/status/image/bright" && p.is_empty()),
+			"des valeurs qu'on n'a pas pu relire ne restent pas affichées comme vraies : {burst:?}"
 		);
 	}
 
@@ -3081,7 +3081,7 @@ mod tests {
 		let curseur = "homeassistant/number/bairelay_cam-400-neuf_image_bright/config";
 		let Some((_, payload, _)) = rows.iter().rev().find(|(t, _, _)| t == curseur) else {
 			panic!(
-				"un refus passager ne doit pas laisser la famille dans son état initial \
+				"un refused passager ne doit pas laisser la family dans son état initial \
 				 de lecture seule ; observations : {rows:?}"
 			);
 		};
@@ -3090,12 +3090,12 @@ mod tests {
 			json["command_topic"], "bairelay/cam-400-neuf/control/image/bright",
 			"la famille est publiée modifiable malgré le refus de lecture"
 		);
-		let Some((_, motif, _)) =
+		let Some((_, cause, _)) =
 			rows.iter().rev().find(|(t, _, _)| t == "bairelay/cam-400-neuf/status/image/reason")
 		else {
 			panic!("et la raison du refus s'affiche à côté ; observations : {rows:?}");
 		};
-		let mot = String::from_utf8_lossy(motif).to_string();
+		let mot = String::from_utf8_lossy(cause).to_string();
 		assert!(mot.contains("400") && mot.contains("writable"), "les deux ensemble : {mot}");
 	}
 
@@ -3150,12 +3150,12 @@ mod tests {
 				&rows[apres..]
 			);
 		}
-		let Some((_, motif, _)) =
+		let Some((_, cause, _)) =
 			rows.iter().rev().find(|(t, _, _)| t == "bairelay/cam-500/status/image/reason")
 		else {
 			panic!("le refus reste dit ; observations : {rows:?}");
 		};
-		let mot = String::from_utf8_lossy(motif).to_string();
+		let mot = String::from_utf8_lossy(cause).to_string();
 		assert!(mot.contains("500"), "le motif cite le code : {mot}");
 		assert!(mot.contains("not locked"), "et le verdict indéterminé garde sa phrase : {mot}");
 	}
@@ -3207,12 +3207,12 @@ mod tests {
 				&& p == b"128"),
 			"la seconde tentative a lu, la valeur relue est publiée ; observations : {rows:?}"
 		);
-		let Some((_, motif, conserve)) =
+		let Some((_, cause, conserve)) =
 			rows.iter().rev().find(|(t, _, _)| t == "bairelay/cam-rejeu/status/image/reason")
 		else {
 			panic!("la famille va bien, sa raison doit être écrite puis vidée ; observations : {rows:?}");
 		};
-		assert!(motif.is_empty(), "une relecture réussie efface le motif : {motif:?}");
+		assert!(cause.is_empty(), "une relecture réussie efface le motif : {cause:?}");
 		assert!(*conserve, "un topic effacé l'est par un payload vide conservé");
 		assert!(
 			rows.iter().any(|(t, p, _)| t
@@ -3281,12 +3281,12 @@ mod tests {
 				&& p == b"on"),
 			"la lecture a bien eu lieu, la feuille lue est publiée ; observations : {rows:?}"
 		);
-		let Some((_, motif, _)) =
+		let Some((_, cause, _)) =
 			rows.iter().rev().find(|(t, _, _)| t == "bairelay/cam-osd/status/osd/reason")
 		else {
 			panic!("une famille verrouillée le dit ; observations : {rows:?}");
 		};
-		let mot = String::from_utf8_lossy(motif).to_string();
+		let mot = String::from_utf8_lossy(cause).to_string();
 		assert!(
 			mot.contains("OsdChannelName"),
 			"le motif doit nommer la balise absente : {mot}"
@@ -3408,12 +3408,12 @@ mod tests {
 				&& String::from_utf8_lossy(p).contains("\"intervalSecMax\":60")),
 			"les bornes annoncées par le firmware sont lisibles dans le JSON relu ; observations : {rows:?}"
 		);
-		let Some((_, motif, conserve)) =
+		let Some((_, cause, conserve)) =
 			rows.iter().find(|(t, _, _)| t == "bairelay/cam-pir-int/status/pir/reason")
 		else {
 			panic!("une écriture réussie efface aussi le motif ; observations : {rows:?}");
 		};
-		assert!(motif.is_empty(), "la famille va bien, le motif doit être vide");
+		assert!(cause.is_empty(), "la famille va bien, le motif doit être vide");
 		assert!(*conserve, "un topic effacé l'est par un payload vide conservé");
 	}
 
@@ -3471,13 +3471,13 @@ mod tests {
 				.any(|(t, _, _)| t == "bairelay/cam-pir-int-absent/status/pir/interval"),
 			"on ne publie pas un intervalle que la caméra n'a pas imprimée ; observations : {rows:?}"
 		);
-		let Some((_, motif, _)) = rows
+		let Some((_, cause, _)) = rows
 			.iter()
 			.find(|(t, _, _)| t == "bairelay/cam-pir-int-absent/status/pir/reason")
 		else {
 			panic!("un refus ne doit pas être silencieux ; observations : {rows:?}");
 		};
-		let mot = String::from_utf8_lossy(motif).to_string();
+		let mot = String::from_utf8_lossy(cause).to_string();
 		assert!(mot.contains("refusé"), "le motif doit nommer le refus : {mot}");
 		assert!(mot.contains("interval"), "et la balise en cause : {mot}");
 	}

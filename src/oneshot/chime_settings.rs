@@ -148,7 +148,7 @@ enum Asked {
 	LedState,
 	SilentTime,
 	/// `musicId` of the event with this `<type>` (the display name carries it).
-	Melodie(String),
+	Melody(String),
 }
 
 /// Read the family, and write back only what changed.
@@ -207,7 +207,7 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 						.clone()
 						.unwrap_or_else(|| "(no type)".into());
 					asked.push((
-						Asked::Melodie(name.clone()),
+						Asked::Melody(name.clone()),
 						format!("musicId({name})"),
 						from,
 						v.to_string(),
@@ -280,7 +280,7 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 				// The settings are already stored; don't let the noisy test
 				// failure imply they weren't.
 				e.context(
-					"the carillon settings were written; the ring test (cmd 485 ringWithMusic) \
+					"the chime settings were written; the ring test (cmd 485 ringWithMusic) \
 					 failed — re-run chime-settings to read them back",
 				)
 			}
@@ -326,7 +326,7 @@ fn after_value(cfg: &DingDongCfg, which: &Asked) -> Option<String> {
 		Asked::VolLevel => cfg.params.as_ref()?.vol_level.clone(),
 		Asked::LedState => cfg.params.as_ref()?.led_state.clone(),
 		Asked::SilentTime => cfg.silent.as_ref()?.time.clone(),
-		Asked::Melodie(name) => cfg
+		Asked::Melody(name) => cfg
 			.events
 			.as_ref()?
 			.iter()
@@ -535,11 +535,11 @@ mod tests {
 		assert_eq!(after_value(&cfg, &Asked::LedState).as_deref(), Some("1"));
 		assert_eq!(after_value(&cfg, &Asked::SilentTime).as_deref(), Some("0"));
 		assert_eq!(
-			after_value(&cfg, &Asked::Melodie("visitor".into())).as_deref(),
+			after_value(&cfg, &Asked::Melody("visitor".into())).as_deref(),
 			Some("2"),
 			"the per-event melody is looked up by its camera-printed type"
 		);
-		assert_eq!(after_value(&cfg, &Asked::Melodie("ghost".into())), None);
+		assert_eq!(after_value(&cfg, &Asked::Melody("ghost".into())), None);
 	}
 
 	#[test]

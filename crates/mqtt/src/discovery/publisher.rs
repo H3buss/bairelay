@@ -182,13 +182,13 @@ impl DiscoveryPublisher {
 	/// Appelé après chaque lecture réussie — `query/settings`, écriture avec
 	/// relecture, aperçu — jamais sur minuterie : une sonnette sur batterie ne
 	/// survit pas à un interrogatoire périodique.
-	pub fn marque_famille_lue(&self, camera_name: &str, family: Family, ecrivable: bool) -> bool {
+	pub fn mark_family_read(&self, camera_name: &str, family: Family, writable: bool) -> bool {
 		let mut guard = match self.familles_lues.lock() {
 			Ok(g) => g,
 			Err(p) => p.into_inner(),
 		};
 		let entry = guard.entry(camera_name.to_string()).or_default();
-		if ecrivable {
+		if writable {
 			entry.insert(family)
 		} else {
 			entry.remove(&family)
@@ -197,7 +197,7 @@ impl DiscoveryPublisher {
 
 	/// Les familles de cette caméra publiées sous leur forme modifiable. Copie,
 	/// pour ne pas rendre un garde à travers un `await`.
-	pub fn familles_ecrivables(&self, camera_name: &str) -> HashSet<Family> {
+	pub fn writable_families(&self, camera_name: &str) -> HashSet<Family> {
 		let guard = match self.familles_lues.lock() {
 			Ok(g) => g,
 			Err(p) => p.into_inner(),
@@ -241,7 +241,7 @@ impl DiscoveryPublisher {
 		// Ce que la caméra a déjà accepté de relire décide de la plateforme de
 		// chaque entité de réglage : une famille jamais lue sort en lecture
 		// seule (voir [`Self::marque_famille_lue`]).
-		let ecrivables = self.familles_ecrivables(camera_name);
+		let writable = self.writable_families(camera_name);
 
 		// Iterate `Feature::ALL` rather than `self.features` so the
 		// emitted topic order is stable regardless of the `HashSet`'s
@@ -319,7 +319,7 @@ impl DiscoveryPublisher {
 					// La sensibilité PIR est un réglage, pas l'interrupteur :
 					// même fonctionnalité, même drapeau `pir`, et elle se tait
 					// tant que `<RfAlarmCfg>` n'a pas été lu.
-					out.extend(build_feature_entities(&ctx, Feature::Pir, &ecrivables));
+					out.extend(build_feature_entities(&ctx, Feature::Pir, &writable));
 				}
 				Feature::Ai => {
 					out.extend(build_ai_binary_sensors(&ctx));
@@ -351,7 +351,7 @@ impl DiscoveryPublisher {
 				| Feature::WifiSignal
 				| Feature::BatteryExtra
 				| Feature::Chime => {
-					out.extend(build_feature_entities(&ctx, feature, &ecrivables));
+					out.extend(build_feature_entities(&ctx, feature, &writable));
 				}
 			}
 		}
@@ -699,31 +699,31 @@ mod tests {
 		for promotion in [false, true] {
 			let publisher = publisher_with_features(&Feature::ALL);
 			if promotion {
-				for famille in Family::ALL {
-					publisher.marque_famille_lue("Sonnette", famille, true);
+				for family in Family::ALL {
+					publisher.mark_family_read("Sonnette", family, true);
 				}
 			}
 			let out = publisher.compute_payloads("Sonnette", None, None, caps, &flags, &presets);
-			let etat = if promotion { "après promotion" } else { "au démarrage" };
-			assert!(out.len() > 40, "jeu publié tronqué ({etat}) : {} entités", out.len());
+			let state = if promotion { "après promotion" } else { "au démarrage" };
+			assert!(out.len() > 40, "jeu publié tronqué ({state}) : {} entités", out.len());
 			let mut noms: Vec<String> = Vec::with_capacity(out.len());
 			for (topic, payload) in &out {
 				let v: serde_json::Value = serde_json::from_slice(payload).unwrap();
 				let nom = v["name"].as_str().unwrap_or_else(|| panic!("entité sans name: {topic}"));
 				assert!(
 					!nom.to_lowercase().starts_with("sonnette"),
-					"le libellé {nom:?} recommence le nom de l'appareil ({topic}, {etat})"
+					"le libellé {nom:?} recommence le nom de l'appareil ({topic}, {state})"
 				);
 				assert_eq!(
 					v["device"]["name"].as_str(),
 					Some("Sonnette"),
-					"le bloc device doit rester le nom de l'appareil ({topic}, {etat})"
+					"le bloc device doit rester le nom de l'appareil ({topic}, {state})"
 				);
 				noms.push(nom.to_lowercase());
 			}
 			noms.sort();
 			if let Some(dup) = noms.windows(2).find(|w| w[0] == w[1]) {
-				panic!("deux entités de l'appareil portent le libellé {:?} ({etat})", dup[0]);
+				panic!("deux entités de l'appareil portent le libellé {:?} ({state})", dup[0]);
 			}
 		}
 	}
@@ -1126,7 +1126,7 @@ mod tests {
 		// 2. `query/settings/audio` a répondu et la caméra accepte qu'on lui
 		// renvoie `<audioCfg>` : la famille devient modifiable.
 		assert!(
-			publisher.marque_famille_lue("cam-vol", Family::Audio, true),
+			publisher.mark_family_read("cam-vol", Family::Audio, true),
 			"la famille devait changer d'état"
 		);
 		publisher
@@ -1134,7 +1134,7 @@ mod tests {
 			.await
 			.expect("deuxième publish");
 		let apres = mock.published();
-		let vide = apres
+		let empty = apres
 			.iter()
 			.position(|(t, p, r)| t == capteur && p.is_empty() && *r)
 			.expect("l'ancien topic de découverte doit recevoir un payload vide conservé");
@@ -1143,8 +1143,8 @@ mod tests {
 			.position(|(t, p, r)| t == curseur && !p.is_empty() && *r)
 			.expect("le nouveau topic doit recevoir la configuration modifiable");
 		assert!(
-			vide < neuf,
-			"le payload vide doit partir AVANT la nouvelle configuration : {vide} vs {neuf}"
+			empty < neuf,
+			"le payload vide doit partir AVANT la nouvelle configuration : {empty} vs {neuf}"
 		);
 
 		// 3. Et l'inverse doit aussi être vrai : une caméra qui, depuis, refuse
@@ -1152,7 +1152,7 @@ mod tests {
 		// regarde que la troisième volée de publications : le capteur a déjà été
 		// publié une fois, et chercher sa première occurrence confondrait les
 		// deux moments qu'on veut comparer.
-		assert!(publisher.marque_famille_lue("cam-vol", Family::Audio, false));
+		assert!(publisher.mark_family_read("cam-vol", Family::Audio, false));
 		let avant = mock.published().len();
 		publisher
 			.publish("cam-vol", Some("10.0.0.1:9000"), None, caps, &flags, &[])
@@ -1195,7 +1195,7 @@ mod tests {
 				.collect::<Vec<_>>()
 		};
 
-		assert!(publisher.marque_famille_lue("cam-mv", Family::Motion, true));
+		assert!(publisher.mark_family_read("cam-mv", Family::Motion, true));
 		assert!(
 			etats_de("/status/motion/").iter().any(|(_, p)| {
 				serde_json::from_slice::<serde_json::Value>(p)
@@ -1207,8 +1207,8 @@ mod tests {
 		);
 
 		// La caméra a répondu `<MdAlarm>` depuis : plus d'écriture possible.
-		assert!(publisher.marque_famille_lue("cam-mv", Family::Motion, false), "devait redescendre");
-		assert!(!publisher.marque_famille_lue("cam-mv", Family::Motion, false), "déjà descendue");
+		assert!(publisher.mark_family_read("cam-mv", Family::Motion, false), "devait redescendre");
+		assert!(!publisher.mark_family_read("cam-mv", Family::Motion, false), "déjà descendue");
 		let lus = etats_de("/status/motion/");
 		assert!(!lus.is_empty(), "la famille motion ne publie plus rien");
 		for (topic, payload) in &lus {

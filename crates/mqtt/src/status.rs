@@ -53,8 +53,8 @@ impl PublishedPresence {
 	/// Applique le verdict `joignable` et rend le code précédent quand une
 	/// publication doit partir. Rend `None` quand le verdict demandé était déjà
 	/// le verdict courant, auquel cas rien ne part vers le courtier.
-	fn transition(&self, joignable: bool) -> Option<(u8, u8)> {
-		let cible = if joignable {
+	fn transition(&self, reachable: bool) -> Option<(u8, u8)> {
+		let cible = if reachable {
 			PRESENCE_ONLINE
 		} else {
 			PRESENCE_OFFLINE
@@ -156,11 +156,11 @@ impl<'a> StatusPublisher<'a> {
 	/// [`Self::new`], elle reste propre à cette instance et ne déduplique que dans
 	/// cette dernière : les trois endroits du pont qui publient la présence passent
 	/// par [`Self::with_presence`].
-	pub async fn publish_presence(&self, joignable: bool) -> Result<(), MqttError> {
-		let Some((precedent, cible)) = self.presence.transition(joignable) else {
+	pub async fn publish_presence(&self, reachable: bool) -> Result<(), MqttError> {
+		let Some((precedent, cible)) = self.presence.transition(reachable) else {
 			return Ok(());
 		};
-		let payload = if joignable { "reachable" } else { "unreachable" };
+		let payload = if reachable { "reachable" } else { "unreachable" };
 		let topic = topics::presence(&self.topic_prefix, &self.camera_name);
 		match self
 			.client
@@ -380,11 +380,11 @@ impl<'a> StatusPublisher<'a> {
 	pub async fn publish_family_reason(
 		&self,
 		family: Family,
-		raison: &str,
+		reason: &str,
 	) -> Result<(), MqttError> {
 		let topic =
 			topics::status_setting_reason(&self.topic_prefix, &self.camera_name, family.slug());
-		let propre = publishable_reason(raison);
+		let propre = publishable_reason(reason);
 		self.client.publish_retained(&topic, propre.as_bytes()).await
 	}
 
@@ -420,8 +420,8 @@ const REASON_INTERDITS: [&str; 6] =
 /// `this camera's reply has no <OsdChannelName> tag` est précisément
 /// l'information qui explique un refus, et ce qui doit disparaître est le
 /// délimiteur XML, pas le nom de la balise.
-pub fn publishable_reason(raison: &str) -> String {
-	publishable_reason_bounded(raison, REASON_MAX)
+pub fn publishable_reason(reason: &str) -> String {
+	publishable_reason_bounded(reason, REASON_MAX)
 }
 
 /// Same cleaning, with the bound chosen by the caller.
@@ -434,8 +434,8 @@ pub fn publishable_reason(raison: &str) -> String {
 /// may become a channel for secrets, so the cleaning is identical in both: no
 /// bare XML delimiter, no control character, and the mask applies whenever the
 /// text looks like a credential.
-pub fn publishable_reason_bounded(raison: &str, maximal: usize) -> String {
-	let sans_balises: String = raison
+pub fn publishable_reason_bounded(reason: &str, maximal: usize) -> String {
+	let sans_balises: String = reason
 		.chars()
 		.map(|c| match c {
 			'<' => '«',
@@ -763,8 +763,8 @@ mod tests {
 	#[tokio::test]
 	async fn la_presence_ne_publie_que_sur_transition() {
 		let (c, mock) = crate::test_support::mock_client();
-		let etat = Arc::new(PublishedPresence::default());
-		let publ = StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&etat));
+		let state = Arc::new(PublishedPresence::default());
+		let publ = StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&state));
 		publ.publish_presence(true).await.unwrap();
 		publ.publish_presence(true).await.unwrap();
 		assert_eq!(
@@ -802,12 +802,12 @@ mod tests {
 	#[tokio::test]
 	async fn la_presence_se_deduplique_entre_deux_publieurs() {
 		let (c, mock) = crate::test_support::mock_client();
-		let etat = Arc::new(PublishedPresence::default());
-		StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&etat))
+		let state = Arc::new(PublishedPresence::default());
+		StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&state))
 			.publish_presence(true)
 			.await
 			.unwrap();
-		StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&etat))
+		StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&state))
 			.publish_presence(true)
 			.await
 			.unwrap();

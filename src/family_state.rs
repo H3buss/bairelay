@@ -126,12 +126,12 @@ fn charger(chemin: &Path, camera: &str) -> Vec<Family> {
 		}
 	};
 	let lu: Result<ReadFamilies, serde_json::Error> = serde_json::from_str(&brut);
-	let etat = match lu {
-		Ok(etat) if etat.version == VERSION => etat,
-		Ok(etat) => {
+	let state = match lu {
+		Ok(state) if state.version == VERSION => state,
+		Ok(state) => {
 			tracing::warn!(
 				chemin = %chemin.display(),
-				version = etat.version,
+				version = state.version,
 				"état des familles dans un format inconnu : il sera réécrit à la première écriture"
 			);
 			return Vec::new();
@@ -145,7 +145,7 @@ fn charger(chemin: &Path, camera: &str) -> Vec<Family> {
 			return Vec::new();
 		}
 	};
-	let Some(slugs) = etat.cameras.get(camera) else {
+	let Some(slugs) = state.cameras.get(camera) else {
 		return Vec::new();
 	};
 	// Un slug que ce binaire ne connaît pas ne crée aucune famille : le fichier
@@ -186,22 +186,22 @@ pub(crate) fn familles_prouvees(camera: &str) -> Vec<Family> {
 /// puis renommage. Le renommage par-dessus un fichier existant échoue sur
 /// Windows, d'où le retrait juste avant — la fenêtre entre les deux n'expose
 /// qu'à lire « absent », ce qui est déjà un cas traité.
-fn sauver(chemin: &Path, camera: &str, familles: &[Family]) -> io::Result<()> {
-	let mut etat = std::fs::read_to_string(chemin)
+fn sauver(chemin: &Path, camera: &str, families: &[Family]) -> io::Result<()> {
+	let mut state = std::fs::read_to_string(chemin)
 		.ok()
 		.and_then(|brut| serde_json::from_str::<ReadFamilies>(&brut).ok())
 		.unwrap_or_default();
 	// Un fichier d'une autre version repart de zéro, mais uniquement pour la
 	// caméra qu'on est en train d'écrire : les autres entrées restent ce
 	// qu'elles sont, et la version est relevée.
-	etat.version = VERSION;
-	let mut slugs: Vec<String> = familles.iter().map(|f| f.slug().to_string()).collect();
+	state.version = VERSION;
+	let mut slugs: Vec<String> = families.iter().map(|f| f.slug().to_string()).collect();
 	slugs.sort();
 	slugs.dedup();
 	if slugs.is_empty() {
-		etat.cameras.remove(camera);
+		state.cameras.remove(camera);
 	} else {
-		etat.cameras.insert(camera.to_string(), slugs);
+		state.cameras.insert(camera.to_string(), slugs);
 	}
 	if let Some(dir) = chemin.parent().filter(|d| !d.as_os_str().is_empty()) {
 		std::fs::create_dir_all(dir)?;
@@ -214,7 +214,7 @@ fn sauver(chemin: &Path, camera: &str, familles: &[Family]) -> io::Result<()> {
 	// répertoire (un complément qui redémarre pendant qu'on lance un outil en
 	// parallèle) ne doivent pas écrire dans le même fichier temporaire.
 	let temporaire = chemin.with_file_name(format!("{nom}.{}.tmp", std::process::id()));
-	std::fs::write(&temporaire, serde_json::to_string_pretty(&etat).unwrap_or_default())?;
+	std::fs::write(&temporaire, serde_json::to_string_pretty(&state).unwrap_or_default())?;
 	if chemin.exists() {
 		std::fs::remove_file(chemin)?;
 	}
@@ -244,19 +244,19 @@ pub fn amorcer(publisher: &DiscoveryPublisher, camera: &str) {
 
 /// Même chose, emplacement explicite — la forme que testent les tests.
 fn amorcer_dans(chemin: &Path, publisher: &DiscoveryPublisher, camera: &str) {
-	let familles = charger(chemin, camera);
-	if familles.is_empty() {
+	let families = charger(chemin, camera);
+	if families.is_empty() {
 		return;
 	}
 	let mut marquees = 0usize;
-	for famille in familles {
-		if publisher.marque_famille_lue(camera, famille, true) {
+	for family in families {
+		if publisher.mark_family_read(camera, family, true) {
 			marquees += 1;
 		}
 	}
 	tracing::info!(
 		camera,
-		familles = marquees,
+		families = marquees,
 		chemin = %chemin.display(),
 		"familles relancées en modifiable depuis le disque : aucune commande caméra n'a été envoyée"
 	);
@@ -266,8 +266,8 @@ fn amorcer_dans(chemin: &Path, publisher: &DiscoveryPublisher, camera: &str) {
 /// aucun emplacement n'est résolu.
 pub fn enregistrer(publisher: &DiscoveryPublisher, camera: &str) {
 	let Some(chemin) = chemin() else { return };
-	let familles: Vec<Family> = publisher.familles_ecrivables(camera).into_iter().collect();
-	if let Err(e) = sauver(chemin, camera, &familles) {
+	let families: Vec<Family> = publisher.writable_families(camera).into_iter().collect();
+	if let Err(e) = sauver(chemin, camera, &families) {
 		tracing::warn!(
 			camera,
 			chemin = %chemin.display(),
@@ -336,7 +336,7 @@ mod tests {
 		let chemin = chemin_test("slug");
 		std::fs::write(
 			&chemin,
-			r#"{"version":1,"cameras":{"Sonnette":["audio","famille-inventee"]}}"#,
+			r#"{"version":1,"cameras":{"Sonnette":["audio","family-inventee"]}}"#,
 		)
 		.expect("fixture");
 		assert_eq!(

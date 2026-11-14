@@ -273,7 +273,7 @@ pub struct CameraHandle {
 	/// fenêtre de [`crate::burst::GUARD_WINDOW`]. Trois sources annoncent le
 	/// même réveil (l'alarme de session, le webhook, la poussée du faux cloud) ;
 	/// c'est cet objet qui décide laquelle paie la lecture. Voir [`crate::burst`].
-	salve: Arc<crate::burst::BurstGuard>,
+	burst: Arc<crate::burst::BurstGuard>,
 }
 
 impl CameraHandle {
@@ -352,7 +352,7 @@ impl CameraHandle {
 			webhook_target: None,
 			webhook_memo: camera_tasks::ArmMemo::default(),
 			prune_grace: Duration::ZERO,
-			salve: Arc::new(crate::burst::BurstGuard::nouvelle(crate::burst::GUARD_WINDOW)),
+			burst: Arc::new(crate::burst::BurstGuard::new(crate::burst::GUARD_WINDOW)),
 		}
 	}
 
@@ -557,11 +557,11 @@ impl CameraHandle {
 			return false;
 		};
 		let mut a_change = false;
-		for &(famille, verdict) in lues {
-			let Some(ecrivable) = verdict.ecrivable() else {
+		for &(family, verdict) in lues {
+			let Some(writable) = verdict.writable() else {
 				continue;
 			};
-			a_change |= publisher.marque_famille_lue(&self.config.name, famille, ecrivable);
+			a_change |= publisher.mark_family_read(&self.config.name, family, writable);
 		}
 		if !a_change {
 			return false;
@@ -585,15 +585,15 @@ impl CameraHandle {
 	/// [`Self::mark_families_read`] pour le sens des deux verdicts.
 	pub(crate) async fn mark_family_read(
 		&self,
-		famille: bairelay_mqtt::settings::Family,
-		ecrivable: bool,
+		family: bairelay_mqtt::settings::Family,
+		writable: bool,
 	) -> bool {
-		let verdict = if ecrivable {
+		let verdict = if writable {
 			crate::settings::Verdict::Writable
 		} else {
 			crate::settings::Verdict::NotWritable
 		};
-		self.mark_families_read(&[(famille, verdict)]).await
+		self.mark_families_read(&[(family, verdict)]).await
 	}
 
 	/// Shared per-camera status cache. Each status-publishing task
@@ -761,8 +761,8 @@ impl CameraHandle {
 	/// La garde de la salve de réveil ([`crate::burst`]). `pub(crate)` : la
 	/// garde est un type interne au bin, une méthode `pub` qui le montrerait
 	/// exposerait une interface privée (lint `private_interfaces`).
-	pub(crate) fn salve(&self) -> &Arc<crate::burst::BurstGuard> {
-		&self.salve
+	pub(crate) fn burst(&self) -> &Arc<crate::burst::BurstGuard> {
+		&self.burst
 	}
 
 	/// Le client MQTT de cette caméra, `None` quand le pont tourne sans
