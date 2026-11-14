@@ -138,11 +138,6 @@ pub enum Outcome {
 	},
 }
 
-/// Serde helper: omit counters that happened to be zero.
-fn is_zero(v: &usize) -> bool {
-	*v == 0
-}
-
 #[derive(Debug, Serialize, PartialEq)]
 pub struct AbilityEntry {
 	pub module: String,
@@ -826,19 +821,6 @@ fn format_human(outcome: &Outcome) -> (String, String) {
 			(out, String::new())
 		}
 	}
-}
-
-/// `", "`-joined list, or `"(none)"` when empty. Camera-supplied values go
-/// through [`sanitize_display`] so a broken reply can't inject escapes.
-fn join_or_none(items: &[String]) -> String {
-	if items.is_empty() {
-		return "(none)".to_string();
-	}
-	items
-		.iter()
-		.map(|s| sanitize_display(s))
-		.collect::<Vec<_>>()
-		.join(", ")
 }
 
 /// Longest camera-supplied string, in characters, printed in human mode.

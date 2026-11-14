@@ -11,6 +11,15 @@ pub mod config;
 pub mod family_state;
 pub mod grace_period;
 pub mod hassio;
+/// The wake-polling engine: one guarded question per wake announcement, so a
+/// camera that woke by itself gets read instead of going back to sleep unseen.
+///
+/// Not driven on this branch: the UDP wake-announcement listener that feeds it
+/// lives with the two-way-audio work, which needs the same session. The timings
+/// it encodes — the 18 s a press took to arrive against the 250 ms a session
+/// costs, the 249 s a held wake lock left the camera awake against 19 s without
+/// it — were measured here and belong to this engine, so it waits here for its
+/// caller instead of being rewritten over there.
 pub(crate) mod polling;
 pub mod local_time;
 pub mod mqtt_dispatch;
