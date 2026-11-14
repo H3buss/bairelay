@@ -20,7 +20,9 @@ use crate::oneshot::classify;
 use crate::oneshot::dispatch::{dispatch_oneshot, find_camera_config, snapshot_json_preflight};
 use crate::oneshot::errors::ConfigError;
 use crate::oneshot::output::{format_failure, format_success, Mode, Outcome};
-use crate::oneshot::{runner, snapshot};
+use crate::oneshot::{
+	audio_bridge, runner, snapshot, talk, talk_capability,
+};
 
 /// Pick the one-shot output mode from the CLI flag. Extracted so the
 /// `cli.json → Mode` mapping is pinned in one place.
@@ -397,6 +399,85 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 			})
 			.await;
 		}
+		// `talk-ability` is the second command that needs the concrete
+		// `BcCamera`: the ungated TalkAbility probe lives on `BcCamera` and
+		// pointedly not on the `CameraDriver` trait, so it cannot cross the
+		// dispatch seam every other command routes through. Intercepted here,
+		// exactly like `snapshot --use-stream-raw`.
+		if matches!(cli.command, Command::TalkAbility(_)) {
+			return runner::run(&cam_cfg, cancel, move |cam| {
+				async move { talk_capability::run(cam).await }.boxed()
+			})
+			.await;
+		}
+		// `talk` and `audio-bridge` write to the loudspeaker, and `talk` /
+		// `talk_stream` live on the concrete `BcCamera` (pointedly not on
+		// `CameraDriver`), so they take this route too. Both need a longer
+		// op deadline than the request/response default: a talk transmission
+		// paces itself at wall-clock speed.
+		if let Command::Talk { file, raw, header, .. } = &cli.command {
+			let path = file.clone();
+			// The header convention is the one wire-format knob the operator
+			// can choose, and a bad value is an argument error: refuse it here,
+			// before the camera is woken, exactly like the file check below.
+			let convention = crate::audio_control::parse_convention(header)?;
+			// Validate the file *before* connecting. This is a battery camera:
+			// waking it, logging in, and only then being told the WAV is 44.1 kHz
+			// would burn the wake window for nothing, and the refusal is about
+			// the operator's argument, not about the camera.
+			let input = crate::oneshot::pcm::read_pcm_file(&path, *raw)?;
+			let budget = talk::op_timeout_for_samples(input.samples.len());
+			let channel_id = cam_cfg.channel_id;
+			return runner::run_with_op_timeout(&cam_cfg, cancel, budget, move |cam| {
+				async move { talk::run(cam, channel_id, &path, &input, convention).await }.boxed()
+			})
+			.await;
+		}
+		if let Command::AudioBridge {
+			idle,
+			header,
+			input,
+			gain,
+			..
+		} = &cli.command {
+			if !idle.is_finite() || *idle <= 0.0 {
+				return Err(crate::oneshot::errors::UsageError::new(format!(
+					"--idle must be a positive number of seconds, got {idle}"
+				))
+				.into());
+			}
+			// Same rule as --idle: a NaN or a negative gain would either
+			// silently vanish the audio or invert the waveform, and both sound
+			// like a broken camera.
+			if !gain.is_finite() || *gain <= 0.0 {
+				return Err(crate::oneshot::errors::UsageError::new(format!(
+					"--gain must be a positive number, got {gain}"
+				))
+				.into());
+			}
+			let convention = crate::audio_control::parse_convention(header)?;
+			// Refuse a bad input format here, before the camera is woken: the
+			// pipe shape is decided by go2rtc's config, and a mismatch is a
+			// configuration bug, not something to discover mid-session.
+			let input_fmt = crate::oneshot::input::Input::parse(input)?;
+			let idle = Duration::from_secs_f64(*idle);
+			let channel_id = cam_cfg.channel_id;
+			let gain = *gain;
+			// Graceful route: the bridge closes its talk session (msg 11) on
+			// Ctrl+C instead of being dropped mid-session.
+			return runner::run_graceful(
+				&cam_cfg,
+				cancel,
+				audio_bridge::op_timeout(),
+				move |cam, cancel| async move {
+					audio_bridge::run(cam, channel_id, idle, convention, input_fmt, gain, cancel)
+						.await
+				}
+				.boxed(),
+			)
+			.await;
+		}
+
 		let cmd = crate::cli_convert::clone_command(&cli.command);
 		let json = cli.json;
 		runner::run(&cam_cfg, cancel, move |cam| {
@@ -414,6 +495,29 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 	}
 	.await;
 
+	code_pour_sortie(mode, result, stdout, stderr)
+}
+
+/// Publishes what the command produced and returns the process exit code.
+///
+/// The invariant, written down here because this is the only place it is
+/// decided: **a run that produced an `Outcome` exits 0**. A non-zero code on
+/// an `Outcome` would be a contradictory success — the operator would have
+/// the complete JSON of a successful read *and* a failure code in their
+/// pipe, and their script would have to guess which one to believe. The
+/// talk commands have exactly one happy ending, an `Outcome`, so the
+/// invariant is pinned here, without a camera — the full call path
+/// (`runner::run` → real connection) is not reproducible offline.
+///
+/// The emitted bytes are produced by the same
+/// [`emit_success_to`]/[`emit_failure_to`] as before: extracting this
+/// decision changes nothing about the JSON.
+fn code_pour_sortie<W1: std::io::Write, W2: std::io::Write>(
+	mode: Mode,
+	result: Result<Outcome>,
+	stdout: &mut W1,
+	stderr: &mut W2,
+) -> i32 {
 	match result {
 		Ok(outcome) => {
 			emit_success_to(mode, &outcome, stdout, stderr);
@@ -769,8 +873,47 @@ cameras = []
 	/// non-`--use-stream-raw` path. The TCP connect fails (no real
 	/// camera at 127.0.0.1:65535), surfacing through `Err(e)` →
 	/// classify → exit code. Covers the dispatch_oneshot bind branch.
-	#[tokio::test]
-	async fn run_oneshot_dispatch_path_returns_nonzero_on_tcp_failure() {
+	/// Corps d'un test one-shot, épinglé sur le tas pour traverser un fil sans
+	/// fioritures de generics.
+	type CorpsDeTest = std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>;
+
+	/// Fait tourner un test one-shot sur un fil à **pile explicite**, avec son
+	/// propre runtime — le même détour que `sur_worker` de `mqtt_dispatch`.
+	///
+	/// Pourquoi ce détour ici : `run_oneshot` sur le chemin TCP réel, c'est la
+	/// poignée de main Baïchuan, donc `BcXml` — tous les blocs du protocole en
+	/// `Option`, plusieurs kilo-octets, et au moins deux copies par commande. En
+	/// release — le profil du binaire qui tourne chez l'utilisatrice — le fil
+	/// reçoit exactement les **2 Mo d'un worker tokio**, la pile dont dispose
+	/// vraiment le one-shot : un test vert prouve que le chemin tient chez elle.
+	/// En debug, les cadres non optimisés réclament plus large, et le test ne
+	/// prouve plus que le comportement — c'est voulu, pas une cache.
+	fn sur_worker(body: fn() -> CorpsDeTest) {
+		let pile = if cfg!(debug_assertions) {
+			8 * 1024 * 1024
+		} else {
+			2 * 1024 * 1024
+		};
+		std::thread::Builder::new()
+			.stack_size(pile)
+			.spawn(move || {
+				let rt = tokio::runtime::Builder::new_current_thread()
+					.enable_all()
+					.build()
+					.expect("runtime du fil de test");
+				rt.block_on(body());
+			})
+			.expect("fil de test à pile explicite")
+			.join()
+			.expect("le one-shot ne doit pas paniquer sur une caméra absente");
+	}
+
+	#[test]
+	fn run_oneshot_dispatch_path_returns_nonzero_on_tcp_failure() {
+		sur_worker(|| Box::pin(run_oneshot_dispatch_path()))
+	}
+
+	async fn run_oneshot_dispatch_path() {
 		let f = tempfile::NamedTempFile::new().unwrap();
 		// Address with `127.0.0.1:65500` — connect refused / times out.
 		let toml = r#"
@@ -795,8 +938,12 @@ discovery = "local"
 	/// (the `if let Command::Snapshot ... use_stream_raw: true` arm),
 	/// then `runner::run` fails to connect — exit nonzero. Covers
 	/// the snapshot --use-stream-raw branch (lines 161-180).
-	#[tokio::test]
-	async fn run_oneshot_use_stream_raw_path_returns_nonzero_on_tcp_failure() {
+	#[test]
+	fn run_oneshot_use_stream_raw_path_returns_nonzero_on_tcp_failure() {
+		sur_worker(|| Box::pin(run_oneshot_use_stream_raw_path()))
+	}
+
+	async fn run_oneshot_use_stream_raw_path() {
 		let f = tempfile::NamedTempFile::new().unwrap();
 		let toml = r#"
 bind = "127.0.0.1"
@@ -973,6 +1120,66 @@ on_motion = true
 		assert_eq!(code, classify::EXIT_CONFIG);
 		let s = String::from_utf8(err).expect("utf8");
 		assert!(s.contains("read"));
+	}
+
+	/// A successful talk run exits **0** — the invariant is decided in
+	/// [`code_pour_sortie`] and nowhere else. The full call path
+	/// (`runner::run` → real camera) is not reproducible offline, so what
+	/// gets pinned here is the pair (Outcome → exit code + emitted bytes),
+	/// including the awkward success that carries a camera error code:
+	/// `talk-ability` reporting a refusal is still a completed read.
+	#[test]
+	fn successful_run_returns_zero() {
+		let cases = [
+			(
+				"talk-ability refused",
+				Outcome::TalkAbility {
+					found: false,
+					code: 482,
+					payload: "none".into(),
+					xml: None,
+					configs: vec![],
+					duplex: vec![],
+					audio_stream_modes: vec![],
+				},
+			),
+			(
+				"talk-ability answered",
+				Outcome::TalkAbility {
+					found: true,
+					code: 200,
+					payload: "xml".into(),
+					xml: Some("<TalkAbility/>".into()),
+					configs: vec![],
+					duplex: vec![],
+					audio_stream_modes: vec![],
+				},
+			),
+		];
+		for (name, outcome) in cases {
+			let mut stdout = Vec::new();
+			let mut stderr = Vec::new();
+			let code = code_pour_sortie(Mode::Json, Ok(outcome), &mut stdout, &mut stderr);
+			assert_eq!(code, classify::EXIT_OK, "{name} succeeded: the code must be 0");
+			assert!(stderr.is_empty(), "{name} must write nothing to stderr");
+			let parsed: serde_json::Value = serde_json::from_slice(&stdout)
+				.unwrap_or_else(|e| panic!("{name} must emit readable JSON: {e}"));
+			assert_eq!(parsed["ok"], serde_json::Value::Bool(true), "{name}: {parsed}");
+		}
+	}
+
+	/// Extracting the decision did not soften failures: an error is still
+	/// classified, and the error JSON goes to `stdout` in JSON mode.
+	#[test]
+	fn output_error_stays_classified() {
+		let mut stdout = Vec::new();
+		let mut stderr = Vec::new();
+		let e = anyhow::anyhow!("a failure that looks like nothing known");
+		let code = code_pour_sortie(Mode::Json, Err(e), &mut stdout, &mut stderr);
+		assert_eq!(code, classify::EXIT_UNEXPECTED);
+		let parsed: serde_json::Value = serde_json::from_slice(&stdout).expect("json");
+		assert_eq!(parsed["ok"], serde_json::Value::Bool(false));
+		assert!(stderr.is_empty(), "in JSON mode everything goes to stdout");
 	}
 
 	#[test]

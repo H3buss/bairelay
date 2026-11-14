@@ -106,6 +106,121 @@ pub enum Outcome {
 		/// (matches the gate `populate_abilities` builds against).
 		entries: Vec<AbilityEntry>,
 	},
+	/// Ungated `TalkAbility` probe (msg id 10, sent without consulting the
+	/// `two_way_audio` ability table). `found` is false when the reply
+	/// carried no `<TalkAbility>` element; `code` is the camera's raw
+	/// header response code in every case — `200` OK, `405` unknown command
+	/// on this family, `400` refused, `482` seen on other firmware — and is
+	/// never mapped onto a coarser label. `payload` names what the reply
+	/// actually carried (`"xml"`, `"none"`, `"binary(N bytes)"`,
+	/// `"legacy"`), which separates "empty ack" from "answered with
+	/// unrelated XML". A camera that never answered at all is an *error*,
+	/// not this outcome, so the four cases stay distinguishable.
+	TalkAbility {
+		found: bool,
+		code: u16,
+		payload: String,
+		/// Re-serialised `<TalkAbility>` element, when one arrived. Same
+		/// caveat as [`Outcome::Abilities::xml`]: re-serialised from the
+		/// parsed form, so field order is ours, not the camera's.
+		#[serde(skip_serializing_if = "Option::is_none")]
+		xml: Option<String>,
+		/// Every `<audioConfig>` the camera listed (codec, rate, precision,
+		/// block size, track count).
+		#[serde(skip_serializing_if = "Vec::is_empty")]
+		configs: Vec<TalkAudioConfig>,
+		/// `<duplexList>` values (`"FDX"` / `"FBX"`).
+		#[serde(skip_serializing_if = "Vec::is_empty")]
+		duplex: Vec<String>,
+		/// `<audioStreamModeList>` values (`"followVideoStream"`).
+		#[serde(skip_serializing_if = "Vec::is_empty")]
+		audio_stream_modes: Vec<String>,
+	},
+	/// One-shot talk transmission (`talk`): the camera accepted the
+	/// `TalkConfig` and every 202 payload was written.
+	///
+	/// `audio_seconds` is the length of what we encoded, `wall_seconds` the
+	/// time the send actually took — the two must agree within the pacing the
+	/// sender imposes (one 64 ms block per block). Neither says anything about
+	/// whether a human heard the loudspeaker: bairelay has no microphone on
+	/// this side, so the human renderer says so out loud instead of claiming
+	/// success.
+	Talk {
+		/// Path as given on the command line.
+		file: String,
+		/// `"wav"` or `"raw"`.
+		origin: String,
+		samples: usize,
+		/// `samples / 16000`.
+		audio_seconds: f64,
+		/// Whole ADPCM blocks written on the wire.
+		blocks: usize,
+		/// Bytes per block: `length_per_encoder / 2 + 4`.
+		block_bytes: usize,
+		/// `length_per_encoder` as the camera reported it.
+		length_per_encoder: u16,
+		/// Codec echo of the `<audioConfig>` we drove the encoder from.
+		audio_type: String,
+		sample_rate: u16,
+		sample_precision: u16,
+		sound_track: String,
+		duplex: String,
+		/// Response code of the `<TalkAbility>` probe the config came from.
+		ability_code: u16,
+		/// Wall-clock seconds the whole send took, pacing included.
+		wall_seconds: f64,
+		/// Trailing bytes with no pair (an incomplete final sample).
+		#[serde(skip_serializing_if = "is_zero")]
+		dropped_bytes: usize,
+	},
+	/// One `audio-bridge` bridge run, reported when the bridge ends (stdin
+	/// closed, idle gap exceeded, or Ctrl+C).
+	AudioBridge {
+		/// Talk sessions opened — one per speech burst, see the module docs.
+		bursts: usize,
+		/// Total blocks handed to a session across all bursts (what the
+		/// protocol accepted, not what anyone heard).
+		blocks: usize,
+		/// Total PCM bytes consumed from stdin.
+		bytes_in: usize,
+		/// Seconds the process ran.
+		wall_seconds: f64,
+		/// Why the bridge stopped: `"eof"` (stdin closed — the normal end of a
+		/// call), `"interrupted"` (Ctrl+C after closing the session) or
+		/// `"repeated-failures"`.
+		reason: String,
+		/// Codec echo, so a log line explains itself without a second probe.
+		audio_type: String,
+		sample_rate: u16,
+		block_bytes: usize,
+		/// `--inactivite` in force, in seconds.
+		idle_secs: f64,
+	},
+}
+
+/// Serde helper: omit counters that happened to be zero.
+fn is_zero(v: &usize) -> bool {
+	*v == 0
+}
+
+/// One `<audioConfig>` entry from the camera's `<TalkAbility>` reply —
+/// exactly the shape a `TalkConfig` must be built from before any audio can
+/// be sent, which is the whole reason this probe exists.
+#[derive(Debug, Serialize, PartialEq, Eq, Clone)]
+pub struct TalkAudioConfig {
+	/// `audioType` — `"adpcm"` is the only value the core will accept.
+	pub audio_type: String,
+	/// `sampleRate` in Hz (`16000` per the protocol notes).
+	pub sample_rate: u16,
+	/// `samplePrecision` in bits (`16`).
+	pub sample_precision: u16,
+	/// `lengthPerEncoder` — twice the ADPCM block size.
+	pub length_per_encoder: u16,
+	/// `soundTrack` — `"mono"`.
+	pub sound_track: String,
+	/// `priority`; the camera only sends it during a TalkAbility request.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub priority: Option<u32>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -333,7 +448,166 @@ fn format_human(outcome: &Outcome) -> (String, String) {
 			out.push('\n');
 			(out, String::new())
 		}
+		Outcome::TalkAbility {
+			found: false,
+			code,
+			payload,
+			..
+		} => (
+			format!(
+				"TalkAbility: no answer with <TalkAbility> (code {code}, payload: {payload})\n"
+			),
+			String::new(),
+		),
+		Outcome::TalkAbility {
+			code,
+			payload,
+			xml,
+			configs,
+			duplex,
+			audio_stream_modes,
+			..
+		} => {
+			let mut out = format!("TalkAbility: present (code {code}, payload: {payload})\n");
+			out.push_str(&format!("  duplex: {}\n", join_or_none(duplex)));
+			out.push_str(&format!(
+				"  audioStreamMode: {}\n",
+				join_or_none(audio_stream_modes)
+			));
+			out.push_str(&format!("  audioConfig ({}):\n", configs.len()));
+			if configs.is_empty() {
+				out.push_str("    (none)\n");
+			} else {
+				// Same widths as the rows below, or every column from
+				// `rate` onward sits one space left of its values.
+				out.push_str(&format!(
+					"    {:<11} {:<5} {:<4} {:<11} {:<6} {}\n",
+					"audioType", "rate", "bits", "perEncoder", "track", "priority",
+				));
+				for c in configs {
+					let shown = |v: &str| {
+						if v.is_empty() {
+							"(empty)".to_string()
+						} else {
+							sanitize_display(v)
+						}
+					};
+					let priority = match c.priority {
+						Some(p) => p.to_string(),
+						None => "-".to_string(),
+					};
+					out.push_str(&format!(
+						"    {:<11} {:<5} {:<4} {:<11} {:<6} {}\n",
+						shown(&c.audio_type),
+						c.sample_rate,
+						c.sample_precision,
+						c.length_per_encoder,
+						shown(&c.sound_track),
+						priority,
+					));
+				}
+			}
+			out.push_str("\nxml:\n");
+			out.push_str(xml.as_deref().unwrap_or("(unavailable)"));
+			out.push('\n');
+			(out, String::new())
+		}
+		Outcome::Talk {
+			file,
+			origin,
+			samples,
+			audio_seconds,
+			blocks,
+			block_bytes,
+			length_per_encoder,
+			audio_type,
+			sample_rate,
+			sample_precision,
+			sound_track,
+			duplex,
+			ability_code,
+			wall_seconds,
+			dropped_bytes,
+		} => {
+			let mut out = format!(
+				"talk: {} ({}) — {} samples, {:.3} s of audio\n",
+				sanitize_display(file),
+				origin,
+				samples,
+				audio_seconds,
+			);
+			out.push_str(&format!(
+				"  codec: {}/{}Hz/{}b/{}/{} — the entry the camera asked for (TalkAbility code {ability_code})\n",
+				sanitize_display(audio_type),
+				sample_rate,
+				sample_precision,
+				length_per_encoder,
+				sanitize_display(sound_track),
+			));
+			out.push_str(&format!(
+				"  duplex: {} — sent {} block(s) of {} B in {:.2} s wall\n",
+				sanitize_display(duplex),
+				blocks,
+				block_bytes,
+				wall_seconds,
+			));
+			if *dropped_bytes > 0 {
+				out.push_str(&format!("  ignored {} trailing byte(s)\n", dropped_bytes));
+			}
+			// Never claim the sound arrived: nothing on this side can hear the
+			// loudspeaker. The operator's ears are the measurement.
+			out.push_str(
+				"  the session was accepted and the blocks were written; bairelay cannot hear \
+				 the loudspeaker, so whether anything was audible is yours to measure\n",
+			);
+			(out, String::new())
+		}
+		Outcome::AudioBridge {
+			bursts,
+			blocks,
+			bytes_in,
+			wall_seconds,
+			reason,
+			audio_type,
+			sample_rate,
+			block_bytes,
+			idle_secs,
+		} => {
+			let mut out = format!(
+				"audio-bridge: {} talk session(s), {} block(s) of {} B, {} byte(s) in, {:.1} s wall\n",
+				bursts, blocks, block_bytes, bytes_in, wall_seconds,
+			);
+			// Phrased as the policy in force, not as a past event: this line is
+			// printed even when stdin closed before a single byte arrived and no
+			// session was ever opened, and a summary must not claim a close that
+			// never happened.
+			out.push_str(&format!(
+				"  codec: {}/{}Hz, idle limit {:.1} s (a session closes once stdin has been quiet that long)\n",
+				sanitize_display(audio_type),
+				sample_rate,
+				idle_secs,
+			));
+			out.push_str(&format!("  stopped: {}\n", sanitize_display(reason)));
+			out.push_str(
+				"  the audio you did or did not hear is the measurement; this side cannot \
+				 hear the loudspeaker\n",
+			);
+			(out, String::new())
+		}
 	}
+}
+
+/// `", "`-joined list, or `"(none)"` when empty. Camera-supplied values go
+/// through [`sanitize_display`] so a broken reply can't inject escapes.
+fn join_or_none(items: &[String]) -> String {
+	if items.is_empty() {
+		return "(none)".to_string();
+	}
+	items
+		.iter()
+		.map(|s| sanitize_display(s))
+		.collect::<Vec<_>>()
+		.join(", ")
 }
 
 /// Longest camera-supplied string, in characters, printed in human mode.
@@ -975,4 +1249,99 @@ mod tests {
 		assert_eq!(v["build_day"], "build 23112233");
 		assert!(v.get("kind").is_none());
 	}
+
+	/// The whole point of the probe: a refusal must show up as a result with
+	/// the camera's own code, not as a formatted error.
+	#[test]
+	fn human_talk_ability_absent_prints_raw_code() {
+		let r = Outcome::TalkAbility {
+			found: false,
+			code: 405,
+			payload: "none".into(),
+			xml: None,
+			configs: vec![],
+			duplex: vec![],
+			audio_stream_modes: vec![],
+		};
+		let (stdout, _) = format_success(Mode::Human, &r);
+		assert!(stdout.contains("no answer with <TalkAbility>"), "{stdout}");
+		assert!(stdout.contains("code 405"), "{stdout}");
+		assert!(stdout.contains("payload: none"), "{stdout}");
+	}
+
+	fn talk_ability_present() -> Outcome {
+		Outcome::TalkAbility {
+			found: true,
+			code: 200,
+			payload: "xml".into(),
+			xml: Some("<TalkAbility/>".into()),
+			configs: vec![TalkAudioConfig {
+				audio_type: "adpcm".into(),
+				sample_rate: 16000,
+				sample_precision: 16,
+				length_per_encoder: 64,
+				sound_track: "mono".into(),
+				priority: None,
+			}],
+			duplex: vec!["FDX".into()],
+			audio_stream_modes: vec!["followVideoStream".into()],
+		}
+	}
+
+	#[test]
+	fn human_talk_ability_present_prints_table_and_xml() {
+		let (stdout, _) = format_success(Mode::Human, &talk_ability_present());
+		assert!(stdout.contains("TalkAbility: present (code 200"), "{stdout}");
+		assert!(stdout.contains("duplex: FDX"), "{stdout}");
+		assert!(stdout.contains("adpcm"), "{stdout}");
+		assert!(stdout.contains("16000"), "{stdout}");
+		assert!(stdout.contains("priority"), "{stdout}");
+		assert!(stdout.contains("-\n") || stdout.contains(" -"), "{stdout}");
+		assert!(stdout.contains("<TalkAbility/>"), "{stdout}");
+	}
+
+	#[test]
+	fn json_talk_ability_keeps_code_and_parsed_fields() {
+		let (stdout, _) = format_success(Mode::Json, &talk_ability_present());
+		let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+		assert_eq!(v["ok"], true);
+		assert!(v.get("kind").is_none());
+		assert_eq!(v["found"], true);
+		assert_eq!(v["code"], 200);
+		assert_eq!(v["payload"], "xml");
+		assert_eq!(v["xml"], "<TalkAbility/>");
+		let cfg = &v["configs"][0];
+		assert_eq!(cfg["audio_type"], "adpcm");
+		assert_eq!(cfg["sample_rate"], 16000);
+		assert_eq!(cfg["sample_precision"], 16);
+		assert_eq!(cfg["length_per_encoder"], 64);
+		assert_eq!(cfg["sound_track"], "mono");
+		// `priority: None` is skipped, not null.
+		assert!(cfg.get("priority").is_none());
+		assert_eq!(v["duplex"][0], "FDX");
+		assert_eq!(v["audio_stream_modes"][0], "followVideoStream");
+	}
+
+	/// An empty `<audioConfigList>` must still render (and still serialize
+	/// as an absent key rather than a null one).
+	#[test]
+	fn json_talk_ability_present_without_configs() {
+		let r = Outcome::TalkAbility {
+			found: true,
+			code: 200,
+			payload: "xml".into(),
+			xml: Some("<TalkAbility/>".into()),
+			configs: vec![],
+			duplex: vec![],
+			audio_stream_modes: vec![],
+		};
+		let (stdout, _) = format_success(Mode::Json, &r);
+		let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+		assert_eq!(v["found"], true);
+		assert!(v.get("configs").is_none());
+		let (human, _) = format_success(Mode::Human, &r);
+		assert!(human.contains("audioConfig (0)"), "{human}");
+		assert!(human.contains("(none)"), "{human}");
+	}
+
 }

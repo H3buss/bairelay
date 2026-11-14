@@ -19,8 +19,9 @@ use crate::cli_convert::{
 	service_name_to_core,
 };
 use crate::oneshot::{
-	abilities, battery, errors::UsageError, floodlight, output::Outcome, pir, presets, ptz, reboot,
-	services, set_time, siren, snapshot, status_light, users, version, webhook,
+	abilities, audio_bridge, battery, errors::UsageError, floodlight, output::Outcome, pir,
+	presets, ptz, reboot, services, set_time, siren, snapshot, status_light, talk, talk_capability,
+	users, version, webhook,
 };
 
 /// Pre-flight check for `snapshot --json`: the JSON status line and
@@ -89,6 +90,15 @@ pub async fn dispatch_oneshot(
 		Command::Siren(_) => siren::run(cam).await,
 		Command::Abilities(_) => abilities::run(cam).await,
 		Command::Webhook(_) => webhook::run(cam).await,
+		// Diagnostic route: the real body needs the concrete `BcCamera` and
+		// is dispatched from `run_oneshot` before this seam. Reaching this
+		// arm means that branch was skipped.
+		Command::TalkAbility(_) => talk_capability::run_via_driver(cam).await,
+		// Same story for the two talk senders: `talk` / `talk_stream` are not
+		// on the trait, so the concrete route in `run_support` must catch them
+		// first. Reaching these arms means that branch was skipped.
+		Command::Talk { .. } => talk::run_via_driver(cam).await,
+		Command::AudioBridge { .. } => audio_bridge::run_via_driver(cam).await,
 		Command::Presets(_) => presets::run(cam).await,
 		Command::SetTime(_) => set_time::run(cam).await,
 		Command::Snapshot {
@@ -185,6 +195,14 @@ pub async fn dispatch_oneshot(
 			// before dispatch; reaching here means that was bypassed.
 			Err(anyhow::anyhow!(
 				"internal: cloud-authorise routed through camera dispatch"
+			))
+		}
+		Command::AudioCheck { .. } => {
+			// `main::async_main` dispatches `audio-check` before the one-shot
+			// pipeline runs (it needs no camera and no config file); reaching
+			// this arm means the early-return was bypassed. Programmer bug.
+			Err(anyhow::anyhow!(
+				"internal: audio-check routed through camera dispatch"
 			))
 		}
 		Command::RenderHassioConfig { .. } => {

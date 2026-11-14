@@ -101,6 +101,40 @@ async fn async_main() -> Result<()> {
 		return Ok(());
 	}
 
+	// `audio-check` is the local-only audio check: it reads one file, runs
+	// the talk encoder and the project's own decoder over it, and prints the
+	// numbers. Like `render-hassio-config` it must not read the config file or
+	// touch a camera, so it is dispatched here as well.
+	if let Command::AudioCheck {
+		file,
+		raw,
+		header,
+		compare,
+		block_length,
+		bench,
+	} = &cli.command
+	{
+		let outcome = bairelay::audio_control::command(
+			file.clone(),
+			*raw,
+			header.clone(),
+			*block_length,
+			*bench,
+			*compare,
+		)
+		.await;
+		if let Err(e) = outcome {
+			eprintln!("{e}");
+			// Same exit table the one-shot commands use: 2 for a bad
+			// invocation, 1 for anything else.
+			let usage = e
+				.downcast_ref::<bairelay::oneshot::errors::UsageError>()
+				.is_some();
+			std::process::exit(if usage { 2 } else { 1 });
+		}
+		return Ok(());
+	}
+
 	// One-shot subcommands exit before any MQTT / RTSP / orchestrator
 	// bring-up; service modes fall through to the existing pipeline.
 	if cli.is_oneshot() {

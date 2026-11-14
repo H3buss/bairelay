@@ -32,9 +32,13 @@ Camera commands:
   siren          Trigger the siren once
   abilities      Dump the camera's abilityInfo XML + parsed permissions
   webhook        Read the camera's HTTP webhook configuration
+  talk-ability   Probe <TalkAbility> ungated; print the raw reply
+  talk           Send a PCM file through the camera loudspeaker (one shot)
+  audio-bridge   Bridge stdin PCM to the camera loudspeaker (go2rtc backchannel)
 
 Other:
   check-config   Validate the config file and exit (no camera connection)
+  audio-check    Verify the talk ADPCM encoder against a PCM file (offline)
   cloud-authorise Clear cloud login verification (MFA) for this host (~30 days)
   help           Print help for the given subcommand
 
@@ -281,6 +285,116 @@ pub enum Command {
 	/// retrying the wake-time 400. Read-only.
 	Webhook(OneShotArgs),
 
+	/// Ask the camera for its `<TalkAbility>` element (msg id 10) and print
+	/// the answer verbatim, **bypassing** the `two_way_audio` ability gate
+	/// that `talk_ability()` applies. Read-only: only the capability read is
+	/// sent — no talk config (201), no audio (202), no reset (11). Reports
+	/// the reply code unedited (200 ok, 405 unknown command on this family,
+	/// 482 elsewhere), so an AbilityInfo that under-reports can be checked
+	/// against what the box actually answers. Needs the concrete session, so
+	/// it runs on the same route as `snapshot --use-stream-raw`.
+	TalkAbility(OneShotArgs),
+
+	/// Speak through the camera's loudspeaker once: validate a PCM file,
+	/// encode it into the ADPCM geometry the camera's own `<TalkAbility>`
+	/// answer asks for, and pace it out at real speed (one 64 ms block per
+	/// block — sending it all at once overruns the firmware).
+	///
+	/// Accepts a 16-bit signed PCM WAV at 16000 Hz mono, or headerless bytes
+	/// with `--raw`. Any other format is refused, naming what was found in
+	/// the file instead of silently re-encoding it. Needs
+	/// `two_way_audio = true` on the camera when its `abilityInfo` fails to
+	/// advertise the microphone (see README).
+	Talk {
+		#[command(flatten)]
+		common: OneShotArgs,
+		/// Audio file to send (PCM WAV, or headerless with --raw).
+		#[arg(long = "file", value_name = "PATH")]
+		file: PathBuf,
+		/// The file is headerless signed 16-bit LE PCM at 16000 Hz mono.
+		#[arg(long = "raw")]
+		raw: bool,
+		/// What the 4 header bytes of each ADPCM block carry: `sample`
+		/// (default) puts that block's first sample there, so the loudspeaker
+		/// hears every sample exactly once; `repeat` puts the previous
+		/// block's last sample there instead, which costs one duplicated
+		/// sample per block (every 64 ms) and is only here to A/B the two on
+		/// the hardware. Compare them offline with `audio-check --compare`.
+		#[arg(long = "header", value_name = "HEADER", default_value = "sample")]
+		header: String,
+	},
+
+	/// Live audio bridge: read signed 16-bit LE PCM at 16000 Hz mono from
+	/// **stdin** and speak it through the camera until stdin closes. This is
+	/// the Home Assistant / go2rtc backchannel entry point (`exec` source
+	/// with `#backchannel=1#audio=s16le/16000`); the camera's microphone
+	/// comes back on the RTSP stream go2rtc already pulls, so nothing here
+	/// writes to stdout.
+	///
+	/// A talk session is opened at the first byte and closed on silence or
+	/// EOF, because a killed process can never send the reset (msg 11) — see
+	/// the module docs. EOF is the normal end of a call and exits 0.
+	AudioBridge {
+		#[command(flatten)]
+		common: OneShotArgs,
+		/// Silence, in seconds, that ends the current talk session.
+		#[arg(long = "idle", value_name = "SEC", default_value_t = 2.0)]
+		idle: f64,
+		/// Block-header convention, same meaning (and same default) as
+		/// `talk --header`; the live bridge shares the encoder, so it must be
+		/// able to speak either layout.
+		#[arg(long = "header", value_name = "HEADER", default_value = "sample")]
+		header: String,
+		/// Format of the bytes arriving on stdin: `s16le/16000` for raw PCM, or
+		/// `pcmu/8000` / `pcma/8000` for G.711. go2rtc pipes the payload the
+		/// browser actually negotiated and transcodes nothing, and a browser can
+		/// only negotiate what it offered — G.711 at 8 kHz, never 16-bit PCM at
+		/// 16 kHz. Whatever go2rtc declares in `#audio=` must be repeated here.
+		#[arg(long = "input", value_name = "FORMAT", default_value = "s16le/16000")]
+		input: String,
+		/// Input gain, applied to the decoded samples before the ADPCM encoder.
+		/// A browser microphone typically arrives well below full scale and the
+		/// doorbell's amplifier is small, so the bridge is audibly quiet with a
+		/// factor of 1. This is the only loudness knob that is not a camera
+		/// setting; above ~4 the ADPCM encoder starts to clip on loud peaks.
+		#[arg(long = "gain", value_name = "FACTOR", default_value = "1")]
+		gain: f32,
+	},
+
+	/// Check the talk audio path **locally**: encode a file with the very
+	/// encoder `talk` uses, decode it back with the very decoder the RTSP
+	/// side uses for the camera's own audio, and print what came out. No
+	/// camera, no network, no config file — this measures the encoder, the
+	/// block geometry and the timer, which is everything about the crackle
+	/// that can be measured without a loudspeaker.
+	///
+	/// Reports sample counts in and out (samples lost, invented or played
+	/// twice), the error against the input, and whether that error jumps at
+	/// the block seams (`--compare` runs both header conventions side by
+	/// side). `--bench N` instead benches this machine's 64 ms timer.
+	AudioCheck {
+		/// Audio file to check (PCM WAV, or headerless with --raw).
+		#[arg(long = "file", value_name = "PATH")]
+		file: Option<PathBuf>,
+		/// The file is headerless signed 16-bit LE PCM at 16000 Hz mono.
+		#[arg(long = "raw")]
+		raw: bool,
+		/// Header convention to measure (`sample` or `repeat`).
+		#[arg(long = "header", value_name = "HEADER")]
+		header: Option<String>,
+		/// Run both conventions and print the comparison.
+		#[arg(long = "compare")]
+		compare: bool,
+		/// `lengthPerEncoder` to assume (the doorbell answers 1024).
+		#[arg(long = "block-length", value_name = "N", default_value_t = 1024)]
+		block_length: u16,
+		/// Skip the audio check and bench the block timer instead: N sleeps of
+		/// 64 ms, relative (what `talk()` does) against absolute deadlines.
+		#[arg(long = "bench", value_name = "N")]
+		bench: Option<usize>,
+	},
+
+
 	/// Query or set the PIR sensor.
 	Pir {
 		#[command(flatten)]
@@ -392,6 +506,9 @@ impl Cli {
 			| Command::Siren(_)
 			| Command::Abilities(_)
 			| Command::Webhook(_)
+			| Command::TalkAbility(_)
+			| Command::Talk { .. }
+			| Command::AudioBridge { .. }
 			| Command::Pir { .. }
 			| Command::StatusLight { .. }
 			| Command::Ptz { .. }
@@ -399,7 +516,8 @@ impl Cli {
 			| Command::Users { .. }
 			| Command::CheckConfig
 			| Command::CloudAuthorise { .. }
-			| Command::RenderHassioConfig { .. } => None,
+			| Command::RenderHassioConfig { .. }
+			| Command::AudioCheck { .. } => None,
 		}
 	}
 
@@ -448,6 +566,8 @@ impl Cli {
 			| Command::MqttRtsp { .. }
 			| Command::CheckConfig
 			| Command::CloudAuthorise { .. }
+			// Local-only check: no camera, so no camera to name.
+			| Command::AudioCheck { .. }
 			| Command::RenderHassioConfig { .. } => None,
 			Command::Reboot(a)
 			| Command::Battery(a)
@@ -456,8 +576,11 @@ impl Cli {
 			| Command::Version(a)
 			| Command::Siren(a)
 			| Command::Abilities(a)
-			| Command::Webhook(a) => Some(&a.camera),
+			| Command::Webhook(a)
+			| Command::TalkAbility(a) => Some(&a.camera),
 			Command::Snapshot { common, .. }
+			| Command::Talk { common, .. }
+			| Command::AudioBridge { common, .. }
 			| Command::Floodlight { common, .. }
 			| Command::Pir { common, .. }
 			| Command::StatusLight { common, .. }
@@ -729,6 +852,98 @@ mod tests {
 		assert!(!cli.is_oneshot());
 	}
 
+	/// The two talk senders need their own flags, a camera name (that is what
+	/// routes them to the concrete-`BcCamera` intercept), and a required
+	/// `--file` so a forgotten flag cannot become a silent no-op.
+	#[test]
+	fn parse_talk_and_audio_bridge() {
+		let cli = Cli::try_parse_from([
+			"bairelay",
+			"talk",
+			"doorbell",
+			"--file",
+			"test.wav",
+			"--raw",
+		])
+		.unwrap();
+		let Command::Talk {
+			common,
+			file,
+			raw,
+			header,
+		} = &cli.command
+		else {
+			panic!("wrong variant")
+		};
+		assert_eq!(common.camera, "doorbell");
+		assert_eq!(*file, PathBuf::from("test.wav"));
+		assert!(*raw);
+		assert_eq!(header, "sample", "the default header is the measured wire layout");
+		assert!(cli.is_oneshot());
+		assert_eq!(cli.camera_name(), Some("doorbell"));
+		assert!(cli.dump_bcmedia_path().is_none());
+
+		assert!(
+			Cli::try_parse_from(["bairelay", "talk", "doorbell"]).is_err(),
+			"talk without --file must be a usage error, not a silent no-op"
+		);
+
+		let cli = Cli::try_parse_from(["bairelay", "audio-bridge", "doorbell"]).unwrap();
+		let Command::AudioBridge {
+			common,
+			idle,
+			header,
+			input,
+			gain,
+		} = &cli.command
+		else {
+			panic!("wrong variant")
+		};
+		assert_eq!(common.camera, "doorbell");
+		assert_eq!(
+			*idle, 2.0,
+			"a short default gap is what limits an orphaned session"
+		);
+		assert_eq!(header, "sample");
+		assert_eq!(
+			input, "s16le/16000",
+			"the bridge keeps the raw-PCM default; go2rtc has to ask for G.711 out loud"
+		);
+		assert_eq!(
+			*gain, 1.0,
+			"no silent rescaling by default: loudness is decided in go2rtc.yaml, not here"
+		);
+		let cloned = crate::cli_convert::clone_command(&cli.command);
+		assert!(matches!(cloned, Command::AudioBridge { .. }));
+
+		// The exact spelling `go2rtc.yaml` passes must reach a usable format,
+		// otherwise the two halves of the intercom disagree in silence.
+		let cli = Cli::try_parse_from([
+			"bairelay",
+			"audio-bridge",
+			"doorbell",
+			"--input",
+			"pcmu/8000",
+		])
+		.unwrap();
+		let Command::AudioBridge { input, .. } = &cli.command else {
+			panic!("wrong variant")
+		};
+		assert_eq!(input, "pcmu/8000");
+		assert_eq!(
+			crate::oneshot::input::Input::parse(input).unwrap(),
+			crate::oneshot::input::Input::Pcmu8k
+		);
+
+		let cli =
+			Cli::try_parse_from(["bairelay", "audio-bridge", "doorbell", "--idle", "0.5"])
+				.unwrap();
+		let Command::AudioBridge { idle, .. } = &cli.command else {
+			panic!("wrong variant")
+		};
+		assert_eq!(*idle, 0.5);
+	}
+
 	#[test]
 	fn parse_pir_read_and_set() {
 		let cli = Cli::try_parse_from(["bairelay", "pir", "driveway"]).unwrap();
@@ -958,6 +1173,10 @@ mod tests {
 			"siren",
 			"abilities",
 			"webhook",
+			"talk-ability",
+			"talk",
+			"audio-bridge",
+			"audio-check",
 		] {
 			assert!(
 				help.contains(cmd),

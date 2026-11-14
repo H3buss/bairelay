@@ -354,6 +354,7 @@ pub fn parse_webhook_advertise(raw: &str) -> Result<WebhookAdvertise, String> {
 	Ok(WebhookAdvertise { host, port })
 }
 
+
 // ── UserConfig ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -545,6 +546,21 @@ pub struct CameraConfig {
 	#[serde(default)]
 	pub webhook: bool,
 
+	/// Declare that this camera can do two-way audio even though its
+	/// `abilityInfo` does not list `two_way_audio`, so the talk path
+	/// (`talk`, `audio-bridge`) is allowed for **this camera only**.
+	///
+	/// This is a firmware under-declaration, verified by `talk-abilite`: the
+	/// doorbell answers `<TalkAbility>` (msg 10) with `version 1.1`, `FDX`
+	/// duplex and an `adpcm` 16000 Hz / 16 bit / 1024-sample-per-block
+	/// configuration, while its 56-entry `abilityInfo` lists no talk ability
+	/// at all. Default `false` keeps the ability gate exactly as strict as it
+	/// has always been for every other camera — and setting it on a camera
+	/// that genuinely lacks the microphone only makes the camera refuse the
+	/// talk config, it does not make bairelay any less strict elsewhere.
+	#[serde(default)]
+	pub two_way_audio: bool,
+
 	// ── Neolink migration compat (deprecated; warn + ignore) ──────────
 	// Each Option<_> exists only so old configs parse cleanly under
 	// `deny_unknown_fields`. `warn_neolink_compat_fields` emits a one-
@@ -608,6 +624,7 @@ impl Default for CameraConfig {
 			permitted_users: Vec::new(),
 			debug: None,
 			webhook: false,
+			two_way_audio: false,
 			print_format: None,
 			update_time: None,
 			buffer_duration: None,

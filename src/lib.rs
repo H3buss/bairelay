@@ -1,3 +1,4 @@
+pub mod audio_control;
 pub mod audio_presence;
 pub mod bc_opts;
 pub mod bcmedia_dump;
