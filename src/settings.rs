@@ -353,7 +353,7 @@ pub(crate) async fn clear_family(publ: &StatusPublisher<'_>, family: Family) {
 pub(crate) const REASON_TIMEOUT: &str = "the camera did not answer in time";
 
 /// Puts a family in a state where it can be read but not written, and says so.
-pub(crate) const REASON_READ_SEULE: &str =
+pub(crate) const REASON_READ_ONLY: &str =
 	"the camera reads this setting but refuses the block back: read-only";
 
 /// The bridge has no open Baichuan session: the command could not leave.
@@ -448,7 +448,7 @@ pub(crate) async fn publish_reason_unknown(
 	publish_reason(publ, family, &format!("{reason}{REASON_SANS_VERROUILLAGE}")).await;
 }
 
-/// Publie le motif d'un refus **transitoire** : la caméra a répondu mauvais, trop
+/// Publishes the reason for a **transient** refusal: the camera answered badly, too
 /// tard, or in an unusable block, and the family **stays published as writable**.
 ///
 /// The consequence ([`REASON_TRANSITOIRE`]) comes first, before the technical reason
@@ -492,8 +492,7 @@ pub(crate) fn cause(err: &Error) -> String {
 		// the camera wrote a response carrying its code, and this text is the only
 		// thing that says why. It already arrives bounded from the core and
 		// `publishable_reason` puts it on one tagless line before it touches
-		// the broker — tag names stay readable, they are often the diagnosis.
-		// l'information.
+		// the broker — the tag names stay readable, and they carry the information.
 		Error::CameraRefused { code, detail, .. } => {
 			format!("the camera refused the command (code {code}) - it answered: {detail}")
 		}
@@ -550,85 +549,85 @@ pub(crate) enum Verdict {
 	/// them back twenty seconds later, and `image` is the lived example of a read
 	/// refusing while the write goes through. The family is therefore published
 	/// **writable**, as before this verdict, and the reason for the refusal is
-	/// published next to it: that pair is what the operator asked for.
-	/// muet ».
+	/// published next to it: that pair is what the operator asked for, usable but not
+	/// silent.
 	Transient,
-	/// Rien n'a pu être tenté du tout : pas de session Baïchuan, identification
-	/// refusée, caméra injoignable, capacité absente. Ce n'est pas une réponse de
-	/// la caméra, donc le pont ne promet rien qu'il n'ait pu vérifier : la
-	/// discovery ne change **rien** ; le motif, lui, se published.
+	/// Nothing could be attempted at all: no Baichuan session, login
+	/// refused, camera unreachable, ability missing. This is not an answer from
+	/// the camera, so the bridge promises nothing it could not verify: the
+	/// discovery changes **nothing**; the reason, on its side, is published.
 	Unknown,
 }
 
 impl Verdict {
-	/// Le booléen que comprend le publieur de discovery. `None` = « ne change
-	/// rien à ce qui est publié » ([`Verdict::Unknown`]).
+	/// The boolean the discovery publisher understands. `None` = "does not change
+	/// what is published" ([`Verdict::Unknown`]).
 	pub(crate) fn writable(self) -> Option<bool> {
 		match self {
 			Verdict::Writable => Some(true),
 			Verdict::NotWritable => Some(false),
-			// Une lecture qui n'a pas abouti pour une raison passagère ne retire
-			// pas une commande qui fonctionnait : c'est le cœur de la correction.
+			// A read that did not succeed for a transient reason does not take away
+			// a command that used to work: that is the heart of the correction.
 			Verdict::Transient => Some(true),
 			Verdict::Unknown => None,
 		}
 	}
 }
 
-/// Ce que la branche de [`sync_family`] a compris du porteur qu'elle vient de
-/// lire.
+/// What the branch of [`sync_family`] understood about the carrier it just
+/// read.
 ///
-/// Ces drapeaux voyagent par paramètre plutôt que par la valeur de retour : les
-/// quinze branches de [`sync_family`] sont des blocs `async` séparés pour des
-/// raisons de pile (voir leur doc) et rendent chacune son nombre de feuilles.
-/// Changer quinze signatures pour une information que trois branches seulement
-/// connaît serait le pire endroit pour la payer.
+/// These flags travel by parameter rather than by return value: the
+/// fifteen branches of [`sync_family`] are separate `async` blocks for
+/// stack reasons (see their doc) and each returns its own leaf count.
+/// Changing fifteen signatures for a piece of information only three branches
+/// know would be the worst place to pay for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Writability {
-	/// La caméra accepte qu'on lui renvoie le bloc qu'elle vient d'envoyer.
+	/// The camera accepts having the block it just sent returned to it.
 	pub writable: bool,
-	/// La phrase qui dit pourquoi elle ne l'accepte pas, quand le cas général
-	/// ([`REASON_LECTURE_SEULE`]) ne suffit pas à nommer la balise en cause.
+	/// The sentence saying why it does not accept it, when the general case
+	/// ([`REASON_READ_ONLY`]) is not enough to name the tag at fault.
 	pub cause: Option<&'static str>,
 }
 
 impl Writability {
-	/// Verdict neuf : « réécrivable, sans rien à signaler ».
+	/// A fresh verdict: "writable, nothing to report".
 	pub(crate) fn new() -> Self {
 		Writability { writable: true, cause: None }
 	}
 }
 
-/// Lit une famille, published ses feuilles, et met le topic `reason` à jour : vide
-/// quand la famille est en bonne santé, la phrase du refus sinon. Répond
-/// `(famille, verdict)`, c'est-à-dire ce que la discovery doit publish_now — ou ne
-/// pas publish_now du tout ([`Verdict::Unknown`]).
+/// Reads a family, publishes its leaves, and updates the `reason` topic: empty
+/// when the family is healthy, the refusal sentence otherwise. Answers
+/// `(family, verdict)`, that is what discovery has to publish — or not
+/// publish at all ([`Verdict::Unknown`]).
 ///
-/// C'est **là**, et pas chez l'appelant, que la famille bascule : lecture
-/// réussie → plus aucun motif ; refus → états effacés **et** motif publié. Les
-/// deux moitiés de la règle (« plus jamais silencieux » / « refusé ≠ vide »)
-/// restent ainsi dans le même bloc.
+/// It is **here**, and not in the caller, that the family switches: read
+/// succeeded → no reason left; refusal → states cleared **and** reason published. The
+/// two halves of the rule ("never silent again" / "refused is not empty")
+/// stay in the same block that way.
 ///
-/// Le refus, justement, a trois espèces, et une seule verrouille :
+/// The refusal, precisely, has three kinds, and only one locks:
 ///
-/// * **la preuve locale** — porteur qui ne se renvoie pas, balise absente : elle
-///   est prise dans [`sync_family`] elle-même, en `Ok`, et donne
-///   [`Verdict::NotWritable`] ;
-/// * **la réponse maussade** — `400`, délai dépassé, bloc incompréhensible : elle
-///   ne prouve rien du tout et donne [`Verdict::Transient`]. La famille se
-///   published modifiable, comme avant, avec la raison du refus écrit à côté ;
-/// * **la tentative impossible** — pas de session, caméra injoignable : le pont
-///   n'a rien pu vérifier et rend [`Verdict::Unknown`], qui ne change rien à
-///   la discovery.
+/// * **the local proof** — a carrier that does not send back, a missing tag: it
+///   is taken inside [`sync_family`] itself, as `Ok`, and gives
+///   [`Verdict::NotWritable`];
+/// * **the sulky answer** — `400`, deadline passed, unintelligible block: it
+///   proves nothing at all and gives [`Verdict::Transient`]. The family is
+///   published writable, as before, with the reason for the refusal written next to it;
+/// * **the impossible attempt** — no session, camera unreachable: the bridge
+///   could verify nothing and returns [`Verdict::Unknown`], which changes nothing in
+///   the discovery.
 ///
-/// Sur un refus qui ressemble à un « pas maintenant », une **seconde** tentative
-/// est faite ici même : les GET des réglages n'ont pas la boucle de rejeu que le
-/// dépôt applique déjà ailleurs au même code, et sans elle une salve complète
-/// perd les quatre blocs que la caméra finit par donner quand elle s'est
-/// wakelée. Une seule tentative de plus, pas davantage : `query/settings` est
-/// déjà une quinzaine de commandes radio sur une sonnette sur battery. Le délai
-/// dépassé, lui, n'est pas rejoué — re-tenter une commande à laquelle la caméra
-/// n'a pas répondu, c'est payer deux fois une radio qui dort.
+/// On a refusal that looks like a "not now", a **second** attempt
+/// is made right here: the settings GETs do not have the replay loop the
+/// repository already applies elsewhere to the same code, and without it a full burst
+/// loses the four blocks the camera ends up giving once it has
+/// woken up. One attempt more, no further: `query/settings` is
+/// already about fifteen radio commands on a battery doorbell. The passed
+/// deadline, on its side, is not replayed — retrying a command the camera
+/// did not answer is paying twice for a radio that is asleep.
 pub(crate) async fn read_family(
 	bc: &BcCamera,
 	publ: &StatusPublisher<'_>,
@@ -653,27 +652,27 @@ pub(crate) async fn read_family(
 	}
 }
 
-/// Batterie **déjà lue** par l'appelant : published les cinq champs et rend le même
-/// verdict que [`read_family`], sans repayer la trame 253.
+/// Battery **already read** by the caller: publishes the five fields and returns the
+/// same verdict as [`read_family`], without paying frame 253 a second time.
 ///
-/// Il existe parce que la salve de wake ([`crate::burst`]) lit la battery
-/// elle-même — c'est pour son niveau qu'elle se déclenche — et doit quand même
-/// publish_now les motifs et le verdict comme le fait `query/settings`. Deux chemins
-/// qui publient la battery avec deux règles de verdict, c'est exactement la
-/// divergence que ce module refuse partout ailleurs.
+/// It exists because the wake burst ([`crate::burst`]) reads the battery
+/// itself — it fires for its level — and still has to
+/// publish the reasons and the verdict the way `query/settings` does. Two paths
+/// publishing the battery with two verdict rules is exactly the
+/// divergence this module refuses everywhere else.
 pub(crate) async fn battery_read(
 	publ: &StatusPublisher<'_>,
-	issu: &CoreResult<BatteryInfo>,
+	outcome: &CoreResult<BatteryInfo>,
 ) -> (Family, Verdict) {
-	match issu {
+	match outcome {
 		Ok(_) => promise(publ, Family::Battery, Writability::new(), 5).await,
 		Err(e) => fallback(publ, Family::Battery, e).await,
 	}
 }
 
-/// La famille a répondu son bloc. Publie le verdict qui en découle : motif vidé
-/// si nous savons le lui renvoyer, sinon la phrase qui explique pourquoi l'écriture
-/// ne sera jamais promise. Les états, eux, restent en place — ils sont justes.
+/// The family answered its block. Publishes the verdict that follows: reason emptied
+/// if we know how to send the block back, otherwise the sentence explaining why the
+/// write will never be promised. The states stay in place — they are right.
 async fn promise(
 	publ: &StatusPublisher<'_>,
 	family: Family,
@@ -690,24 +689,24 @@ async fn promise(
 		clear_reason(publ, family).await;
 		return (family, Verdict::Writable);
 	}
-	// Pas un refus de la caméra : une promesse que nous ne ferons pas.
-	publish_reason(publ, family, scope.cause.unwrap_or(REASON_READ_SEULE)).await;
+	// Not a refusal from the camera: a promise we are not going to make.
+	publish_reason(publ, family, scope.cause.unwrap_or(REASON_READ_ONLY)).await;
 	(family, Verdict::NotWritable)
 }
 
-/// La caméra n'a rien donné d'exploitable : c'est le fallback, et c'est lui qui
-/// décide quelle espèce de manque nous avons sous les yeux.
+/// The camera gave nothing usable: this is the fallback, and it is what
+/// decides which kind of missing we have in front of us.
 ///
-/// Dans les deux cas les états conservés sont effacés — « on ne sait pas » ne se
-/// rend pas avec la valeur de la dernière fois — et le motif est publié. Ce qui
-/// change est le verdict :
+/// In both cases the retained states are cleared — "we do not know" is not
+/// rendered with last time's value — and the reason is published. What
+/// changes is the verdict:
 ///
-/// * **passable** (400, délai, bloc incompréhensible) → [`Verdict::Transient`] :
-///   la famille se published modifiable avec la raison à côté, parce qu'un refus de
-///   **lecture** n'a jamais rien prouvé contre l'**écriture** ;
-/// * **tentative impossible** (pas de session, caméra injoignable, capacité
-///   absente) → [`Verdict::Unknown`] : le pont ne peut promettre ce qu'il n'a
-///   pas pu tenter, la discovery garde ce qu'elle avait.
+/// * **passable** (400, deadline, unintelligible block) → [`Verdict::Transient`]:
+///   the family is published writable with the reason next to it, because a refusal
+///   of a **read** never proved anything against the **write**;
+/// * **impossible attempt** (no session, camera unreachable, ability
+///   missing) → [`Verdict::Unknown`]: the bridge cannot promise what it did not
+///   get to attempt, discovery keeps what it had.
 async fn fallback(publ: &StatusPublisher<'_>, family: Family, e: &Error) -> (Family, Verdict) {
 	clear_family(publ, family).await;
 	if is_transient(e) {
@@ -728,12 +727,12 @@ async fn fallback(publ: &StatusPublisher<'_>, family: Family, e: &Error) -> (Fam
 	(family, Verdict::Unknown)
 }
 
-/// Ce refus est-il une **raison passagère**, qui ne dit rien de l'écriture ?
+/// Is this refusal a **transient reason**, which says nothing about writing?
 ///
-/// Trois familles de symptômes, et elles sont les trois que le terrain a vues :
-/// le `400` de ce dialecte, qui veut dire « pas maintenant » et non « pas ça » ;
-/// le délai dépassé, quand la sonnette dort ou que quinze commandes d'affilée
-/// l'ont essoufflée ; et le bloc reçu mais inutilisable, qu'un firmware endormi
+/// Three families of symptoms, and they are the three the field saw:
+/// the `400` of this dialect, which means "not now" and not "not that";
+/// the passed deadline, when the doorbell is asleep or fifteen commands in a row
+/// have winded it; and the block received but unusable, which a sleeping firmware
 /// A refusal met during a read. The three transient shapes (a `400`, a
 /// refusal carrying text, a timeout) do **not** lock: the bridge could not
 fn is_transient(e: &Error) -> bool {
@@ -943,18 +942,18 @@ pub(crate) async fn sync_family(
 /// — lists **all** families in the order read, each with its verdict
 /// ([`Verdict`]): that is what discovery needs to publish the writable
 /// settings, leave the read-only ones, or keep them where they are.
-/// d'un code passager y figure en [`Verdict::Transient`] et se published
-/// **modifiable** avec sa raison à côté ; une famille qu'on n'a pas pu tenter du
-/// tout (pas de session, caméra injoignable) y figure en [`Verdict::Unknown`]
-/// et **ne change pas de statut**. Les confondre, c'était la régression du
-/// premier jour de terrain : quatre familles verrouillées par un `400` pendant que
-/// la caméra se wakelait.
+/// A family refused with a transient code appears there as [`Verdict::Transient`] and
+/// is published **writable** with its reason next to it; a family we could not
+/// attempt at all (no session, camera unreachable) appears as [`Verdict::Unknown`]
+/// and **does not change status**. Confusing them was the regression of
+/// the first field day: four families locked by a `400` while
+/// the camera was waking up.
 ///
-/// Le `Vec` est un paramètre et non une valeur de retour : quand la
-/// synchronisation complète est interrompue par le délai du dispatch, les
-/// familles déjà relues avant l'interruption sont quand même publiées par la
-/// discovery. Les jeter avec le reste laisserait Home Assistant promettre une
-/// écriture sur une famille qu'on vient justement de relire.
+/// The `Vec` is a parameter and not a return value: when the
+/// full synchronisation is cut short by the dispatch deadline, the
+/// families already re-read before the interruption are still published by the
+/// discovery. Throwing them away with the rest would leave Home Assistant promising
+/// a write on a family we have just re-read.
 pub(crate) async fn sync_all(
 	bc: &BcCamera,
 	publ: &StatusPublisher<'_>,
@@ -966,12 +965,12 @@ pub(crate) async fn sync_all(
 	}
 }
 
-// ── Écriture ────────────────────────────────────────────────────────────
+// ── Writing ─────────────────────────────────────────────────────────────
 
-/// La caméra a imprimé cette balise, on peut donc la modifier. Sinon, refuser :
-/// écrire `<tag>` dans un bloc qui n'en contient pas, c'est envoyer au firmware
-/// une balise qu'il n'a jamais déclarée — exactement l'écriture qu'il avale sans
-/// rien dire.
+/// The camera printed this tag, so we may modify it. Otherwise refuse:
+/// writing `<tag>` into a block that does not contain one is sending the firmware
+/// a tag it never declared — exactly the write it swallows without
+/// saying anything.
 fn tag_present(current: Option<&str>, tag: &str) -> CoreResult<()> {
 	current.map(|_| ()).ok_or_else(|| {
 		Error::Usage(format!(
@@ -981,8 +980,8 @@ fn tag_present(current: Option<&str>, tag: &str) -> CoreResult<()> {
 	})
 }
 
-/// Idem pour une balise numérique (`<enable>`, `<offset>`), dont l'absence se
-/// voit aussi bien sur l'`Option`.
+/// Same for a numeric tag (`<enable>`, `<offset>`), whose absence shows
+/// just as well on the `Option`.
 fn tag_present_opt<T>(current: &Option<T>, tag: &str) -> CoreResult<()> {
 	current
 		.as_ref()
@@ -995,13 +994,13 @@ fn tag_present_opt<T>(current: &Option<T>, tag: &str) -> CoreResult<()> {
 		})
 }
 
-/// Applique une commande de réglage : lecture du bloc, retouche de la seule
-/// balise demandée, écriture, relecture, publication de la relecture.
+/// Applies a setting command: read the block, edit the one
+/// tag asked for, write, re-read, publish the re-read.
 ///
-/// Le `Err` remonte tel quel au dispatch, qui répond `FAIL` sur le topic de
-/// commande : c'est ce qui distingue une écriture refusée d'une écriture
-/// acceptée puis ignorée (dans ce dernier cas la valeur publiée n'est pas celle
-/// qui a dst demandée, et le journal le dit).
+/// The `Err` goes up as is to the dispatch, which answers `FAIL` on the command
+/// topic: that is what tells a refused write apart from a write
+/// accepted and then ignored (in the latter case the published value is not the one
+/// that was requested, and the log says so).
 pub(crate) async fn apply_setting(
 	bc: &BcCamera,
 	publ: &StatusPublisher<'_>,
@@ -1009,15 +1008,15 @@ pub(crate) async fn apply_setting(
 ) -> Result {
 	match cmd {
 		// ── audioCfg (264 / 265) ────────────────────────────────────────
-		// Trois balises, trois entités : `<volume>` (général),
-		// `<talkAndReplyVolume>` (parole), `<visitorVolume>` (visiteur). Chacune
-		// se relit, se retouche seule, se réécrit, se relit.
+		// Three tags, three entities: `<volume>` (general),
+		// `<talkAndReplyVolume>` (intercom speech), `<visitorVolume>` (visitor). Each one
+		// is re-read, edited on its own, re-written, re-read.
 		SettingCommand::AudioGeneralVolume(v) => {
 			let mut cfg = bc.get_audio_cfg(false).await?;
-			// `AudioCfg::volume` est un `String` et non un `Option` : le modèle
-			// 264 imprime la balise, un firmware qui ne la connaît pas laisse la
-			// chaîne vide. Y écrire quand même enverrait au firmware une balise
-			// qu'il n'a jamais déclarée — refuser est le bon geste.
+			// `AudioCfg::volume` is a `String` and not an `Option`: model
+			// 264 prints the tag, a firmware that does not know it leaves the
+			// string empty. Writing anyway would send the firmware a tag
+			// it never declared — refusing is the right move.
 			tag_present(
 				Some(cfg.volume.as_str()).filter(|s| !s.trim().is_empty()),
 				"volume",
@@ -1155,7 +1154,7 @@ pub(crate) async fn apply_setting(
 			cfg.channel_name = Some(block);
 			publish_osd(publ, &bc.set_osd_cfg(&cfg).await?).await;
 		}
-		// ── mouvement (46 / 47) ─────────────────────────────────────────
+		// ── motion (46 / 47) ─────────────────────────────────────────
 		SettingCommand::MotionEnable(on) => {
 			let mut cfg = bc.get_motion_cfg().await?;
 			tag_present(cfg.enable(), "enable")?;
@@ -1168,11 +1167,11 @@ pub(crate) async fn apply_setting(
 			cfg.set_sensitivity(v.clone());
 			publish_motion(publ, &bc.set_motion_cfg(&cfg).await?).await;
 		}
-		// ── PIR : la sensibilité seulement (l'interrupteur reste control/pir)
+		// ── PIR: the sensitivity only (the switch stays on control/pir)
 		SettingCommand::PirSensitivity(v) => {
 			let mut cfg = bc.get_pirstate().await?;
-			// Les deux orthographes selon le firmware ; on retouche celle qui est
-			// là, et on refuse si aucune ne l'est.
+			// The two spellings depending on the firmware; we edit the one that is
+			// there, and refuse if neither is.
 			if cfg.sensiValue.is_some() {
 				tag_present_opt(&cfg.sensiValue, "sensiValue")?;
 				cfg.sensiValue = Some(v.parse::<u8>().map_err(|_| {
@@ -1191,17 +1190,17 @@ pub(crate) async fn apply_setting(
 				));
 			}
 			bc.set_pirstate(cfg).await?;
-			// Relecture : c'est ce que le matériel a gardé qui est publié.
+			// Re-read: what the hardware kept is what gets published.
 			let after = bc.get_pirstate().await?;
 			publish_pir(publ, &after).await;
 		}
-		// ── PIR : le temps de repos entre deux alarmes (même porteur, 212/213)
+		// ── PIR: the rest time between two alarms (same carrier, 212/213)
 		SettingCommand::PirInterval(v) => {
 			let mut cfg = bc.get_pirstate().await?;
-			// `<interval>` n'existe que sur le firmware v1.1+. Une caméra qui ne
-			// l'a jamais imprimé ne reçoit **rien** : le pont n'invente pas au
-			// firmware une balise qu'il n'a pas déclarée, et le motif publié sous
-			// `status/pir/reason` le dit à la place d'un échec muet.
+			// `<interval>` only exists on firmware v1.1+. A camera that never
+			// printed it receives **nothing**: the bridge does not invent for the
+			// firmware a tag it did not declare, and the reason published under
+			// `status/pir/reason` says so instead of a mute failure.
 			tag_present_opt(&cfg.interval, "interval")?;
 			cfg.interval = Some(v.parse::<u32>().map_err(|_| {
 				Error::Usage(format!("<interval> must be a whole number of seconds, got {v}"))
@@ -1234,7 +1233,7 @@ pub(crate) async fn apply_setting(
 			cfg.synchronize_interval = Some(v.clone());
 			publish_ntp(publ, &bc.set_ntp(&cfg).await?).await;
 		}
-		// ── heure d'dst (106 / 107) ─────────────────────────────────────
+		// ── daylight saving (106 / 107) ─────────────────────────────────────
 		SettingCommand::DstEnable(on) => {
 			let mut cfg = bc.get_dst().await?;
 			tag_present_opt(&cfg.enable, "enable")?;
@@ -1249,7 +1248,7 @@ pub(crate) async fn apply_setting(
 			})?);
 			publish_dst(publ, &bc.set_dst(&cfg).await?).await;
 		}
-		// ── redémarrage automatique (101 / 100) ─────────────────────────
+		// ── auto reboot (101 / 100) ─────────────────────────────────────────────
 		SettingCommand::AutoRebootEnable(on) => {
 			let mut cfg = bc.get_auto_reboot().await?;
 			tag_present(cfg.enable.as_deref(), "enable")?;
@@ -1274,7 +1273,7 @@ pub(crate) async fn apply_setting(
 			cfg.minute = Some(v.clone());
 			publish_auto_reboot(publ, &bc.set_auto_reboot(&cfg).await?).await;
 		}
-		// ── système (104 / 105) ─────────────────────────────────────────
+		// ── system (104 / 105) ──────────────────────────────────────────────────
 		SettingCommand::GeneralOsdFormat(f) => {
 			let mut cfg = bc.get_general().await?;
 			tag_present(cfg.osd_format.as_deref(), "osdFormat")?;
@@ -1301,11 +1300,11 @@ pub(crate) async fn apply_setting(
 			cfg.device_name = Some(v.clone());
 			publish_general(publ, &bc.set_general(&cfg).await?).await;
 		}
-		// ── carillon ────────────────────────────────────────────────────
+		// ── chime ───────────────────────────────────────────────────────────────
 		SettingCommand::ChimeRing { chime_id, music_id } => {
-			// Sans id explicite, on sonne le carillon que la caméra préfère
-			// (celui que `get_ding_dong_cfg` a retenu). Le refus est explicite :
-			// « aucun carillon appairé » n'est pas un succès muet.
+			// Without an explicit id, we ring the chime the camera prefers
+			// (the one `get_ding_dong_cfg` kept). The refusal is explicit:
+			// "no paired chime" is not a mute success.
 			let id = match chime_id.as_deref() {
 				Some(id) => id.to_string(),
 				None => {
@@ -1319,15 +1318,15 @@ pub(crate) async fn apply_setting(
 				}
 			};
 			bc.ring_ding_dong(&id, music_id).await?;
-			// Sonner n'est pas un état : on ne relit pas la liste du carillon
-			// pour ça, ce seraient cinq commandes radio pour rien.
+			// Ringing is not a state: we do not re-read the chime list
+			// for that, that would be five radio commands for nothing.
 		}
 		SettingCommand::ChimeVolume(v) => {
-			// Le volume se renvoie en 485 `setParam`, donc il faut un carillon
-			// **adressable** et une balise `<volLevel>` que la caméra a imprimée.
-			// Les deux refus sont locaux et explicites : sans id, la commande
-			// n'a pas de destinataire ; sans balise lue, l'écrire serait inventer
-			// une balise — la règle de ce fichier, appliquée côté écriture.
+			// The volume comes back on 485 `setParam`, so it takes a chime
+			// **addressable** and a `<volLevel>` tag the camera printed.
+			// Both refusals are local and explicit: without an id the command
+			// has no recipient; without a tag read, writing it would invent
+			// a tag — this file's rule, applied on the writing side.
 			let mut cfg = Box::pin(bc.get_ding_dong_cfg()).await?;
 			cfg.chime_id.clone().ok_or_else(|| {
 				Error::Usage(
@@ -1343,20 +1342,20 @@ pub(crate) async fn apply_setting(
 			})?;
 			tag_present(params.vol_level.as_deref(), "volLevel")?;
 			params.vol_level = Some(v.clone());
-			let lu = bc.set_ding_dong_cfg(&cfg).await?;
-			// C'est la relecture qui est publiée, comme pour chaque autre feuille.
-			publish_chime(publ, &lu).await;
+			let reread = bc.set_ding_dong_cfg(&cfg).await?;
+			// It is the re-read that gets published, like every other leaf.
+			publish_chime(publ, &reread).await;
 			warn_if_ignored(
 				"volLevel",
 				&v,
-				lu.params.as_ref().and_then(|p| p.vol_level.as_deref()),
+				reread.params.as_ref().and_then(|p| p.vol_level.as_deref()),
 			);
 		}
 	}
 	Ok(())
 }
 
-/// `1`/`0`, le texte que les firmware attendent pour un drapeau.
+/// `1`/`0`, the text firmwares expect for a flag.
 fn bit(on: bool) -> &'static str {
 	if on {
 		"1"
@@ -1365,9 +1364,9 @@ fn bit(on: bool) -> &'static str {
 	}
 }
 
-/// Le firmware a répondu 200 puis gardé une autre valeur : c'est le cas
-/// « écriture acceptée, ignorée » que le cache de la valeur demandée a toujours
-/// masqué. Le journal le dit, l'état publié aussi (c'est la relecture).
+/// The firmware answered 200 then kept another value: this is the
+/// "write accepted, ignored" case that the cache of the requested value always
+/// masked. The log says it, and so does the published state (it is the re-read).
 fn warn_if_ignored(tag: &str, requested: &str, kept: Option<&str>) {
 	if kept != Some(requested) {
 		tracing::warn!(
@@ -1384,12 +1383,12 @@ mod tests {
 	use bairelay_neolink_core::bc::xml::{BcXml, DingDongCfg, SystemGeneral};
 	use bairelay_neolink_core::bc_protocol::ImageCfg;
 
-	/// La taille de [`BcXml`] est la contrainte de pile cachée du pont. Chaque
-	/// commande caméra brasse au moins un de ces blocs — souvent deux quand une
-	/// écriture est suivie d'une relecture — et le bloc se déplace par valeur.
-	/// Les réglages ajoutés ici remplissent davantage ses variantes : le poids
-	/// par bloc est le même que celui des blocs déjà là, mais la chaîne
-	/// `dispatch_control → famille → commande` est plus longue qu'avant.
+	/// The size of [`BcXml`] is the bridge's hidden stack constraint. Every
+	/// camera command moves at least one of these blocks — often two when a
+	/// write is followed by a re-read — and the block moves by value.
+	/// The settings added here fill its variants more: the weight
+	/// per block is the same as the blocks already there, but the chain
+	/// `dispatch_control → family → command` is longer than before.
 	///
 	/// This test is a wake-up call, not a diploma: if the block grows further, the
 	/// question “does it still fit in a tokio worker's 2 MiB?” has to be asked
