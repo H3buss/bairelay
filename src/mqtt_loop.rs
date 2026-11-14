@@ -244,6 +244,18 @@ pub async fn handle_connack(
 	topic_prefix: &str,
 ) {
 	tracing::info!("MQTT broker connected");
+	// Le pont declare sa propre disponibilite avant toute re-publication de
+	// decouverte : toutes les entites la rattachent a `{prefix}/status`, donc
+	// publier ceci en premier evite que Home Assistant voie transitoirement
+	// des entites dont le topic de disponibilite porte encore l'ancien
+	// `offline`. Traffic MQTT pur : aucun ordre a l'appareil, ce qu'un
+	// carillon sur batterie exige.
+	if let Err(e) = mqtt
+		.publish_retained(&bairelay_mqtt::topics::bridge_status(topic_prefix), b"online")
+		.await
+	{
+		tracing::warn!(error = %e, "Le pont n'a pas pu publier sa disponibilite");
+	}
 	// Subscribe all cameras (not just connected ones — we need to
 	// receive wakeup commands for sleeping cameras too). When the
 	// broker is misbehaving every camera fails in the same way; log

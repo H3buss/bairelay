@@ -1,5 +1,8 @@
 //! Status publishing helpers for pushing camera state to MQTT.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 
@@ -7,6 +10,7 @@ use crate::ai::AiObject;
 use crate::client::SharedMqttClient;
 use crate::control::IrMode;
 use crate::error::MqttError;
+use crate::reglages::Family;
 use crate::topics;
 
 /// Wire-format JSON payload published on the floodlight state topic.
@@ -21,6 +25,66 @@ pub(crate) fn floodlight_state_json(on: bool) -> &'static str {
 	}
 }
 
+/// Les trois codes portés par la cellule de présence partagée : `0` = aucun
+/// verdict publié depuis le démarrage du pont, puis les deux verdicts possibles.
+const PRESENCE_INCONNUE: u8 = 0;
+const PRESENCE_JOIGNABLE: u8 = 1;
+const PRESENCE_NON_JOIGNABLE: u8 = 2;
+
+/// Dernier verdict de présence publié pour une caméra, partagé par tous les
+/// publieurs de cette caméra.
+///
+/// Une sonnette sur batterie ouvre et ferme sa session des dizaines de fois par
+/// jour. Sans cet état partagé, chaque réveil republierait `reachable`, et un
+/// courtier domestique ne veut pas de cinquante messages identiques par heure.
+/// Une publication ne part donc que sur une transition. La bascule atomique
+/// fait partir une seule publication, même quand deux tentatives concurrentes
+/// demandent la même.
+#[derive(Debug)]
+pub struct PresencePubliee(AtomicU8);
+
+impl Default for PresencePubliee {
+	fn default() -> Self {
+		Self(AtomicU8::new(PRESENCE_INCONNUE))
+	}
+}
+
+impl PresencePubliee {
+	/// Applique le verdict `joignable` et rend le code précédent quand une
+	/// publication doit partir. Rend `None` quand le verdict demandé était déjà
+	/// le verdict courant, auquel cas rien ne part vers le courtier.
+	fn transition(&self, joignable: bool) -> Option<(u8, u8)> {
+		let cible = if joignable {
+			PRESENCE_JOIGNABLE
+		} else {
+			PRESENCE_NON_JOIGNABLE
+		};
+		let mut courant = self.0.load(Ordering::Acquire);
+		loop {
+			if courant == cible {
+				return None;
+			}
+			match self
+				.0
+				.compare_exchange_weak(courant, cible, Ordering::AcqRel, Ordering::Acquire)
+			{
+				Ok(_) => return Some((courant, cible)),
+				Err(reel) => courant = reel,
+			}
+		}
+	}
+
+	/// Remet le code précédent en place quand la publication correspondante a
+	/// échoué, et seulement tant que le code courant est encore celui de la
+	/// transition ratée. Sans ce retour, la cellule prétendrait un verdict absent
+	/// du courtier, et le prochain contact ne republierait plus jamais rien.
+	fn annuler(&self, cible: u8, precedent: u8) {
+		let _ = self
+			.0
+			.compare_exchange(cible, precedent, Ordering::AcqRel, Ordering::Acquire);
+	}
+}
+
 /// Convenience wrapper that publishes camera status messages.
 ///
 /// Binds together a shared MQTT client, the `topic_prefix` (from the
@@ -31,6 +95,9 @@ pub struct StatusPublisher<'a> {
 	client: &'a SharedMqttClient,
 	topic_prefix: String,
 	camera_name: String,
+	/// Dernier verdict de présence publié, partagé par caméra. Voir
+	/// [`PresencePubliee`] et [`Self::publish_presence`].
+	presence: Arc<PresencePubliee>,
 }
 
 impl<'a> StatusPublisher<'a> {
@@ -39,16 +106,73 @@ impl<'a> StatusPublisher<'a> {
 			client,
 			topic_prefix: topic_prefix.to_string(),
 			camera_name: camera_name.to_string(),
+			// Cellule propre à cette instance : un publieur construit ici puis jeté
+			// ne déduplique donc rien. La présence passe par [`Self::with_presence`],
+			// qui partage la cellule de la caméra.
+			presence: Arc::new(PresencePubliee::default()),
+		}
+	}
+
+	/// Même publieur, avec la cellule de présence partagée par une caméra : seul
+	/// ce constructeur déduplique entre deux publications successives, donc seul
+	/// lui convient [`Self::publish_presence`].
+	pub fn with_presence(
+		client: &'a SharedMqttClient,
+		topic_prefix: &str,
+		camera_name: &str,
+		presence: Arc<PresencePubliee>,
+	) -> Self {
+		Self {
+			client,
+			topic_prefix: topic_prefix.to_string(),
+			camera_name: camera_name.to_string(),
+			presence,
 		}
 	}
 
 	/// Publish "connected" or "disconnected" on the camera status topic (retained).
+	///
+	/// Ne dit rien de la disponibilité : voir [`Self::publish_presence`], qui lui
+	/// est préférée pour ça.
 	pub async fn publish_connection(&self, online: bool) -> Result<(), MqttError> {
 		let payload = if online { "connected" } else { "disconnected" };
 		let topic = topics::status(&self.topic_prefix, &self.camera_name);
 		self.client
 			.publish_retained(&topic, payload.as_bytes())
 			.await
+	}
+
+	/// Publie le verdict de présence de la caméra (`reachable` / `unreachable`)
+	/// en message conservé sur [`topics::presence`], seulement quand le verdict
+	/// change.
+	///
+	/// La présence ne suit pas la session : une sonnette sur batterie ferme la
+	/// sienne quelques instants après chaque réveil, et la suivre griserait tout le
+	/// tableau de bord pendant le sommeil. Elle se déduit de trois événements qui
+	/// ont déjà lieu — démarrage du pont, session ouverte, tentative qui renonce —
+	/// et ne déclenche donc jamais un appel réseau de plus vers la caméra.
+	///
+	/// La cellule de dédoublonnage doit être partagée par caméra. Construite par
+	/// [`Self::new`], elle reste propre à cette instance et ne déduplique que dans
+	/// cette dernière : les trois endroits du pont qui publient la présence passent
+	/// par [`Self::with_presence`].
+	pub async fn publish_presence(&self, joignable: bool) -> Result<(), MqttError> {
+		let Some((precedent, cible)) = self.presence.transition(joignable) else {
+			return Ok(());
+		};
+		let payload = if joignable { "reachable" } else { "unreachable" };
+		let topic = topics::presence(&self.topic_prefix, &self.camera_name);
+		match self
+			.client
+			.publish_retained(&topic, payload.as_bytes())
+			.await
+		{
+			Ok(()) => Ok(()),
+			Err(e) => {
+				self.presence.annuler(cible, precedent);
+				Err(e)
+			}
+		}
 	}
 
 	/// Publish motion detection state (retained).
@@ -166,6 +290,176 @@ impl<'a> StatusPublisher<'a> {
 		let topic = topics::status_ptz_preset(&self.topic_prefix, &self.camera_name);
 		self.client.publish_retained(&topic, json.as_bytes()).await
 	}
+
+	// ── Réglages ────────────────────────────────────────────────────────
+	//
+	// Un topic par feuille, conservé, et **toujours la valeur relue** : après
+	// une écriture, le dispatch relit le bloc et publie ce que la caméra a
+	// gardé. Publier la valeur demandée ferait mentir un état conservé sur le
+	// broker, qui survivrait au redémarrage du pont.
+
+	/// Publie la valeur texte d'un réglage (conservé).
+	pub async fn publish_setting(
+		&self,
+		family: Family,
+		leaf: &str,
+		value: &str,
+	) -> Result<(), MqttError> {
+		let topic =
+			topics::status_setting(&self.topic_prefix, &self.camera_name, family.slug(), leaf);
+		self.client
+			.publish_retained(&topic, value.as_bytes())
+			.await
+	}
+
+	/// Un réglage qui est un interrupteur : `on`/`off`, exactement les deux
+	/// textes que l'entité `switch` découvre en `state_on`/`state_off`.
+	pub async fn publish_setting_switch(
+		&self,
+		family: Family,
+		leaf: &str,
+		on: bool,
+	) -> Result<(), MqttError> {
+		self.publish_setting(family, leaf, if on { "on" } else { "off" })
+			.await
+	}
+
+	/// Un drapeau lu dans le bloc caméra (`"1"`/`"0"`), pour les
+	/// `binary_sensor` de lecture seule.
+	pub async fn publish_setting_flag(
+		&self,
+		family: Family,
+		leaf: &str,
+		on: bool,
+	) -> Result<(), MqttError> {
+		self.publish_setting(family, leaf, if on { "1" } else { "0" })
+			.await
+	}
+
+	/// Le bloc d'une famille en JSON (conservé) : pour les automates et le
+	/// diagnostic. Les entités Home Assistant, elles, consomment les feuilles
+	/// scalaires.
+	pub async fn publish_settings_json(
+		&self,
+		family: Family,
+		json: &str,
+	) -> Result<(), MqttError> {
+		let topic =
+			topics::status_settings_json(&self.topic_prefix, &self.camera_name, family.slug());
+		self.client.publish_retained(&topic, json.as_bytes()).await
+	}
+
+	/// Efface un état conservé (payload vide conservé = topic effacé chez
+	/// Home Assistant).
+	///
+	/// C'est ce qu'on fait quand la caméra **n'a pas répondu** : mieux vaut un
+	/// capteur « inconnu » qu'une valeur de la dernière fois, qui pourrait
+	/// venir d'un autre réglage, d'un autre firmware, ou d'avant un
+	/// appairage. « Refusé » et « vide » doivent rester distincts.
+	pub async fn clear_setting(&self, family: Family, leaf: &str) -> Result<(), MqttError> {
+		let topic =
+			topics::status_setting(&self.topic_prefix, &self.camera_name, family.slug(), leaf);
+		self.client.publish_retained(&topic, b"").await
+	}
+
+	/// Efface le JSON d'une famille.
+	pub async fn clear_settings_json(&self, family: Family) -> Result<(), MqttError> {
+		let topic =
+			topics::status_settings_json(&self.topic_prefix, &self.camera_name, family.slug());
+		self.client.publish_retained(&topic, b"").await
+	}
+
+	/// Le motif du dernier refus d'une famille, en conservé
+	/// (`status/<famille>/reason`).
+	///
+	/// Une famille dont les états sont effacés est silencieuse : Home Assistant
+	/// affiche « inconnu » et rien ne dit si la caméra a refusé, n'a pas répondu,
+	/// ou n'imprime pas la balise. Ce topic porte la phrase. Il est assaini par
+	/// [`raison_publiable`] — une ligne, sans XML, sans secret — parce qu'un
+	/// topic conservé est relu des années plus tard.
+	pub async fn publish_family_reason(
+		&self,
+		family: Family,
+		raison: &str,
+	) -> Result<(), MqttError> {
+		let topic =
+			topics::status_setting_reason(&self.topic_prefix, &self.camera_name, family.slug());
+		let propre = raison_publiable(raison);
+		self.client.publish_retained(&topic, propre.as_bytes()).await
+	}
+
+	/// Efface le motif d'une famille : elle vient de répondre, la raison
+	/// précédente n'a plus lieu d'être conservée.
+	pub async fn clear_family_reason(&self, family: Family) -> Result<(), MqttError> {
+		let topic =
+			topics::status_setting_reason(&self.topic_prefix, &self.camera_name, family.slug());
+		self.client.publish_retained(&topic, b"").await
+	}
+
+}
+
+/// Longueur maximale d'un motif. Un topic conservé est relus à chaque démarrage
+/// de Home Assistant : une phrase, pas une trace de pile ni un dump.
+const MOTIF_MAX: usize = 160;
+
+/// Ce qu'on publie quand le motif lui-même est inutilisable.
+const MOTIF_SANS_DETAIL: &str = "la caméra n'a donné aucun motif";
+const MOTIF_MASQUE: &str = "motif masqué : il aurait pu contenir un secret";
+
+/// Les sous-chaînes qui n'ont rien à faire sur un topic conservé. Aucun motif
+/// construit par le pont n'en contient ; cette ceinture tient la promesse
+/// « jamais de secret dans un topic conservé » même si un appelant passe le
+/// texte brut d'une erreur caméra.
+const MOTIF_INTERDITS: [&str; 6] =
+	["password", "passwd", "mot de passe", "token", "secret", "apikey"];
+
+/// Met un motif de refus en état d'être conservé sur le broker : une seule
+/// ligne, sans balise XML, sans secret, bornée à [`MOTIF_MAX`] caractères.
+///
+/// Les balises sont remplacées par des guillemets français et non supprimées :
+/// `this camera's reply has no <OsdChannelName> tag` est précisément
+/// l'information qui explique un refus, et ce qui doit disparaître est le
+/// délimiteur XML, pas le nom de la balise.
+pub fn raison_publiable(raison: &str) -> String {
+	raison_publiable_borne(raison, MOTIF_MAX)
+}
+
+/// Même nettoyage, borne choisie par l'appelant.
+///
+/// [`raison_publiable`] borne à 160 caractères parce que ses phrases atterrissent
+/// sur des topics **conservés** que Home Assistant relit à chaque démarrage : une
+/// ligne, pas un dump. La sonde de protocole, elle, existe pour qu'on **lise** la
+/// réponse de la caméra, et son topic (`status/sonde`) n'est pas un topic
+/// d'entité — personne n'en fait un tableau de bord. La coupe à 160 lui coupait
+/// justement le corps qu'on cherchait : un `<MD>` complet tient dans les 400
+/// premiers caractères. Le nettoyage reste le même — pas de délimiteur XML nu,
+/// pas de caractère de contrôle, et le masque s'applique si le texte ressemble à
+/// un secret.
+pub fn raison_publiable_borne(raison: &str, maximal: usize) -> String {
+	let sans_balises: String = raison
+		.chars()
+		.map(|c| match c {
+			'<' => '«',
+			'>' => '»',
+			c if c.is_control() => ' ',
+			c => c,
+		})
+		.collect();
+	if MOTIF_INTERDITS
+		.iter()
+		.any(|interdit| sans_balises.to_lowercase().contains(interdit))
+	{
+		return MOTIF_MASQUE.to_string();
+	}
+	let propre = sans_balises.split_whitespace().collect::<Vec<_>>().join(" ");
+	if propre.is_empty() {
+		return MOTIF_SANS_DETAIL.to_string();
+	}
+	if propre.chars().count() <= maximal {
+		return propre;
+	}
+	let tronc: String = propre.chars().take(maximal - 1).collect();
+	format!("{}…", tronc.trim_end())
 }
 
 #[cfg(test)]
@@ -327,5 +621,197 @@ mod tests {
 			let got = v["state"].as_str().expect("state is a string");
 			assert_eq!(got, if state { "on" } else { "off" });
 		}
+	}
+
+	#[tokio::test]
+	async fn un_reglage_se_publie_sur_sa_feuille_conservee() {
+		let (c, mock) = crate::test_support::mock_client();
+		let pub_ = StatusPublisher::new(&c, "bairelay", "cam1");
+		pub_.publish_setting(Family::Audio, "volume", "42")
+			.await
+			.unwrap();
+		pub_.publish_setting_switch(Family::Denoise, "enable", true)
+			.await
+			.unwrap();
+		pub_.publish_setting_flag(Family::Sleep, "state", false)
+			.await
+			.unwrap();
+		assert_eq!(
+			mock.published(),
+			vec![
+				(
+					"bairelay/cam1/status/audio/volume".to_string(),
+					b"42".to_vec(),
+					true
+				),
+				(
+					"bairelay/cam1/status/denoise/enable".to_string(),
+					b"on".to_vec(),
+					true
+				),
+				(
+					"bairelay/cam1/status/sleep/state".to_string(),
+					b"0".to_vec(),
+					true
+				),
+			]
+		);
+	}
+
+	#[tokio::test]
+	async fn un_reglage_refuse_n_est_pas_publie_mais_efface() {
+		// La caméra n'a pas répondu : on efface l'état conservé, on ne met pas
+		// une valeur par défaut. Un capteur « inconnu » est honnête ; un « 0 »
+		// conservé ne l'est pas.
+		let (c, mock) = crate::test_support::mock_client();
+		let pub_ = StatusPublisher::new(&c, "bairelay", "cam1");
+		pub_.clear_setting(Family::Chime, "list").await.unwrap();
+		pub_.clear_settings_json(Family::Image).await.unwrap();
+		assert_eq!(
+			mock.published(),
+			vec![
+				(
+					"bairelay/cam1/status/chime/list".to_string(),
+					Vec::new(),
+					true
+				),
+				(
+					"bairelay/cam1/status/image/json".to_string(),
+					Vec::new(),
+					true
+				),
+			]
+		);
+	}
+
+	#[tokio::test]
+	async fn le_motif_d_une_famille_est_conserve_puis_efface() {
+		// Le refus d'une famille doit rester lisible après coup : conservé, et
+		// effacé (et non remplacé par une phrase triomphante) dès que la famille
+		// a répondu.
+		let (c, mock) = crate::test_support::mock_client();
+		let pub_ = StatusPublisher::new(&c, "bairelay", "cam1");
+		pub_
+			.publish_family_reason(Family::Motion, "la caméra a répondu MdAlarm : non écrivable")
+			.await
+			.unwrap();
+		pub_.clear_family_reason(Family::Motion).await.unwrap();
+		assert_eq!(
+			mock.published(),
+			vec![
+				(
+					"bairelay/cam1/status/motion/reason".to_string(),
+					"la caméra a répondu MdAlarm : non écrivable".as_bytes().to_vec(),
+					true
+				),
+				("bairelay/cam1/status/motion/reason".to_string(), Vec::new(), true),
+			]
+		);
+	}
+
+	/// Un topic conservé ne verra jamais le XML brut de la caméra, un secret, ni
+	/// dix lignes de trace : `raison_publiable` est la dernière barrière, et
+	/// c'est elle qui tient la promesse, pas la vigilance des appelants.
+	#[test]
+	fn un_motif_ne_porte_ni_xml_ni_secret() {
+		// Le nom de la balise est l'information utile ; seuls ses délimiteurs
+		// disparaissent.
+		assert_eq!(
+			raison_publiable("no <OsdChannelName> tag here"),
+			"no «OsdChannelName» tag here"
+		);
+		assert_eq!(raison_publiable("  \n\t  "), MOTIF_SANS_DETAIL);
+		assert_eq!(
+			raison_publiable("could not auth with password hunter2"),
+			MOTIF_MASQUE
+		);
+		assert_eq!(
+			raison_publiable("<Wifi><key>mot de passe</key></Wifi>"),
+			MOTIF_MASQUE,
+			"un bloc XML passé par erreur ne doit pas ressortir"
+		);
+		assert_eq!(
+			raison_publiable("MdAlarm: refus\nde réécriture"),
+			"MdAlarm: refus de réécriture",
+			"un motif tient sur une ligne"
+		);
+		let long = raison_publiable(&"a".repeat(4000));
+		assert!(long.chars().count() <= MOTIF_MAX, "{} caractères", long.chars().count());
+		assert!(long.ends_with('…'), "{long}");
+	}
+
+	#[tokio::test]
+	async fn le_json_d_une_famille_est_conserve() {
+		let (c, mock) = crate::test_support::mock_client();
+		let pub_ = StatusPublisher::new(&c, "bairelay", "cam1");
+		pub_.publish_settings_json(Family::Ntp, r#"{"enable":"1"}"#)
+			.await
+			.unwrap();
+		assert_eq!(
+			mock.published(),
+			vec![(
+				"bairelay/cam1/status/ntp/json".to_string(),
+				br#"{"enable":"1"}"#.to_vec(),
+				true
+			)]
+		);
+	}
+
+	/// Dédoublonnage de la présence : deux succès consécutifs produisent une seule
+	/// publication, et la transition vers le verdict inverse en produit une
+	/// seconde. Sans ce garde-fou, cinquante réveils par heure écriraient cinquante
+	/// fois le même message conservé sur un courtier domestique.
+	#[tokio::test]
+	async fn la_presence_ne_publie_que_sur_transition() {
+		let (c, mock) = crate::test_support::mock_client();
+		let etat = Arc::new(PresencePubliee::default());
+		let publ = StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&etat));
+		publ.publish_presence(true).await.unwrap();
+		publ.publish_presence(true).await.unwrap();
+		assert_eq!(
+			mock.published(),
+			vec![(
+				"bairelay/cam1/presence".to_string(),
+				b"reachable".to_vec(),
+				true
+			)],
+			"deux succès consécutifs ne doivent rien publier de plus"
+		);
+		publ.publish_presence(false).await.unwrap();
+		publ.publish_presence(false).await.unwrap();
+		assert_eq!(
+			mock.published(),
+			vec![
+				(
+					"bairelay/cam1/presence".to_string(),
+					b"reachable".to_vec(),
+					true
+				),
+				(
+					"bairelay/cam1/presence".to_string(),
+					b"unreachable".to_vec(),
+					true
+				),
+			],
+			"une transition, une publication"
+		);
+	}
+
+	/// Les trois endroits du pont construisent chacun leur propre publieur : la
+	/// cellule doit donc porter la déduplication au-delà des instances : sinon elle
+	/// saute dès que deux endroits publient.
+	#[tokio::test]
+	async fn la_presence_se_deduplique_entre_deux_publieurs() {
+		let (c, mock) = crate::test_support::mock_client();
+		let etat = Arc::new(PresencePubliee::default());
+		StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&etat))
+			.publish_presence(true)
+			.await
+			.unwrap();
+		StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&etat))
+			.publish_presence(true)
+			.await
+			.unwrap();
+		assert_eq!(mock.count(), 1, "{:?}", mock.published());
 	}
 }
