@@ -1686,9 +1686,9 @@ impl RawRequest {
 /// | `msg 46` + `<channelId>0</channelId>` | `200` — `<MD version="1.1">…` |
 /// | `msg 46` + a `<MD>` body, no extension | `400` |
 /// | `msg 26` + `<channelId>0</channelId>` | `200` — `<Shelter>…` |
-/// | `msg 44` + extension seule | `400` |
+/// | `msg 44` + extension alone | `400` |
 /// | `msg 44` + extension **and** header `channelId` at `0` | `200` — `<OsdDatetime>…` |
-/// | `msg 52` + extension seule | `400` |
+/// | `msg 52` + extension alone | `400` |
 /// | `msg 52` + extension and header at `0` | `200` — `<OsdDatetime>…` |
 /// | `msg 38` (ntp) and `104` (general) in the same shape | `200` — the shape does not break what worked |
 /// | `msg 44` with `<channelId>1</channelId>` | `421` — the firmware reads the channel and refuses it |

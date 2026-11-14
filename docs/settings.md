@@ -358,6 +358,7 @@ Renamed on this branch, with the breaking ones called out:
 | `config-familles-lues.json` | `config-families-read.json` |
 | `[annonces] interroger` / `tenue_secs` / `intervalle_secs` | removed — see below |
 | `[carnet] …` | removed — see below |
+| french text or a guillemet in a payload | not a mistake: see “Values that stay french, and why” |
 
 The flag names follow the tag each one writes, so `--loudspeaker` is the
 visitor loudspeaker switch and `--visitor-volume` is the volume of the pre-set
@@ -374,3 +375,53 @@ The state file is simply not read any more under its old name: the first start
 treats every family as unproven, so entities come back read-only until the next
 successful read. That is the safe direction of the mistake — a missing write,
 never a wrong one.
+
+## Values that stay french, and why
+
+Some french survives in this tree on purpose, and a reader who finds it should be able
+to tell in ten seconds whether they are looking at a bug or at a tripwire. The rule
+used on every pass of the english migration, and the list of what it kept:
+
+1. **A tripwire.** Text whose job is to *match* french or a secret, so translating it
+   would blind the check that protects the operator.
+   - `REASON_INTERDITS` in `crates/mqtt/src/status.rs` contains `mot de passe`
+     alongside `password`, `passwd`, `token`, `secret` and `apikey`. A reason that
+     carries a credential is replaced by `reason hidden: it could have contained a
+     secret` before it reaches `status/{family}/reason`; the french entry is there
+     because the camera, the reference library and the operator's own logs are
+     partly french. Removing the entry would keep the sentence pretty and let a
+     password be retained on the broker.
+   - the `FRENCH` word list in `src/published_text_guard.rs` and
+     `crates/mqtt/src/published_text_guard.rs`. The guard asserts that everything
+     the bridge publishes is ASCII and contains none of those words, so its own
+     source has to name them. Homographs are excluded on purpose — `volume`,
+     `budget`, `part`, `port`, `tour`, `camera`, `status` are french words too, and
+     putting them in the list makes the guard fail on `Speaker volume`.
+2. **A capture.** A measurement that quotes what the broker really carried, usually
+   the value published by the version *before* the switch. Deleting it deletes the
+   reason the guard exists.
+   - `src/burst.rs`, the 13 November `status/burst` measurement: the camera answered
+     `etat:"refus"` at four commands out of eight, both for `raison:"appui"` and for
+     `raison:"mouvement"`. Those are payload bytes from the old build, not values the
+     current build can emit (it publishes `state:"refused"` and `reason:"press"`).
+   - the negative assertion in the same file, `!state.contains("\"state\":\"refus\"")`,
+     which only has meaning while it spells the old french value.
+3. **Non-ASCII punctuation that is published deliberately.** MQTT payloads are UTF-8
+   and Home Assistant renders these without trouble; the only cost is that a
+   punctuation control counts them, which is the lesser evil.
+   - `«` and `»`. `publishable_reason_bounded` maps `<` to `«` and `>` to `»` so that
+     **no raw XML can ever reach a retained topic**: a reason quoting the camera's own
+     markup stays readable (`this camera's reply has no «volume» tag, so this setting
+     cannot be written…`) without becoming a payload that a consumer might parse. The
+     guarantee is asserted in `src/mqtt_dispatch.rs` by a test that refuses a reason
+     containing `<`. Replacing the mapping with `[X]` would be ASCII at the price of
+     changing a published value *and* rewriting the assertion that guards it, which is
+     the class of risk this migration exists to retire.
+   - ` […]`, appended by `cut()` in `crates/core/src/bc_protocol/settings.rs` when a
+     rendered text is truncated. The truncation is by characters, never by bytes,
+     because a camera answer carries UTF-8 and a byte-offset cut in the middle of an
+     accent panics — a log line is meant to be read, not to be exhaustive.
+
+Anything else that is french, or above ASCII, in a comment, a log message, a test name
+or a published value is a migration bug: fix it where you find it, and if it is a
+published value, give it a row in the table above.
