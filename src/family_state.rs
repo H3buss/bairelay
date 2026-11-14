@@ -11,7 +11,7 @@
 //! la sonnette :
 //!
 //! * au démarrage, tout part en lecture seule ;
-//! * il faut une salve complète (`query/reglages`, ~15 commandes radio, et la
+//! * il faut une salve complète (`query/settings`, ~15 commandes radio, et la
 //!   caméra doit être réveillée) pour que les familles retrouvent leur statut ;
 //! * et **un redémarrage du complément oublie tout**, donc la caméra paie à
 //!   nouveau quinze commandes radio pour retrouver ce qu'elle avait déjà prouvé
@@ -23,7 +23,7 @@
 //!
 //! # Où est le fichier, et pourquoi là
 //!
-//! À côté du fichier de configuration, sous le nom [`ETAT_FAMILLES_FILE`] — le
+//! À côté du fichier de configuration, sous le nom [`FAMILIES_READ_FILE`] — le
 //! même emplacement que [`crate::config::CLOUD_AUTH_FILE`], précédent explicite.
 //! Dans le complément Home Assistant, c'est `/config/sonnette/` : un répertoire
 //! déjà monté en lecture/écriture, qui survit aux mises à jour de l'image, et
@@ -52,14 +52,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use bairelay_mqtt::discovery::DiscoveryPublisher;
-use bairelay_mqtt::reglages::Family;
+use bairelay_mqtt::settings::Family;
 
 /// Nom du fichier d'état, posé à côté du fichier de configuration.
 ///
 /// Le préfixe `config-` est celui du voisin [`crate::config::CLOUD_AUTH_FILE`] :
 /// dans `/config/sonnette/`, ces fichiers se repèrent d'un coup d'œil, et le
 /// nom dit ce qu'il contient sans avoir à l'ouvrir.
-pub const ETAT_FAMILLES_FILE: &str = "config-familles-lues.json";
+pub const FAMILIES_READ_FILE: &str = "config-families-read.json";
 
 /// Ce que sait lire ce format. Un fichier d'une version inconnue est ignoré
 /// (et réécrit) plutôt que d'être interprété de travers.
@@ -72,7 +72,7 @@ const VERSION: u8 = 1;
 /// pour seul effet qu'alourdir chaque constructeur de test.
 ///
 /// Absent = ce module ne fait rien. C'est aussi ce qui rend les tests du reste
-/// du bin sans effet de bord : tant que `definir_chemin` n'est pas appelé,
+/// du bin sans effet de bord : tant que `set_path` n'est pas appelé,
 /// aucune écriture n'a lieu.
 static CHEMIN: OnceLock<PathBuf> = OnceLock::new();
 
@@ -88,18 +88,18 @@ static AMORCEES: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 /// identiques — un fichier qui ne bouge pas quand rien ne bouge se diff et se
 /// lit mieux quand on diagnostique le terrain.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
-struct EtatFamilles {
+struct ReadFamilies {
 	version: u8,
 	cameras: BTreeMap<String, Vec<String>>,
 }
 
 /// Calcule l'emplacement depuis le chemin du fichier de configuration, et le
 /// retient. Appelé une fois dans `main`, juste après que `--config` est résolu.
-pub fn definir_chemin(config_path: &Path) {
-	let _ = CHEMIN.set(config_path.with_file_name(ETAT_FAMILLES_FILE));
+pub fn set_path(config_path: &Path) {
+	let _ = CHEMIN.set(config_path.with_file_name(FAMILIES_READ_FILE));
 }
 
-/// L'emplacement retenu, si `definir_chemin` a été appelé.
+/// L'emplacement retenu, si `set_path` a été appelé.
 fn chemin() -> Option<&'static Path> {
 	CHEMIN.get().map(PathBuf::as_path)
 }
@@ -125,7 +125,7 @@ fn charger(chemin: &Path, camera: &str) -> Vec<Family> {
 			return Vec::new();
 		}
 	};
-	let lu: Result<EtatFamilles, serde_json::Error> = serde_json::from_str(&brut);
+	let lu: Result<ReadFamilies, serde_json::Error> = serde_json::from_str(&brut);
 	let etat = match lu {
 		Ok(etat) if etat.version == VERSION => etat,
 		Ok(etat) => {
@@ -156,9 +156,9 @@ fn charger(chemin: &Path, camera: &str) -> Vec<Family> {
 
 /// Les familles dont la modifiabilité est **déjà prouvée** pour cette caméra,
 /// dans l'ordre de [`Family::ALL`] — donc l'ordre dans lequel la salve de réveil
-/// ([`crate::salve`]) les relira.
+/// ([`crate::burst`]) les relira.
 ///
-/// `Vec` vide quand [`definir_chemin`] n'a pas été appelé, quand le fichier est
+/// `Vec` vide quand [`set_path`] n'a pas été appelé, quand le fichier est
 /// absent, ou quand cette caméra n'y figure pas encore : la salve ne lit alors
 /// que la batterie. C'est voulu — rien ici ne devine une famille, et une famille
 /// qu'on n'a jamais lue n'a rien à faire dans une salve payée en radio.
@@ -189,7 +189,7 @@ pub(crate) fn familles_prouvees(camera: &str) -> Vec<Family> {
 fn sauver(chemin: &Path, camera: &str, familles: &[Family]) -> io::Result<()> {
 	let mut etat = std::fs::read_to_string(chemin)
 		.ok()
-		.and_then(|brut| serde_json::from_str::<EtatFamilles>(&brut).ok())
+		.and_then(|brut| serde_json::from_str::<ReadFamilies>(&brut).ok())
 		.unwrap_or_default();
 	// Un fichier d'une autre version repart de zéro, mais uniquement pour la
 	// caméra qu'on est en train d'écrire : les autres entrées restent ce
@@ -209,7 +209,7 @@ fn sauver(chemin: &Path, camera: &str, familles: &[Family]) -> io::Result<()> {
 	let nom = chemin
 		.file_name()
 		.map(|n| n.to_string_lossy().into_owned())
-		.unwrap_or_else(|| ETAT_FAMILLES_FILE.to_string());
+		.unwrap_or_else(|| FAMILIES_READ_FILE.to_string());
 	// Le pid dans le nom du temporaire : deux processus qui partagent ce
 	// répertoire (un complément qui redémarre pendant qu'on lance un outil en
 	// parallèle) ne doivent pas écrire dans le même fichier temporaire.
@@ -225,7 +225,7 @@ fn sauver(chemin: &Path, camera: &str, familles: &[Family]) -> io::Result<()> {
 	Ok(())
 }
 
-/// Amorçage, avec l'emplacement retenu par [`definir_chemin`]. Ne fait rien si
+/// Amorçage, avec l'emplacement retenu par [`set_path`]. Ne fait rien si
 /// aucun emplacement n'a été résolu (tests, outils en ligne de commande).
 pub fn amorcer(publisher: &DiscoveryPublisher, camera: &str) {
 	let Some(chemin) = chemin() else { return };
@@ -287,7 +287,7 @@ mod tests {
 	fn chemin_test(nom: &str) -> PathBuf {
 		let mut chemin = std::env::temp_dir();
 		chemin.push(format!(
-			"bairelay-etat-familles-{}-{}.json",
+			"bairelay-families-read-{}-{}.json",
 			std::process::id(),
 			nom
 		));
@@ -384,8 +384,8 @@ mod tests {
 		// répertoire, nom propre, et le fichier de config lui-même intact.
 		let config = Path::new("/config/sonnette/bairelay.toml");
 		assert_eq!(
-			config.with_file_name(ETAT_FAMILLES_FILE),
-			PathBuf::from("/config/sonnette/config-familles-lues.json")
+			config.with_file_name(FAMILIES_READ_FILE),
+			PathBuf::from("/config/sonnette/config-families-read.json")
 		);
 	}
 }

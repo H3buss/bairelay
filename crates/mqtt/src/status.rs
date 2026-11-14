@@ -10,7 +10,7 @@ use crate::ai::AiObject;
 use crate::client::SharedMqttClient;
 use crate::control::IrMode;
 use crate::error::MqttError;
-use crate::reglages::Family;
+use crate::settings::Family;
 use crate::topics;
 
 /// Wire-format JSON payload published on the floodlight state topic.
@@ -27,9 +27,9 @@ pub(crate) fn floodlight_state_json(on: bool) -> &'static str {
 
 /// Les trois codes portés par la cellule de présence partagée : `0` = aucun
 /// verdict publié depuis le démarrage du pont, puis les deux verdicts possibles.
-const PRESENCE_INCONNUE: u8 = 0;
-const PRESENCE_JOIGNABLE: u8 = 1;
-const PRESENCE_NON_JOIGNABLE: u8 = 2;
+const PRESENCE_UNKNOWN: u8 = 0;
+const PRESENCE_ONLINE: u8 = 1;
+const PRESENCE_OFFLINE: u8 = 2;
 
 /// Dernier verdict de présence publié pour une caméra, partagé par tous les
 /// publieurs de cette caméra.
@@ -41,23 +41,23 @@ const PRESENCE_NON_JOIGNABLE: u8 = 2;
 /// fait partir une seule publication, même quand deux tentatives concurrentes
 /// demandent la même.
 #[derive(Debug)]
-pub struct PresencePubliee(AtomicU8);
+pub struct PublishedPresence(AtomicU8);
 
-impl Default for PresencePubliee {
+impl Default for PublishedPresence {
 	fn default() -> Self {
-		Self(AtomicU8::new(PRESENCE_INCONNUE))
+		Self(AtomicU8::new(PRESENCE_UNKNOWN))
 	}
 }
 
-impl PresencePubliee {
+impl PublishedPresence {
 	/// Applique le verdict `joignable` et rend le code précédent quand une
 	/// publication doit partir. Rend `None` quand le verdict demandé était déjà
 	/// le verdict courant, auquel cas rien ne part vers le courtier.
 	fn transition(&self, joignable: bool) -> Option<(u8, u8)> {
 		let cible = if joignable {
-			PRESENCE_JOIGNABLE
+			PRESENCE_ONLINE
 		} else {
-			PRESENCE_NON_JOIGNABLE
+			PRESENCE_OFFLINE
 		};
 		let mut courant = self.0.load(Ordering::Acquire);
 		loop {
@@ -96,8 +96,8 @@ pub struct StatusPublisher<'a> {
 	topic_prefix: String,
 	camera_name: String,
 	/// Dernier verdict de présence publié, partagé par caméra. Voir
-	/// [`PresencePubliee`] et [`Self::publish_presence`].
-	presence: Arc<PresencePubliee>,
+	/// [`PublishedPresence`] et [`Self::publish_presence`].
+	presence: Arc<PublishedPresence>,
 }
 
 impl<'a> StatusPublisher<'a> {
@@ -109,7 +109,7 @@ impl<'a> StatusPublisher<'a> {
 			// Cellule propre à cette instance : un publieur construit ici puis jeté
 			// ne déduplique donc rien. La présence passe par [`Self::with_presence`],
 			// qui partage la cellule de la caméra.
-			presence: Arc::new(PresencePubliee::default()),
+			presence: Arc::new(PublishedPresence::default()),
 		}
 	}
 
@@ -120,7 +120,7 @@ impl<'a> StatusPublisher<'a> {
 		client: &'a SharedMqttClient,
 		topic_prefix: &str,
 		camera_name: &str,
-		presence: Arc<PresencePubliee>,
+		presence: Arc<PublishedPresence>,
 	) -> Self {
 		Self {
 			client,
@@ -400,28 +400,28 @@ impl<'a> StatusPublisher<'a> {
 
 /// Longueur maximale d'un motif. Un topic conservé est relus à chaque démarrage
 /// de Home Assistant : une phrase, pas une trace de pile ni un dump.
-const MOTIF_MAX: usize = 160;
+const REASON_MAX: usize = 160;
 
 /// Ce qu'on publie quand le motif lui-même est inutilisable.
-const MOTIF_SANS_DETAIL: &str = "la caméra n'a donné aucun motif";
-const MOTIF_MASQUE: &str = "motif masqué : il aurait pu contenir un secret";
+const REASON_SANS_DETAIL: &str = "la caméra n'a donné aucun motif";
+const REASON_MASQUE: &str = "motif masqué : il aurait pu contenir un secret";
 
 /// Les sous-chaînes qui n'ont rien à faire sur un topic conservé. Aucun motif
 /// construit par le pont n'en contient ; cette ceinture tient la promesse
 /// « jamais de secret dans un topic conservé » même si un appelant passe le
 /// texte brut d'une erreur caméra.
-const MOTIF_INTERDITS: [&str; 6] =
+const REASON_INTERDITS: [&str; 6] =
 	["password", "passwd", "mot de passe", "token", "secret", "apikey"];
 
 /// Met un motif de refus en état d'être conservé sur le broker : une seule
-/// ligne, sans balise XML, sans secret, bornée à [`MOTIF_MAX`] caractères.
+/// ligne, sans balise XML, sans secret, bornée à [`REASON_MAX`] caractères.
 ///
 /// Les balises sont remplacées par des guillemets français et non supprimées :
 /// `this camera's reply has no <OsdChannelName> tag` est précisément
 /// l'information qui explique un refus, et ce qui doit disparaître est le
 /// délimiteur XML, pas le nom de la balise.
 pub fn raison_publiable(raison: &str) -> String {
-	raison_publiable_borne(raison, MOTIF_MAX)
+	raison_publiable_borne(raison, REASON_MAX)
 }
 
 /// Même nettoyage, borne choisie par l'appelant.
@@ -445,15 +445,15 @@ pub fn raison_publiable_borne(raison: &str, maximal: usize) -> String {
 			c => c,
 		})
 		.collect();
-	if MOTIF_INTERDITS
+	if REASON_INTERDITS
 		.iter()
 		.any(|interdit| sans_balises.to_lowercase().contains(interdit))
 	{
-		return MOTIF_MASQUE.to_string();
+		return REASON_MASQUE.to_string();
 	}
 	let propre = sans_balises.split_whitespace().collect::<Vec<_>>().join(" ");
 	if propre.is_empty() {
-		return MOTIF_SANS_DETAIL.to_string();
+		return REASON_SANS_DETAIL.to_string();
 	}
 	if propre.chars().count() <= maximal {
 		return propre;
@@ -720,14 +720,14 @@ mod tests {
 			raison_publiable("no <OsdChannelName> tag here"),
 			"no «OsdChannelName» tag here"
 		);
-		assert_eq!(raison_publiable("  \n\t  "), MOTIF_SANS_DETAIL);
+		assert_eq!(raison_publiable("  \n\t  "), REASON_SANS_DETAIL);
 		assert_eq!(
 			raison_publiable("could not auth with password hunter2"),
-			MOTIF_MASQUE
+			REASON_MASQUE
 		);
 		assert_eq!(
 			raison_publiable("<Wifi><key>mot de passe</key></Wifi>"),
-			MOTIF_MASQUE,
+			REASON_MASQUE,
 			"un bloc XML passé par erreur ne doit pas ressortir"
 		);
 		assert_eq!(
@@ -736,7 +736,7 @@ mod tests {
 			"un motif tient sur une ligne"
 		);
 		let long = raison_publiable(&"a".repeat(4000));
-		assert!(long.chars().count() <= MOTIF_MAX, "{} caractères", long.chars().count());
+		assert!(long.chars().count() <= REASON_MAX, "{} caractères", long.chars().count());
 		assert!(long.ends_with('…'), "{long}");
 	}
 
@@ -764,7 +764,7 @@ mod tests {
 	#[tokio::test]
 	async fn la_presence_ne_publie_que_sur_transition() {
 		let (c, mock) = crate::test_support::mock_client();
-		let etat = Arc::new(PresencePubliee::default());
+		let etat = Arc::new(PublishedPresence::default());
 		let publ = StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&etat));
 		publ.publish_presence(true).await.unwrap();
 		publ.publish_presence(true).await.unwrap();
@@ -803,7 +803,7 @@ mod tests {
 	#[tokio::test]
 	async fn la_presence_se_deduplique_entre_deux_publieurs() {
 		let (c, mock) = crate::test_support::mock_client();
-		let etat = Arc::new(PresencePubliee::default());
+		let etat = Arc::new(PublishedPresence::default());
 		StatusPublisher::with_presence(&c, "bairelay", "cam1", Arc::clone(&etat))
 			.publish_presence(true)
 			.await

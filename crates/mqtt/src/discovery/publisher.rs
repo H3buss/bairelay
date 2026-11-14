@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::client::SharedMqttClient;
 use crate::error::MqttError;
-use crate::reglages::Family;
+use crate::settings::Family;
 
 use super::{
 	absent_hardware_retractions, build_ai_binary_sensors, build_battery, build_camera,
@@ -179,7 +179,7 @@ impl DiscoveryPublisher {
 	/// reste en lecture seule, et le savoir ici évite que la publication
 	/// suivante ne promette un curseur qui écrira en vain.
 	///
-	/// Appelé après chaque lecture réussie — `query/reglages`, écriture avec
+	/// Appelé après chaque lecture réussie — `query/settings`, écriture avec
 	/// relecture, aperçu — jamais sur minuterie : une sonnette sur batterie ne
 	/// survit pas à un interrogatoire périodique.
 	pub fn marque_famille_lue(&self, camera_name: &str, family: Family, ecrivable: bool) -> bool {
@@ -330,7 +330,7 @@ impl DiscoveryPublisher {
 					}
 				}
 				// Réglages : chaque famille sort du tableau `SPECS` de
-				// `discovery::reglages`, qui porte aussi ses topics. Rien n'est
+				// `discovery::settings`, qui porte aussi ses topics. Rien n'est
 				// construit à la main ici, pour que la découverte et le
 				// dispatch ne puissent pas dériver l'un de l'autre.
 				//
@@ -621,7 +621,7 @@ mod tests {
 	/// attendu au lieu de le deviner — ajouter un bouton au tableau déplace
 	/// automatiquement ces attendus, alors qu'un nombre magique mentirait.
 	fn specs_sans_etat() -> usize {
-		crate::discovery::reglages::SPECS
+		crate::discovery::settings::SPECS
 			.iter()
 			.filter(|s| s.plateforme_lecture_seule().is_none())
 			.count()
@@ -652,7 +652,7 @@ mod tests {
 		// colliding.
 		assert_eq!(
 			out.len(),
-			18 + crate::discovery::reglages::SPECS.len() - specs_sans_etat()
+			18 + crate::discovery::settings::SPECS.len() - specs_sans_etat()
 		);
 
 		// Every topic starts with the configured HA root.
@@ -744,7 +744,7 @@ mod tests {
 		// depend on PTZ at all.
 		assert_eq!(
 			out.len(),
-			14 + crate::discovery::reglages::SPECS.len() - specs_sans_etat(),
+			14 + crate::discovery::settings::SPECS.len() - specs_sans_etat(),
 			"18 − 4 PT buttons, réglages compris"
 		);
 		for (topic, _) in &out {
@@ -778,7 +778,7 @@ mod tests {
 		// carillon, qui n'a pas d'état à publier avant lecture.
 		assert_eq!(
 			out.len(),
-			12 + crate::discovery::reglages::SPECS.len() - specs_sans_etat()
+			12 + crate::discovery::settings::SPECS.len() - specs_sans_etat()
 		);
 	}
 
@@ -800,7 +800,7 @@ mod tests {
 			.filter(|f| *f != Feature::Audio)
 			.collect();
 		let sans = compute(&sans_audio);
-		let nb_audio = crate::discovery::reglages::specs_for(Feature::Audio).count();
+		let nb_audio = crate::discovery::settings::specs_for(Feature::Audio).count();
 		assert!(nb_audio >= 3, "la famille audio doit avoir des entités");
 		assert_eq!(
 			sans.len(),
@@ -1123,7 +1123,7 @@ mod tests {
 			"un curseur a été publié pour une valeur que la caméra n'a jamais envoyée"
 		);
 
-		// 2. `query/reglages/audio` a répondu et la caméra accepte qu'on lui
+		// 2. `query/settings/audio` a répondu et la caméra accepte qu'on lui
 		// renvoie `<audioCfg>` : la famille devient modifiable.
 		assert!(
 			publisher.marque_famille_lue("cam-vol", Family::Audio, true),

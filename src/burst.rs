@@ -5,7 +5,7 @@
 //! La batterie est l'urgence du terrain : plus aucun minuteur ne lit la caméra
 //! (`idle_disconnect = true`, `battery_update` réglé sur « jamais »), donc le
 //! niveau de batterie ne remontait plus que si une personne demandait
-//! `query/reglages`. Or la caméra, elle, se réveille toute seule : appui sur le
+//! `query/settings`. Or la caméra, elle, se réveille toute seule : appui sur le
 //! bouton, remontée de mouvement, enregistrement poussé sur le canal du faux
 //! cloud. Chaque réveil est une fenêtre où l'on peut lire **gratuitement** — la
 //! radio est déjà ouverte.
@@ -15,24 +15,24 @@
 //!
 //! # Les quatre règles, et pourquoi elles sont verrouillées par des tests
 //!
-//! 1. **Un réveil = une salve.** La garde ([`SalveGarde`]) refuse une seconde
-//!    salve tant que la première tourne *et* pendant [`FENETRE_GARDE`] après
+//! 1. **Un réveil = une salve.** La garde ([`BurstGuard`]) refuse une seconde
+//!    salve tant que la première tourne *et* pendant [`GUARD_WINDOW`] après
 //!    elle. Trois sources peuvent annoncer le même réveil (la session, le
 //!    webhook, la poussée) : sans cela, on paierait trois salves d'un coup.
 //! 2. **Jamais périodique, jamais au démarrage.** Ce module n'a aucune
 //!    `interval`, aucune `sleep` de cadencement, et n'est appelé d'aucun
 //!    chemin de démarrage : la mémoire de
-//!    [`crate::etat_familles::familles_prouvees`] suffit à publier la découverte
+//!    [`crate::family_state::familles_prouvees`] suffit à publier la découverte
 //!    sans radio. La seule `sleep` du module est la sonde d'attente de session
-//!    ([`attendre_session`]), bornée, qui n'émet aucune commande.
+//!    ([`await_session`]), bornée, qui n'émet aucune commande.
 //! 3. **Jamais pendant un flux.** [`CameraHandle::flux_en_cours`] refuse la
 //!    salve tant qu'un `StreamSource` a des abonnés : une caméra qui envoie de
 //!    la vidéo n'est pas le moment de lui demander dix blocs XML. Le dialogue
 //!    audio, lui, est un **processus séparé** (`bairelay parler`,
 //!    `pont-audio`) : le pont ne peut pas le voir, et le rapport le dit — ce
 //!    garde-fou-là n'est pas dans ce binaire.
-//! 4. **Une borne haute de commandes, journalisée.** [`LIMITE_COMMANDES`] est la
-//!    dépense maximale d'une salve, évaluée avant de partir ([`etablir_plan`])
+//! 4. **Une borne haute de commandes, journalisée.** [`COMMAND_BUDGET`] est la
+//!    dépense maximale d'une salve, évaluée avant de partir ([`build_plan`])
 //!    et écrite dans le journal avec ce qui a été sauté. Une famille chère
 //!    (`chime`, cinq commandes) ne mange pas toute la fenêtre sans que cela se
 //!    voie.
@@ -41,11 +41,11 @@
 //!
 //! Deux refus, et ils ne se ressemblent pas.
 //!
-//! * **La caméra n'a rien répondu** ([`Lecture::Indetermine`] : pas de session,
+//! * **La caméra n'a rien répondu** ([`Verdict::Unknown`] : pas de session,
 //!   injoignable) : la salve s'arrête **sur place**, les familles déjà lues
 //!   restent publiées, et le verrou est rendu — insister sur une caméra qui ne
 //!   répond pas ne se paie pas deux fois.
-//! * **La caméra a répondu « non »** ([`Lecture::Transitoire`] : un `400`, un
+//! * **La caméra a répondu « non »** ([`Verdict::Transient`] : un `400`, un
 //!   délai, un bloc inexploitable) : la salve **continue**. Mesuré le 13/11 sur
 //!   cette sonnette : `image` (26), `osd` (44), `motion` (46) et `mask` (52)
 //!   rendent `400` y compris caméra **bien éveillée**, alors que batterie (253),
@@ -55,19 +55,19 @@
 //!   la tournée morte à quatre commandes sur huit, `chime` jamais atteint.
 //!
 //! Deux garde-fous empêchent le « continue » de tourner au gaspillage : deux
-//! refus **consécutifs** rendent la session ([`REFUS_SUIVIS_MAX`]) — une caméra
+//! refus **consécutifs** rendent la session ([`MAX_CONSECUTIVE_REFUSALS`]) — une caméra
 //! qui dit non deux fois de suite ne dira probablement rien de mieux — et une
-//! famille refusée [`FAMILLE_MAX_REFUS`] réveils de suite sort du plan
-//! ([`SalveGarde::famille_saturee`]) : on ne rachète pas cent fois la même
+//! famille refusée [`FAMILY_MAX_REFUSALS`] réveils de suite sort du plan
+//! ([`BurstGuard::famille_saturee`]) : on ne rachète pas cent fois la même
 //! porte fermée. Le motif de chaque refus reste publié par
-//! [`crate::reglages::lire_famille`] lui-même.
+//! [`crate::settings::read_family`] lui-même.
 //!
 //! # La mémoire des familles
 //!
 //! La salve ne dévine aucune famille : elle relit celles dont la modifiabilité a
-//! **déjà été prouvée** ([`crate::etat_familles`]), et écrit cette mémoire
+//! **déjà été prouvée** ([`crate::family_state`]), et écrit cette mémoire
 //! **une seule fois** par salve — un seul appel à
-//! [`CameraHandle::reglages_familles_lues`] en fin de salve, qui est le seul
+//! [`CameraHandle::mark_families_read`] en fin de salve, qui est le seul
 //! chemin qui touche le disque.
 
 use std::collections::HashMap;
@@ -75,13 +75,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use bairelay_mqtt::reglages::Family;
+use bairelay_mqtt::settings::Family;
 use bairelay_mqtt::{SharedMqttClient, StatusPublisher};
 use bairelay_neolink_core::bc_protocol::BcCamera;
 use tokio::task::JoinHandle;
 
 use crate::camera::CameraHandle;
-use crate::reglages::{self, lire_famille, Lecture};
+use crate::settings::{self, read_family, Verdict};
 
 /// Fenêtre pendant laquelle un second réveil ne relance **pas** de salve.
 ///
@@ -89,31 +89,31 @@ use crate::reglages::{self, lire_famille, Lecture};
 /// l'alarme webhooks dans la même demi-seconde. Trop court, on paie deux salves
 /// pour un doigt ; trop long, une seconde visite trente secondes plus tard ne
 /// lit rien. Vingt secondes couvre le hold de mouvement typique.
-pub(crate) const FENETRE_GARDE: Duration = Duration::from_secs(20);
+pub(crate) const GUARD_WINDOW: Duration = Duration::from_secs(20);
 
 /// Borne haute du nombre de commandes radio qu'une salve peut payer.
 ///
 /// C'est **la** ligne à bouger si l'opératrice trouve la salve trop avare ou
 /// trop coûteuse : elle est écrite dans le journal de chaque salve, et les
 /// familles qu'elle a fait sauter sont comptées avec elle.
-pub(crate) const LIMITE_COMMANDES: usize = 8;
+pub(crate) const COMMAND_BUDGET: usize = 8;
 
 /// plafond de durée d'une salve, au-delà duquel on rend la session.
 ///
 /// Une caméra qui dort mal répond une fois sur dix et le pont ne doit pas
 /// tenir le réveil ouvert pour ça : au-delà, ce qui est lu est publié, le reste
 /// attendra le prochain réveil.
-const LIMITE_DUREE: Duration = Duration::from_secs(25);
+const TIME_BUDGET: Duration = Duration::from_secs(25);
 
 /// Combien de temps attendre que la session Baïchuan soit établie.
 ///
 /// Le réveil tient le verrou, la boucle de connexion de la caméra fait le
 /// reste : vingt secondes couvrent un établissement lent sur Wi-Fi sans
 /// immobiliser la caméra si elle est morte.
-const ATTENTE_SESSION: Duration = Duration::from_secs(20);
+const SESSION_WAIT: Duration = Duration::from_secs(20);
 
 /// Période de la sonde d'attente de session.
-const SONDE_SESSION: Duration = Duration::from_millis(200);
+const SESSION_POLL: Duration = Duration::from_millis(200);
 
 /// Après autant de réveils consécutifs sans réponse à la trame 253, la salve
 /// arrête de la payer.
@@ -122,7 +122,7 @@ const SONDE_SESSION: Duration = Duration::from_millis(200);
 /// que la salve ne peut pas attendre : avec `battery_update` réglé sur
 /// « jamais », le poller ne tick plus et ne verrouille donc jamais rien. Une
 /// caméra secteur ne mérite pas une commande perdue à chaque appui, indéfiniment.
-const BATTERIE_MAX_REFUS: usize = 3;
+const BATTERY_MAX_REFUSALS: usize = 3;
 
 /// Après autant de réveils consécutifs à refuser une famille, la salve cesse de
 /// la payer — jusqu'au prochain redémarrage du pont.
@@ -132,7 +132,7 @@ const BATTERIE_MAX_REFUS: usize = 3;
 /// en revanche, sur une caméra qu'on sait en forme puisque la batterie et le PIR
 /// répondent, est une porte fermée : chaque nouvelle tentative est une seconde
 /// de radio et rien d'autre.
-const FAMILLE_MAX_REFUS: usize = 3;
+const FAMILY_MAX_REFUSALS: usize = 3;
 
 /// Autant de refus **d'affilée dans la même tournée** rendent la session.
 ///
@@ -140,13 +140,13 @@ const FAMILLE_MAX_REFUS: usize = 3;
 /// suivante — ne doit pas devenir une tournée de quinze portes fermées. Deux est
 /// le compromis : assez pour laisser à `chime` sa chance derrière `image`, assez
 /// peu pour ne pas brûler un réveil contre un firmware muet.
-const REFUS_SUIVIS_MAX: usize = 2;
+const MAX_CONSECUTIVE_REFUSALS: usize = 2;
 
 /// Ce qui a réveillé la caméra. Publié avec l'état de la salve : « est-ce que
 /// l'appui du bouton me coûte une salve ? » est la première question de
 /// l'opératrice qui soupçonne la batterie de partir vite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Reveil {
+pub(crate) enum Wake {
 	/// Appui sur le bouton de la sonnette.
 	Appui,
 	/// Remontée de mouvement (alarme de session, alarme relayée, PIR webhook).
@@ -155,33 +155,33 @@ pub(crate) enum Reveil {
 	Poussee,
 }
 
-impl Reveil {
+impl Wake {
 	/// Le mot court publié dans l'état de salve.
 	pub(crate) fn slug(self) -> &'static str {
 		match self {
-			Reveil::Appui => "appui",
-			Reveil::Mouvement => "mouvement",
-			Reveil::Poussee => "poussee",
+			Wake::Appui => "appui",
+			Wake::Mouvement => "mouvement",
+			Wake::Poussee => "poussee",
 		}
 	}
 }
 
 /// Pourquoi la salve s'est arrêtée — et donc ce que l'opératrice lira sur
-/// `status/<cam>/status/salve`.
+/// `status/<cam>/status/burst`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Arret {
+pub(crate) enum Stop {
 	/// Pas de MQTT : rien à publier, donc rien à lire.
 	SansMqtt,
 	/// Un flux est en cours : la règle 3.
 	Flux,
-	/// Aucune session Baïchuan n'a été établie pendant [`ATTENTE_SESSION`].
+	/// Aucune session Baïchuan n'a été établie pendant [`SESSION_WAIT`].
 	SansSession,
-	/// [`REFUS_SUIVIS_MAX`] refus d'affilée, ou une tentative impossible
-	/// ([`Lecture::Indetermine`]) : la salve s'arrête là, motifs publiés.
+	/// [`MAX_CONSECUTIVE_REFUSALS`] refus d'affilée, ou une tentative impossible
+	/// ([`Verdict::Unknown`]) : la salve s'arrête là, motifs publiés.
 	Refus,
-	/// La borne [`LIMITE_COMMANDES`] a fait sauter au moins une famille.
+	/// La borne [`COMMAND_BUDGET`] a fait sauter au moins une famille.
 	Budget,
-	/// [`LIMITE_DUREE`] dépassée.
+	/// [`TIME_BUDGET`] dépassée.
 	Duree,
 	/// Le pont s'arrête (jeton de la caméra annulé).
 	Annulee,
@@ -189,18 +189,18 @@ pub(crate) enum Arret {
 	Terminee,
 }
 
-impl Arret {
+impl Stop {
 	/// Le mot court publié dans l'état de salve.
 	pub(crate) fn slug(self) -> &'static str {
 		match self {
-			Arret::SansMqtt => "sans-mqtt",
-			Arret::Flux => "flux",
-			Arret::SansSession => "sans-session",
-			Arret::Refus => "refus",
-			Arret::Budget => "budget",
-			Arret::Duree => "duree",
-			Arret::Annulee => "annulee",
-			Arret::Terminee => "terminee",
+			Stop::SansMqtt => "sans-mqtt",
+			Stop::Flux => "flux",
+			Stop::SansSession => "sans-session",
+			Stop::Refus => "refus",
+			Stop::Budget => "budget",
+			Stop::Duree => "duree",
+			Stop::Annulee => "annulee",
+			Stop::Terminee => "terminee",
 		}
 	}
 }
@@ -211,19 +211,19 @@ impl Arret {
 /// qui répond à « ai-je déjà payé une salve pour ce réveil ? », question qui se
 /// pose simultanément depuis la session, le webhook et la poussée.
 #[derive(Debug)]
-pub(crate) struct SalveGarde {
+pub(crate) struct BurstGuard {
 	/// Une salve tourne-t-elle en ce moment ?
 	en_cours: AtomicBool,
 	/// Instant de départ de la dernière salve acceptée.
 	derniere: Mutex<Option<Instant>>,
-	/// Fenêtre de refus après une salve ([`FENETRE_GARDE`] en production).
+	/// Fenêtre de refus après une salve ([`GUARD_WINDOW`] en production).
 	fenetre: Duration,
 	/// Refus consécutifs de la trame 253, vus par les salves.
 	batterie_refus: AtomicUsize,
 	/// Refus consécutifs par famille, vus par les salves de **cette** caméra.
 	///
 	/// En mémoire seulement, et c'est voulu : la mémoire du lot
-	/// ([`crate::etat_familles`]) dit si une famille est *écrivable*, question
+	/// ([`crate::family_state`]) dit si une famille est *écrivable*, question
 	/// durable ; ici la question est « est-ce que je continue à payer une
 	/// lecture que cette caméra refuse depuis trois réveils ? », question de
 	/// séance. Un redémarrage rouvre donc les trois tentatives — c'est exactement
@@ -231,10 +231,10 @@ pub(crate) struct SalveGarde {
 	refus_familles: Mutex<HashMap<Family, usize>>,
 }
 
-impl SalveGarde {
+impl BurstGuard {
 	/// Garde neuve, avec la fenêtre de refus à appliquer.
 	pub(crate) fn nouvelle(fenetre: Duration) -> Self {
-		SalveGarde {
+		BurstGuard {
 			en_cours: AtomicBool::new(false),
 			derniere: Mutex::new(None),
 			fenetre,
@@ -273,7 +273,7 @@ impl SalveGarde {
 	}
 
 	/// Une salve tourne-t-elle ? Observé par les tests : la production décide
-	/// avec [`SalveGarde::prendre`], qui réserve et répond dans le même élan.
+	/// avec [`BurstGuard::prendre`], qui réserve et répond dans le même élan.
 	#[cfg(test)]
 	pub(crate) fn en_cours(&self) -> bool {
 		self.en_cours.load(Ordering::SeqCst)
@@ -281,11 +281,11 @@ impl SalveGarde {
 
 	/// Faut-il cesser de payer la trame 253 ?
 	pub(crate) fn batterie_epuisee(&self) -> bool {
-		self.batterie_refus.load(Ordering::SeqCst) >= BATTERIE_MAX_REFUS
+		self.batterie_refus.load(Ordering::SeqCst) >= BATTERY_MAX_REFUSALS
 	}
 
 	/// Compter le résultat d'une trame 253 : un succès remet le compteur à zéro.
-	pub(crate) fn noter_batterie(&self, repondu: bool) {
+	pub(crate) fn note_battery(&self, repondu: bool) {
 		if repondu {
 			self.batterie_refus.store(0, Ordering::SeqCst);
 		} else {
@@ -294,10 +294,10 @@ impl SalveGarde {
 	}
 
 	/// Une famille vient d'être refusée : compter, et dire combien de fois de
-	/// suite. La lecture qui aboutit appelle [`SalveGarde::noter_famille_lue`]
+	/// suite. La lecture qui aboutit appelle [`BurstGuard::note_family_read`]
 	/// et remet le compteur à zéro — une famille qui revient n'est pas une
 	/// famille morte.
-	pub(crate) fn noter_famille_refusee(&self, famille: Family) -> usize {
+	pub(crate) fn note_family_refused(&self, famille: Family) -> usize {
 		let mut refus = self.refus_familles.lock().unwrap_or_else(|p| p.into_inner());
 		let compteur = refus.entry(famille).or_insert(0);
 		*compteur += 1;
@@ -307,12 +307,12 @@ impl SalveGarde {
 	/// Une famille vient de répondre : elle n'est plus en dette. La clé reste
 	/// en place à `0` (une clé par famille, quinze au plus) plutôt que de
 	/// déséquilibrer la table à chaque salve.
-	pub(crate) fn noter_famille_lue(&self, famille: Family) {
+	pub(crate) fn note_family_read(&self, famille: Family) {
 		let mut refus = self.refus_familles.lock().unwrap_or_else(|p| p.into_inner());
 		refus.insert(famille, 0);
 	}
 
-	/// Faut-il cesser de payer cette famille ? [`FAMILLE_MAX_REFUS`] refus de
+	/// Faut-il cesser de payer cette famille ? [`FAMILY_MAX_REFUSALS`] refus de
 	/// suite, et plus rien jusqu'au prochain succès — qui, par définition, ne
 	/// peut plus venir tant que la famille est écartée : c'est le redémarrage du
 	/// pont qui rejoue la chance, et c'est assumé.
@@ -321,7 +321,7 @@ impl SalveGarde {
 			.lock()
 			.unwrap_or_else(|p| p.into_inner())
 			.get(&famille)
-			.is_some_and(|n| *n >= FAMILLE_MAX_REFUS)
+			.is_some_and(|n| *n >= FAMILY_MAX_REFUSALS)
 	}
 }
 
@@ -330,9 +330,9 @@ impl SalveGarde {
 /// Sans cela, une panique dans une lecture de réglage condamnerait toutes les
 /// salves suivantes de cette caméra — le pire silence qui soit sur une sonnette
 /// dont on surveille justement la batterie.
-struct FinDeSalve(Arc<SalveGarde>);
+struct BurstRelease(Arc<BurstGuard>);
 
-impl Drop for FinDeSalve {
+impl Drop for BurstRelease {
 	fn drop(&mut self) {
 		self.0.liberer();
 	}
@@ -340,7 +340,7 @@ impl Drop for FinDeSalve {
 
 /// Le plan d'une salve : ce qui sera lu, ce que ça coûte, ce qui a été sauté.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Plan {
+pub(crate) struct BurstPlan {
 	/// Les familles qui seront relues, dans l'ordre de lecture.
 	pub(crate) familles: Vec<Family>,
 	/// Total des commandes évalué ([`cout`]).
@@ -351,7 +351,7 @@ pub(crate) struct Plan {
 
 /// Combien de commandes radio une famille coûte à relire.
 ///
-/// Les nombres viennent de [`crate::reglages::sync_family`], branche par
+/// Les nombres viennent de [`crate::settings::sync_family`], branche par
 /// branche — pas d'une estimation : `chime` est la seule famille à cinq commandes
 /// (483, 484, 485, 486, 609), et `ai` n'en coûte aucune parce qu'aucune balise
 /// d'activation n'a jamais été documentée.
@@ -366,8 +366,8 @@ pub(crate) fn cout(famille: Family) -> usize {
 
 /// Le rang de lecture dans la fenêtre, mesuré le 13/11.
 ///
-/// La borne de [`LIMITE_COMMANDES`] n'est pas la contrainte réelle. Ce qui coupe
-/// la tournée, c'est la caméra : `status/salve` du 13/11 rend `etat:"refus"` à
+/// La borne de [`COMMAND_BUDGET`] n'est pas la contrainte réelle. Ce qui coupe
+/// la tournée, c'est la caméra : `status/burst` du 13/11 rend `etat:"refus"` à
 /// quatre commandes sur huit, à la fois pour `raison:"appui"` et pour
 /// `raison:"mouvement"`, et la ligne `event 4` de la même minute chiffre la
 /// session à une quinzaine de secondes. Trier seulement par coût laissait donc
@@ -411,12 +411,12 @@ fn rang(famille: Family) -> u8 {
 ///   conservé, et deux salves sur le même ensemble de familles se ressemblent.
 ///
 /// C'est aussi ce qui rend la borne **haute** au sens strict :
-/// [`Plan::commandes`] ne dépasse jamais `budget`.
-pub(crate) fn etablir_plan(familles: &[Family], budget: usize) -> Plan {
+/// [`BurstPlan::commandes`] ne dépasse jamais `budget`.
+pub(crate) fn build_plan(familles: &[Family], budget: usize) -> BurstPlan {
 	let mut payees: Vec<(u8, usize, Family)> =
 		familles.iter().copied().map(|f| (rang(f), cout(f), f)).collect();
 	payees.sort_by_key(|(rangement, prix, _)| (*rangement, *prix));
-	let mut plan = Plan { familles: Vec::new(), commandes: 0, sautees: 0 };
+	let mut plan = BurstPlan { familles: Vec::new(), commandes: 0, sautees: 0 };
 	for (_, prix, famille) in payees {
 		if plan.commandes + prix > budget {
 			plan.sautees += 1;
@@ -433,7 +433,7 @@ pub(crate) fn etablir_plan(familles: &[Family], budget: usize) -> Plan {
 /// La batterie est lue à part, en premier : c'est pour elle que la salve existe,
 /// et son niveau se publie sur un topic que `sync_family` ne remplit pas.
 pub(crate) fn familles_a_lire(camera: &str) -> Vec<Family> {
-	crate::etat_familles::familles_prouvees(camera)
+	crate::family_state::familles_prouvees(camera)
 		.into_iter()
 		.filter(|f| *f != Family::Battery)
 		.collect()
@@ -449,7 +449,7 @@ pub(crate) fn familles_a_lire(camera: &str) -> Vec<Family> {
 ///
 /// Rend la poignée de la tâche pour les tests ; les appelants de production
 /// l'ignorent : la salve est détachée par construction.
-pub(crate) fn declencher(handle: Arc<CameraHandle>, raison: Reveil) -> Option<JoinHandle<()>> {
+pub(crate) fn trigger(handle: Arc<CameraHandle>, raison: Wake) -> Option<JoinHandle<()>> {
 	if !handle.salve().prendre(Instant::now()) {
 		tracing::debug!(
 			camera = %handle.name(),
@@ -461,18 +461,18 @@ pub(crate) fn declencher(handle: Arc<CameraHandle>, raison: Reveil) -> Option<Jo
 	tracing::info!(
 		camera = %handle.name(),
 		raison = raison.slug(),
-		budget = LIMITE_COMMANDES,
+		budget = COMMAND_BUDGET,
 		"salve de réveil engagée"
 	);
 	Some(tokio::spawn(tache(handle, raison)))
 }
 
 /// Le corps de la salve, une fois la garde réservée.
-async fn tache(handle: Arc<CameraHandle>, raison: Reveil) {
-	let _fin = FinDeSalve(Arc::clone(handle.salve()));
+async fn tache(handle: Arc<CameraHandle>, raison: Wake) {
+	let _fin = BurstRelease(Arc::clone(handle.salve()));
 
 	let Some(mqtt) = handle.mqtt_client() else {
-		let arret = Arret::SansMqtt;
+		let arret = Stop::SansMqtt;
 		tracing::debug!(
 			camera = %handle.name(),
 			raison = raison.slug(),
@@ -492,7 +492,7 @@ async fn tache(handle: Arc<CameraHandle>, raison: Reveil) {
 			raison = raison.slug(),
 			"salve refusée : un flux est en cours"
 		);
-		publier(&mqtt, &prefix, handle.name(), raison, Arret::Flux, 0, 0).await;
+		publier(&mqtt, &prefix, handle.name(), raison, Stop::Flux, 0, 0).await;
 		return;
 	}
 
@@ -500,19 +500,19 @@ async fn tache(handle: Arc<CameraHandle>, raison: Reveil) {
 	// pendant que nous lisons, et la salve perdrait sa propre session.
 	let _verrou = handle.wake_lock().acquire();
 
-	let Some(bc) = attendre_session(&handle).await else {
+	let Some(bc) = await_session(&handle).await else {
 		tracing::info!(
 			camera = %handle.name(),
 			raison = raison.slug(),
-			salle = ?ATTENTE_SESSION,
+			salle = ?SESSION_WAIT,
 			"salve sans session Baïchuan : la caméra ne s'est pas laissée joindre"
 		);
-		publier(&mqtt, &prefix, handle.name(), raison, Arret::SansSession, 0, 0).await;
+		publier(&mqtt, &prefix, handle.name(), raison, Stop::SansSession, 0, 0).await;
 		return;
 	};
 
-	// Les familles que cette caméra refuse depuis [`FAMILLE_MAX_REFUS`] réveils
-	// ne repartent pas au budget : la borne de [`LIMITE_COMMANDES`] est trop
+	// Les familles que cette caméra refuse depuis [`FAMILY_MAX_REFUSALS`] réveils
+	// ne repartent pas au budget : la borne de [`COMMAND_BUDGET`] est trop
 	// précieuse pour une porte déjà fermée trois fois.
 	let garde = handle.salve();
 	let possible = familles_a_lire(handle.name());
@@ -522,7 +522,7 @@ async fn tache(handle: Arc<CameraHandle>, raison: Reveil) {
 		.filter(|f| !garde.famille_saturee(*f))
 		.collect();
 	let ecartees = possible.len() - a_lire.len();
-	let plan = etablir_plan(&a_lire, LIMITE_COMMANDES);
+	let plan = build_plan(&a_lire, COMMAND_BUDGET);
 	tracing::info!(
 		camera = %handle.name(),
 		raison = raison.slug(),
@@ -530,37 +530,37 @@ async fn tache(handle: Arc<CameraHandle>, raison: Reveil) {
 		sautees = plan.sautees,
 		ecartees,
 		commandes = plan.commandes,
-		budget = LIMITE_COMMANDES,
+		budget = COMMAND_BUDGET,
 		"plan de salve"
 	);
 
-	let mut lues: Vec<(Family, Lecture)> = Vec::new();
+	let mut lues: Vec<(Family, Verdict)> = Vec::new();
 	let mut commandes = 0usize;
 	let tournee = tokio::time::timeout(
-		LIMITE_DUREE,
+		TIME_BUDGET,
 		salve(&handle, &bc, &publisher, &plan, &mut lues, &mut commandes),
 	)
 	.await;
 	let mut arret = match tournee {
 		Ok(arret) => arret,
-		Err(_) => Arret::Duree,
+		Err(_) => Stop::Duree,
 	};
-	if arret == Arret::Terminee && plan.sautees > 0 {
-		arret = Arret::Budget;
+	if arret == Stop::Terminee && plan.sautees > 0 {
+		arret = Stop::Budget;
 	}
 
 	// La seule écriture de la mémoire du lot — un appel, une écriture.
-	handle.reglages_familles_lues(&lues).await;
+	handle.mark_families_read(&lues).await;
 
 	tracing::info!(
 		camera = %handle.name(),
 		raison = raison.slug(),
 		etat = arret.slug(),
 		commandes,
-		budget = LIMITE_COMMANDES,
+		budget = COMMAND_BUDGET,
 		familles = lues.len(),
-		modifiables = lues.iter().filter(|(_, v)| *v == Lecture::Ecrivable).count(),
-		passageres = lues.iter().filter(|(_, v)| *v == Lecture::Transitoire).count(),
+		modifiables = lues.iter().filter(|(_, v)| *v == Verdict::Writable).count(),
+		passageres = lues.iter().filter(|(_, v)| *v == Verdict::Transient).count(),
 		"salve de réveil terminée : session rendue"
 	);
 	publier(&mqtt, &prefix, handle.name(), raison, arret, commandes, lues.len()).await;
@@ -571,16 +571,16 @@ async fn tache(handle: Arc<CameraHandle>, raison: Reveil) {
 ///
 /// S'arrête au premier refus, borne atteinte, ou annulation. Le compteur de
 /// commandes est un paramètre et non une valeur de retour, comme pour
-/// [`crate::reglages::sync_all`] : quand la tournée est emportée par
-/// [`LIMITE_DUREE`], ce qui a déjà été payé doit rester visible dans le journal.
+/// [`crate::settings::sync_all`] : quand la tournée est emportée par
+/// [`TIME_BUDGET`], ce qui a déjà été payé doit rester visible dans le journal.
 async fn salve(
 	handle: &CameraHandle,
 	bc: &BcCamera,
 	publ: &StatusPublisher<'_>,
-	plan: &Plan,
-	lues: &mut Vec<(Family, Lecture)>,
+	plan: &BurstPlan,
+	lues: &mut Vec<(Family, Verdict)>,
 	commandes: &mut usize,
-) -> Arret {
+) -> Stop {
 	let garde = handle.salve();
 
 	// La batterie d'abord : c'est la trame 253, celle qui ne réveille pas la
@@ -588,7 +588,7 @@ async fn salve(
 	if garde.batterie_epuisee() {
 		tracing::debug!(
 			camera = %handle.name(),
-			refus = BATTERIE_MAX_REFUS,
+			refus = BATTERY_MAX_REFUSALS,
 			"salve sans trame 253 : la batterie n'a pas répondu depuis assez de réveils pour arrêter de la payer"
 		);
 	} else {
@@ -600,22 +600,22 @@ async fn salve(
 			}
 			handle.status_cache().set_battery_level(niveau);
 		}
-		garde.noter_batterie(issu.is_ok());
-		let (famille, verdict) = reglages::batterie_lue(publ, &issu).await;
+		garde.note_battery(issu.is_ok());
+		let (famille, verdict) = settings::battery_read(publ, &issu).await;
 		lues.push((famille, verdict));
 		*commandes += 1;
 		// Un `400` sur la trame 253 ne doit pas éteindre la tournée non plus :
 		// c'est exactement le cas mesuré où la batterie refuse et où le carillon,
 		// juste derrière, aurait répondu. Le « stopper » de la trame 253 a déjà
-		// son propre garde-fou ([`BATTERIE_MAX_REFUS`], compté par
-		// [`SalveGarde::noter_batterie`]).
-		if verdict == Lecture::Indetermine {
+		// son propre garde-fou ([`BATTERY_MAX_REFUSALS`], compté par
+		// [`BurstGuard::note_battery`]).
+		if verdict == Verdict::Unknown {
 			tracing::info!(
 				camera = %handle.name(),
 				famille = famille.slug(),
 				"salve arrêtée sur la batterie : rien n'a répondu, la session est rendue"
 			);
-			return Arret::Refus;
+			return Stop::Refus;
 		}
 	}
 
@@ -624,88 +624,88 @@ async fn salve(
 	let mut refus_tournee = 0usize;
 	for &famille in &plan.familles {
 		let prix = cout(famille);
-		if *commandes + prix > LIMITE_COMMANDES {
+		if *commandes + prix > COMMAND_BUDGET {
 			tracing::info!(
 				camera = %handle.name(),
 				famille = famille.slug(),
 				commandes = *commandes,
-				budget = LIMITE_COMMANDES,
+				budget = COMMAND_BUDGET,
 				"salve arrêtée par la borne de commandes"
 			);
-			return Arret::Budget;
+			return Stop::Budget;
 		}
 		*commandes += prix;
 		if handle.cancel_token().is_cancelled() {
-			return Arret::Annulee;
+			return Stop::Annulee;
 		}
-		let (famille, verdict) = lire_famille(bc, publ, famille).await;
+		let (famille, verdict) = read_family(bc, publ, famille).await;
 		lues.push((famille, verdict));
 		match verdict {
 			// La caméra a dit non : elle est donc vivante et elle répond. Ce
 			// refus ne dit **rien** de la famille suivante, et l'historique de
 			// cette sonnette est là pour le prouver — la tournée s'arrêtait à
 			// quatre commandes et le carillon n'était plus jamais lu. On note,
-			// on continue, et on ne dépasse pas [`REFUS_SUIVIS_MAX`].
-			Lecture::Transitoire => {
+			// on continue, et on ne dépasse pas [`MAX_CONSECUTIVE_REFUSALS`].
+			Verdict::Transient => {
 				// Deux compteurs, et pas un : `refus` est celui de **cette
 				// famille** à travers les réveils (il décide si on continue de la
 				// payer), `tournee` est celui de la tournée en cours (il décide si
 				// on rend la session). Les confondre éteindrait la tournée dès la
 				// première famille, ou la laisserait courir quinze portes fermées.
-				let refus = garde.noter_famille_refusee(famille);
+				let refus = garde.note_family_refused(famille);
 				refus_tournee += 1;
 				tracing::info!(
 					camera = %handle.name(),
 					famille = famille.slug(),
 					refus,
-					plafond = FAMILLE_MAX_REFUS,
+					plafond = FAMILY_MAX_REFUSALS,
 					tournee = refus_tournee,
 					"famille refusée : la salve continue, la suivante n'est pas condamnée"
 				);
-				if refus_tournee >= REFUS_SUIVIS_MAX {
+				if refus_tournee >= MAX_CONSECUTIVE_REFUSALS {
 					tracing::info!(
 						camera = %handle.name(),
 						famille = famille.slug(),
-						plafond = REFUS_SUIVIS_MAX,
+						plafond = MAX_CONSECUTIVE_REFUSALS,
 						"salve rendue après deux refus d'affilée : les familles lues restent publiées"
 					);
-					return Arret::Refus;
+					return Stop::Refus;
 				}
 			}
 			// Rien n'a répondu : ce n'est pas un refus, c'est l'absence. Tenir
 			// la session ne peut plus rien rapporter.
-			Lecture::Indetermine => {
+			Verdict::Unknown => {
 				tracing::info!(
 					camera = %handle.name(),
 					famille = famille.slug(),
 					"salve arrêtée sur une tentative impossible : les familles déjà lues restent publiées, la session est rendue"
 				);
-				return Arret::Refus;
+				return Stop::Refus;
 			}
 			// La famille a répondu : elle n'est plus en dette de refus, et la
 			// série de refus de la tournée est rompue.
 			autre => {
-				garde.noter_famille_lue(famille);
+				garde.note_family_read(famille);
 				refus_tournee = 0;
 				let _ = autre;
 			}
 		}
 	}
 
-	Arret::Terminee
+	Stop::Terminee
 }
 
 /// Attendre que la session Baïchuan de cette caméra soit là.
 ///
 /// Aucune commande n'est émise ici : c'est la boucle de connexion de la caméra
 /// qui établit la session, tenue par le verrou que la salve (et le hold du
-/// réveil) détient. La sonde est bornée par [`ATTENTE_SESSION`] et coupée par
+/// réveil) détient. La sonde est bornée par [`SESSION_WAIT`] et coupée par
 /// l'arrêt du pont.
 ///
-/// `pub(crate)` parce que [`crate::interrogation`] attend la même session pour
+/// `pub(crate)` parce que [`crate::polling`] attend la même session pour
 /// la même raison : un verrou pris sans session obtenue ne sert à rien.
-pub(crate) async fn attendre_session(handle: &CameraHandle) -> Option<Arc<BcCamera>> {
-	let echeance = tokio::time::Instant::now() + ATTENTE_SESSION;
+pub(crate) async fn await_session(handle: &CameraHandle) -> Option<Arc<BcCamera>> {
+	let echeance = tokio::time::Instant::now() + SESSION_WAIT;
 	loop {
 		if let Some(bc) = handle.bc_camera_concrete() {
 			return Some(bc);
@@ -720,12 +720,12 @@ pub(crate) async fn attendre_session(handle: &CameraHandle) -> Option<Arc<BcCame
 		let reste = echeance - maintenant;
 		tokio::select! {
 			_ = handle.cancel_token().cancelled() => return None,
-			_ = tokio::time::sleep(reste.min(SONDE_SESSION)) => {}
+			_ = tokio::time::sleep(reste.min(SESSION_POLL)) => {}
 		}
 	}
 }
 
-/// Publier l'état de la salve : `status/<cam>/status/salve`, conservé.
+/// Publier l'état de la salve : `status/<cam>/status/burst`, conservé.
 ///
 /// Le sujet n'a pas d'entité Home Assistant découverte — volontairement : c'est
 /// un topic de diagnostic, et la découverte publierait une entité que
@@ -735,18 +735,18 @@ async fn publier(
 	mqtt: &SharedMqttClient,
 	prefix: &str,
 	camera: &str,
-	raison: Reveil,
-	etat: Arret,
+	raison: Wake,
+	etat: Stop,
 	commandes: usize,
 	familles: usize,
 ) {
-	let topic = format!("{prefix}/{camera}/status/salve");
+	let topic = format!("{prefix}/{camera}/status/burst");
 	let payload = format!(
 		r#"{{"raison":"{raison}","etat":"{etat}","commandes":{commandes},"budget":{budget},"familles":{familles}}}"#,
 		raison = raison.slug(),
 		etat = etat.slug(),
 		commandes = commandes,
-		budget = LIMITE_COMMANDES,
+		budget = COMMAND_BUDGET,
 		familles = familles,
 	);
 	if let Err(e) = mqtt.publish_retained(&topic, payload.as_bytes()).await {
@@ -838,9 +838,9 @@ mod tests {
 		));
 		handle.set_bc_camera_for_test(Arc::new(BcCamera::from_mock_connection(mock).await));
 
-		let premiere = declencher(Arc::clone(&handle), Reveil::Appui).expect("la première salve part");
+		let premiere = trigger(Arc::clone(&handle), Wake::Appui).expect("la première salve part");
 		// Le second réveil du même réveil : l'alarme webhook qui suit l'appui.
-		let seconde = declencher(Arc::clone(&handle), Reveil::Mouvement);
+		let seconde = trigger(Arc::clone(&handle), Wake::Mouvement);
 		assert!(seconde.is_none(), "un second réveil dans la fenêtre ne paie pas de salve");
 		premiere.await.expect("la salve n'a pas paniqué");
 
@@ -852,7 +852,7 @@ mod tests {
 		let etat = capture
 			.published_payloads()
 			.into_iter()
-			.find(|(t, _)| t == "bairelay/cam-salve/status/salve")
+			.find(|(t, _)| t == "bairelay/cam-salve/status/burst")
 			.expect("l'état de salve est publié");
 		let etat = String::from_utf8_lossy(&etat.1).into_owned();
 		assert!(etat.starts_with("{\"raison\":\"appui\""), "{etat}");
@@ -950,7 +950,7 @@ mod tests {
 			.expect("l'appui est publié sur le topic de sonnerie");
 		let position_etat = topics
 			.iter()
-			.position(|t| t == "bairelay/cam-appui/status/salve")
+			.position(|t| t == "bairelay/cam-appui/status/burst")
 			.expect("l'état de salve est publié en fin de salve");
 		assert!(
 			position_press < position_etat,
@@ -973,8 +973,8 @@ mod tests {
 	async fn salve_interrompue() {
 		// La batterie répond, puis **deux** familles sont refusées d'un `400` —
 		// le code que ce dialecte lit « pas maintenant », pas « pas ça ».
-		// `lire_famille` en tente deux par famille : **les quatre sont
-		// scriptées**, sans quoi la mock ne répond plus rien et `reglages_get`,
+		// `read_family` en tente deux par famille : **les quatre sont
+		// scriptées**, sans quoi la mock ne répond plus rien et `raw_get`,
 		// qui n'a aucun délai à lui et ne doit pas en avoir, attendrait ici
 		// jusqu'à la fin du test.
 		let mock = MockConnection::new()
@@ -998,7 +998,7 @@ mod tests {
 		));
 		handle.set_bc_camera_for_test(Arc::new(BcCamera::from_mock_connection(mock).await));
 
-		let plan = Plan {
+		let plan = BurstPlan {
 			familles: vec![Family::Motion, Family::Mask],
 			commandes: 2,
 			sautees: 0,
@@ -1018,18 +1018,18 @@ mod tests {
 			// sur la vraie sonnette — `image` en `400` y tue le carillon.
 			assert!(lues
 				.iter()
-				.any(|(f, v)| *f == Family::Motion && *v == Lecture::Transitoire));
+				.any(|(f, v)| *f == Family::Motion && *v == Verdict::Transient));
 			assert!(
 				lues.iter()
-					.any(|(f, v)| *f == Family::Mask && *v == Lecture::Transitoire),
+					.any(|(f, v)| *f == Family::Mask && *v == Verdict::Transient),
 				"la famille qui suit un `400` est tentée quand même ; observé : {lues:?}"
 			);
 			(fin, payees)
 		};
 		assert_eq!(
 			arret,
-			Arret::Refus,
-			"deux refus d'affilée rendent la session ([REFUS_SUIVIS_MAX])"
+			Stop::Refus,
+			"deux refus d'affilée rendent la session ([MAX_CONSECUTIVE_REFUSALS])"
 		);
 		assert_eq!(
 			commandes, 3,
@@ -1045,7 +1045,7 @@ mod tests {
 			"le motif de la seconde aussi, puisque sa lecture a été tentée ; observé : {topics:?}"
 		);
 
-		// Et la session rendue. `declencher` est le seul chemin qui prend le
+		// Et la session rendue. `trigger` est le seul chemin qui prend le
 		// verrou de réveil — c'est donc lui qu'on teste pour la restitution,
 		// avec une session neuve : le script ci-dessus est épuisé, et une
 		// mock épuisée ne répond plus, ce qui n'apprendrait rien.
@@ -1055,7 +1055,7 @@ mod tests {
 			.build()
 			.await;
 		handle.set_bc_camera_for_test(Arc::new(BcCamera::from_mock_connection(mock).await));
-		let tache = declencher(Arc::clone(&handle), Reveil::Poussee).expect("salve autorisée");
+		let tache = trigger(Arc::clone(&handle), Wake::Poussee).expect("salve autorisée");
 		tache.await.expect("pas de panique");
 		assert_eq!(
 			handle.wake_lock().count(),
@@ -1064,7 +1064,7 @@ mod tests {
 		);
 		assert!(!handle.salve().en_cours(), "la garde est libérée");
 		assert!(
-			capture.published_topics().iter().any(|t| t.ends_with("status/salve")),
+			capture.published_topics().iter().any(|t| t.ends_with("status/burst")),
 			"la salve détachée a publié son état : {:?}",
 			capture.published_topics()
 		);
@@ -1073,7 +1073,7 @@ mod tests {
 	/// La garde refuse la seconde salve dans la fenêtre et l'autorise après.
 	#[test]
 	fn la_garde_tient_la_fenetre() {
-		let garde = SalveGarde::nouvelle(Duration::from_millis(500));
+		let garde = BurstGuard::nouvelle(Duration::from_millis(500));
 		let debut = Instant::now();
 		assert!(garde.prendre(debut));
 		assert!(!garde.prendre(debut + Duration::from_millis(10)), "la fenêtre court");
@@ -1085,7 +1085,7 @@ mod tests {
 		assert!(garde.prendre(debut + Duration::from_millis(600)), "fenêtre passée");
 	}
 
-	/// Une famille que la caméra refuse depuis [`FAMILLE_MAX_REFUS`] réveils ne
+	/// Une famille que la caméra refuse depuis [`FAMILY_MAX_REFUSALS`] réveils ne
 	/// repart plus au budget ; une famille qui répond efface sa dette.
 	///
 	/// C'est la moitié qui protège la batterie : sans elle, « continuer après un
@@ -1093,12 +1093,12 @@ mod tests {
 	/// les jours, sur une sonnette sur pile.
 	#[test]
 	fn une_famille_refusee_trois_fois_sort_du_plan() {
-		let garde = SalveGarde::nouvelle(Duration::from_millis(500));
+		let garde = BurstGuard::nouvelle(Duration::from_millis(500));
 		assert!(!garde.famille_saturee(Family::Image), "neuve, elle est dans le plan");
-		assert_eq!(garde.noter_famille_refusee(Family::Image), 1);
-		assert_eq!(garde.noter_famille_refusee(Family::Image), 2);
+		assert_eq!(garde.note_family_refused(Family::Image), 1);
+		assert_eq!(garde.note_family_refused(Family::Image), 2);
 		assert!(!garde.famille_saturee(Family::Image), "deux refus, elle y est encore");
-		assert_eq!(garde.noter_famille_refusee(Family::Image), FAMILLE_MAX_REFUS);
+		assert_eq!(garde.note_family_refused(Family::Image), FAMILY_MAX_REFUSALS);
 		assert!(garde.famille_saturee(Family::Image), "trois refus d'affilée, stop");
 
 		// Les autres familles n'y sont pour rien : `image` refuse et `chime`
@@ -1106,14 +1106,14 @@ mod tests {
 		assert!(!garde.famille_saturee(Family::Chime), "une famille n'entraîne pas les autres");
 
 		// Et un succès rouvre la porte : la dette est effacée.
-		garde.noter_famille_lue(Family::Image);
+		garde.note_family_read(Family::Image);
 		assert!(!garde.famille_saturee(Family::Image), "une famille qui a répondu repart à zéro");
 
 		// Le plan ne la paie plus : à budget compté, `image` (1) et `chime` (5)
 		// sur une borne de 6, moins `image` écartée, laisse les 5 de `chime`.
-		let garde = SalveGarde::nouvelle(Duration::from_millis(500));
-		for _ in 0..FAMILLE_MAX_REFUS {
-			garde.noter_famille_refusee(Family::Image);
+		let garde = BurstGuard::nouvelle(Duration::from_millis(500));
+		for _ in 0..FAMILY_MAX_REFUSALS {
+			garde.note_family_refused(Family::Image);
 		}
 		let possibles = [Family::Image, Family::Chime];
 		let a_lire: Vec<Family> = possibles
@@ -1122,7 +1122,7 @@ mod tests {
 			.filter(|f| !garde.famille_saturee(*f))
 			.collect();
 		assert_eq!(a_lire, vec![Family::Chime], "la famille saturée ne repart pas au budget");
-		assert_eq!(etablir_plan(&a_lire, 6).familles, vec![Family::Chime]);
+		assert_eq!(build_plan(&a_lire, 6).familles, vec![Family::Chime]);
 	}
 
 	/// Le rang mesuré passe avant le coût. La fenêtre réelle tenant quatre ordres
@@ -1139,7 +1139,7 @@ mod tests {
 			Family::Motion,
 			Family::Chime,
 		];
-		let plan = etablir_plan(&entrees, LIMITE_COMMANDES);
+		let plan = build_plan(&entrees, COMMAND_BUDGET);
 		let tete: Vec<&str> = plan.familles.iter().take(2).map(|f| f.slug()).collect();
 		assert_eq!(tete, vec!["osd", "motion"], "les deux familles qui servent entrent les premières");
 		assert_eq!(
@@ -1147,11 +1147,11 @@ mod tests {
 			Family::Image,
 			"`image` ferme la marche"
 		);
-		assert!(plan.commandes <= LIMITE_COMMANDES, "{} commandes", plan.commandes);
+		assert!(plan.commandes <= COMMAND_BUDGET, "{} commandes", plan.commandes);
 
 		// Fenêtre plus étroite : c'est encore `image` qui reste sur le quai, et
 		// non l'une des deux premières.
-		let plan = etablir_plan(&entrees, 4);
+		let plan = build_plan(&entrees, 4);
 		assert!(
 			!plan.familles.contains(&Family::Image),
 			"{:?} — la famille inutile est écartée avant les autres",
@@ -1165,24 +1165,24 @@ mod tests {
 	#[test]
 	fn le_plan_ne_depasse_jamais_la_borne() {
 		let toutes: Vec<Family> = Family::ALL.to_vec();
-		let plan = etablir_plan(&toutes, LIMITE_COMMANDES);
+		let plan = build_plan(&toutes, COMMAND_BUDGET);
 		assert!(
-			plan.commandes <= LIMITE_COMMANDES,
+			plan.commandes <= COMMAND_BUDGET,
 			"{} commandes pour une borne de {}",
 			plan.commandes,
-			LIMITE_COMMANDES
+			COMMAND_BUDGET
 		);
 		assert!(plan.sautees > 0, "seize familles coûtent plus que la borne");
 
 		// `chime` (5) devant des familles à une commande : le plan les paie de
 		// la moins chère à la plus chère, donc les petites passent en premier.
-		let plan = etablir_plan(&[Family::Chime, Family::Audio, Family::Pir], 7);
+		let plan = build_plan(&[Family::Chime, Family::Audio, Family::Pir], 7);
 		assert_eq!(
 			plan.familles,
 			vec![Family::Audio, Family::Pir, Family::Chime],
 			"1 + 1 + 5 = 7, la borne est atteinte sans être dépassée"
 		);
-		let plan = etablir_plan(&[Family::Chime, Family::Audio, Family::Pir], 6);
+		let plan = build_plan(&[Family::Chime, Family::Audio, Family::Pir], 6);
 		assert_eq!(
 			plan.familles,
 			vec![Family::Audio, Family::Pir],
@@ -1191,7 +1191,7 @@ mod tests {
 		assert_eq!(plan.sautees, 1);
 
 		// `ai` ne coûte rien : il reste dans le plan, et son motif avec lui.
-		let plan = etablir_plan(&[Family::Ai], 0);
+		let plan = build_plan(&[Family::Ai], 0);
 		assert_eq!(plan.familles, vec![Family::Ai], "une famille sans commande ne mange pas la borne");
 	}
 
@@ -1207,7 +1207,7 @@ mod tests {
 			CancellationToken::new(),
 			None,
 		));
-		let t = declencher(Arc::clone(&handle), Reveil::Appui).expect("la garde s'ouvre quand même");
+		let t = trigger(Arc::clone(&handle), Wake::Appui).expect("la garde s'ouvre quand même");
 		t.await.expect("pas de panique");
 		assert_eq!(handle.wake_lock().count(), 0);
 	}

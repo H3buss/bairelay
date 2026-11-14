@@ -3,7 +3,7 @@ pub mod client;
 pub mod control;
 pub mod discovery;
 pub mod error;
-pub mod reglages;
+pub mod settings;
 pub mod status;
 pub mod system_ca;
 pub mod test_support;
@@ -14,8 +14,8 @@ pub use client::{connect, ClientAuth, MqttConfig, MqttEventLoop, SharedMqttClien
 pub use control::{parse_control_message, ControlCommand};
 pub use discovery::{CameraEnableFlags, DiscoveryPublisher};
 pub use error::MqttError;
-pub use reglages::{DayNight, Family, OsdFormat, SettingCommand, Weekday};
-pub use status::{PresencePubliee, StatusPublisher};
+pub use settings::{DayNight, Family, OsdFormat, SettingCommand, Weekday};
+pub use status::{PublishedPresence, StatusPublisher};
 pub use system_ca::system_ca_bundle;
 
 // Re-export rumqttc types needed by the event loop consumer + tests.

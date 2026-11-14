@@ -1,4 +1,4 @@
-//! `reglages-carillon` one-shot — read the paired-chime (ding-dong) family
+//! `chime-settings` one-shot — read the paired-chime (ding-dong) family
 //! (read sweep 483 / 484 / 485 / 609 / 486) and, with an option, write the
 //! changed parts back (485 / 483 / 610 / 487), then read the whole family
 //! again. With `--sonner`, make the chime ring once (485 `ringWithMusic`).
@@ -26,7 +26,7 @@
 //!
 //! # Why the write is a diff
 //!
-//! Same law as `reglages-audio`: a tag the camera never printed is never
+//! Same law as `audio-settings`: a tag the camera never printed is never
 //! invented (asking for it is a usage error and nothing goes on the wire),
 //! and whole blocks are rewritten, never fragments — this firmware silently
 //! ignores truncated blocks. On top of that, this family shares the 265
@@ -49,7 +49,7 @@
 //!
 //! # Why there is no `--gate`
 //!
-//! `reglages-audio` can consult the advertised abilities because `audioCfg` is
+//! `audio-settings` can consult the advertised abilities because `audioCfg` is
 //! an abilityInfo token. The chime family has **no abilityInfo token at all**
 //! — the commands themselves are the support test. A gate could only check a
 //! token this tool invented, which would veto exactly the cameras that do have
@@ -67,7 +67,7 @@
 //!
 //! # Why it wants the concrete `BcCamera`
 //!
-//! As with `reglages-audio`: the chime methods live on `BcCamera`, pointedly
+//! As with `audio-settings`: the chime methods live on `BcCamera`, pointedly
 //! not on the `CameraDriver` trait — a read-modify-write of raw blocks belongs
 //! to the CLI diagnostic, not to every service caller. [`run`] takes
 //! `&BcCamera` and is reached from the concrete-handle branch; [`run_via_driver`]
@@ -281,7 +281,7 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 				// failure imply they weren't.
 				e.context(
 					"the carillon settings were written; the ring test (cmd 485 ringWithMusic) \
-					 failed — re-run reglages-carillon to read them back",
+					 failed — re-run chime-settings to read them back",
 				)
 			}
 		})?;
@@ -293,7 +293,7 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 		None
 	};
 
-	Ok(Outcome::ReglagesCarillon {
+	Ok(Outcome::ChimeSettings {
 		changed: !changes.is_empty(),
 		block: info(&after),
 		changes,
@@ -302,10 +302,10 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 }
 
 /// Trait-object route: see the module docs — this command cannot run through
-/// [`CameraDriver`]. Mirrors [`crate::oneshot::reglages_audio::run_via_driver`].
+/// [`CameraDriver`]. Mirrors [`crate::oneshot::audio_settings::run_via_driver`].
 pub async fn run_via_driver(_cam: &dyn CameraDriver) -> Result<Outcome> {
 	anyhow::bail!(
-		"reglages-carillon requires a concrete BcCamera; not supported through CameraDriver"
+		"chime-settings requires a concrete BcCamera; not supported through CameraDriver"
 	);
 }
 
@@ -464,7 +464,7 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_carillon_edit_is_empty_only_without_write_options() {
+	fn chime_settings_edit_is_empty_only_without_write_options() {
 		assert!(Edit::default().is_empty());
 		// `--sonner` alone makes noise but stores nothing: still "no write".
 		assert!(
@@ -489,7 +489,7 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_carillon_check_refuses_out_of_range_switch_values() {
+	fn chime_settings_check_refuses_out_of_range_switch_values() {
 		let err = Edit {
 			volume: Some(5),
 			..Default::default()
@@ -519,7 +519,7 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_carillon_missing_tag_is_a_usage_error_not_an_addition() {
+	fn chime_settings_missing_tag_is_a_usage_error_not_an_addition() {
 		let err = present(None, "volLevel", "--volume")
 			.expect_err("a tag the camera didn't print may not be invented");
 		let msg = format!("{:#}", err);
@@ -529,7 +529,7 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_carillon_after_value_finds_each_written_tag() {
+	fn chime_settings_after_value_finds_each_written_tag() {
 		let cfg = fixture();
 		assert_eq!(after_value(&cfg, &Asked::VolLevel).as_deref(), Some("2"));
 		assert_eq!(after_value(&cfg, &Asked::LedState).as_deref(), Some("1"));
@@ -543,7 +543,7 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_carillon_info_keeps_text_and_drops_refused_parts() {
+	fn chime_settings_info_keeps_text_and_drops_refused_parts() {
 		let mut cfg = fixture();
 		cfg.ctrl = Some(DingDongCtrl {
 			version: "1.1".into(),
@@ -578,7 +578,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn reglages_carillon_run_via_driver_bails_with_named_reason() {
+	async fn chime_settings_run_via_driver_bails_with_named_reason() {
 		let fake = bairelay_neolink_core::bc_protocol::FakeCameraBuilder::new().build();
 		let err = run_via_driver(&*fake)
 			.await

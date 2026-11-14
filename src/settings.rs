@@ -1,7 +1,7 @@
 //! Application des réglages MQTT et publication de ce que la caméra a re-lu.
 //!
 //! Le message `control/<famille>/<feuille>` arrive déjà validé par
-//! [`bairelay_mqtt::reglages`] (plage, longueur, texte autorisé) : aucune valeur
+//! [`bairelay_mqtt::settings`] (plage, longueur, texte autorisé) : aucune valeur
 //! hors plage n'atteint ici la caméra. Ce module fait trois choses, dans cet
 //! ordre :
 //!
@@ -9,7 +9,7 @@
 //!    lecture-modification-écriture du bloc complet (voir
 //!    `docs/protocole-reglages.md`), et ajouter au bloc une balise que le
 //!    firmware n'a pas envoyée est la faute que ce pont refuse partout (même
-//!    règle que `src/oneshot/reglages_audio.rs::present`) ;
+//!    règle que `src/oneshot/audio_settings.rs::present`) ;
 //! 2. il écrit le bloc modifié ;
 //! 3. il publie, feuille par feuille, **ce que la caméra a re-lu**.
 //!
@@ -29,7 +29,7 @@
 //! ([`crate::camera::CameraHandle::bc_camera_concrete`]).
 
 use bairelay_mqtt::discovery::{EntityKind, SPECS};
-use bairelay_mqtt::reglages::{Family, SettingCommand};
+use bairelay_mqtt::settings::{Family, SettingCommand};
 use bairelay_mqtt::StatusPublisher;
 
 use bairelay_neolink_core::bc::xml::{
@@ -324,7 +324,7 @@ async fn publish_chime(publ: &StatusPublisher<'_>, cfg: &DingDongCfg) {
 	publish_json(publ, Family::Chime, cfg).await;
 }
 
-// ── Lecture seule : synchronisation à la demande ────────────────────────
+// ── Verdict seule : synchronisation à la demande ────────────────────────
 
 /// Les feuilles que la découverte Home Assistant déclare pour une famille, hors
 /// boutons (un bouton n'a pas d'état à effacer).
@@ -339,7 +339,7 @@ fn leaves_of(family: Family) -> impl Iterator<Item = &'static str> {
 /// Efface tous les états d'une famille : ce qu'on fait quand elle a refusé.
 ///
 /// Le motif de ce refus se publie à côté, pas à la place : voir
-/// [`publier_motif`]. Effacer sans expliquer redonne exactement le silence que
+/// [`publish_reason`]. Effacer sans expliquer redonne exactement le silence que
 /// l'opératrice ne peut pas diagnostiquer.
 pub(crate) async fn clear_family(publ: &StatusPublisher<'_>, family: Family) {
 	for leaf in leaves_of(family) {
@@ -350,16 +350,16 @@ pub(crate) async fn clear_family(publ: &StatusPublisher<'_>, family: Family) {
 
 /// Le motif qu'une famille n'a pas répondu dans le délai. Le timeout est déclenché
 /// par le dispatch, pas par le cœur protocole : c'est ici qu'on sait le dire.
-pub(crate) const MOTIF_TIMEOUT: &str = "la caméra n'a pas répondu à temps";
+pub(crate) const REASON_TIMEOUT: &str = "la caméra n'a pas répondu à temps";
 
 /// Met une famille en état d'être lue sans être écrite, et le dit.
-pub(crate) const MOTIF_LECTURE_SEULE: &str =
+pub(crate) const REASON_LECTURE_SEULE: &str =
 	"la caméra lit ce réglage mais refuse qu'on lui renvoie le bloc : lecture seule";
 
 /// Le pont n'a pas de session Baïchuan en cours : la commande n'a pas pu partir.
 /// Ce n'est pas un refus de la caméra, mais c'est un refus — et un refus qui se
 /// tait est indistinguable d'un pont mort.
-pub(crate) const MOTIF_SANS_SESSION: &str =
+pub(crate) const REASON_SANS_SESSION: &str =
 	"aucune session Baïchuan en cours : rien n'a été envoyé à la caméra";
 
 /// Ce que la caméra vient de répondre était mauvais **une fois** : le réglage
@@ -368,8 +368,8 @@ pub(crate) const MOTIF_SANS_SESSION: &str =
 /// exactement la fausse promesse inverse de celle que ce module corrige.
 ///
 /// Formé en deux parties parce que la première moitié est le motif technique,
-/// variable selon l'erreur : voir [`publier_motif_indetermine`].
-pub(crate) const MOTIF_SANS_VERROUILLAGE: &str =
+/// variable selon l'erreur : voir [`publish_reason_unknown`].
+pub(crate) const REASON_SANS_VERROUILLAGE: &str =
 	" — réglage non verrouillé : la famille garde son état";
 
 /// La conséquence d'un refus **transitoire**, publiée cette fois **en tête** de
@@ -377,7 +377,7 @@ pub(crate) const MOTIF_SANS_VERROUILLAGE: &str =
 /// donc une fin de phrase ne survit pas à un motif technique long (`la réponse
 /// de la caméra est incompréhensible : …`). Or c'est précisément la moitié que
 /// l'opératrice regarde : la famille est-elle utilisable ou non.
-pub(crate) const MOTIF_TRANSITOIRE: &str =
+pub(crate) const REASON_TRANSITOIRE: &str =
 	"erreur de lecture transitoire : la famille reste publiée modifiable";
 
 /// Refus **local** et structurel : la balise qu'il faudrait renvoyer pour écrire
@@ -385,7 +385,7 @@ pub(crate) const MOTIF_TRANSITOIRE: &str =
 /// mauvais, c'est nous qui ne pouvons pas écrire sans inventer une balise — la
 /// seule chose que ce pont refuse partout. Nommer la balise est le but de la
 /// phrase : c'est ce qui reste à lire quand on n'a pas la caméra sous la main.
-pub(crate) const MOTIF_SANS_OSDCHANNEL: &str = concat!(
+pub(crate) const REASON_SANS_OSDCHANNEL: &str = concat!(
 	"la réponse de la caméra ne contient pas <OsdChannelName> : ",
 	"rien à lui renvoyer, lecture seule"
 );
@@ -398,14 +398,14 @@ pub(crate) const MOTIF_SANS_OSDCHANNEL: &str = concat!(
 /// et une liste publiée vide. Le motif le dit au lieu de publier `[]` en
 /// silence, parce que `[]` se lit « aucun carillon » alors qu'il faut lire « la
 /// caméra n'énumère pas celui-ci ».
-pub(crate) const MOTIF_CARILLON_SANS_ENTREE: &str = concat!(
+pub(crate) const REASON_CARILLON_SANS_ENTREE: &str = concat!(
 	"484 a répondu sans aucune entrée reconnue : carillon non énuméré, ",
 	"donc rien à adresser en 485"
 );
 
 /// Même verdict, autre cause : le 484 n'a pas répondu du tout (modèle sans
 /// carillon sans fil, ou refus). La nuance compte, elle est donc distincte.
-pub(crate) const MOTIF_CARILLON_SANS_ID: &str = concat!(
+pub(crate) const REASON_CARILLON_SANS_ID: &str = concat!(
 	"la caméra n'a pas répondu à 484 : aucun identifiant de carillon, ",
 	"donc rien à adresser en 485"
 );
@@ -416,7 +416,7 @@ pub(crate) const MOTIF_CARILLON_SANS_ID: &str = concat!(
 /// **par type**) ne documentent que `<sensitivity>`, `<stayTime>` et les tailles
 /// de cible. Publier un `command_topic` ici serait promettre l'écriture d'une
 /// balise inventée ; le motif nomme donc ce qu'il faut rapporter du terrain.
-pub(crate) const MOTIF_AI_SANS_BALISE: &str = concat!(
+pub(crate) const REASON_AI_SANS_BALISE: &str = concat!(
 	"aucune balise d'activation connue par type (342/AiDetectCfg ne documente que ",
 	"sensibilite, stayTime, tailles) : pas de topic de commande"
 );
@@ -427,7 +427,7 @@ pub(crate) const MOTIF_AI_SANS_BALISE: &str = concat!(
 /// par [`bairelay_mqtt::status::raison_publiable`] : ni XML brut, ni identifiant,
 /// ni secret. Une erreur de publication ne remonte pas — le broker n'est pas ce
 /// qui décide de OK/FAIL — mais elle est journalisée.
-pub(crate) async fn publier_motif(publ: &StatusPublisher<'_>, family: Family, raison: &str) {
+pub(crate) async fn publish_reason(publ: &StatusPublisher<'_>, family: Family, raison: &str) {
 	if let Err(e) = publ.publish_family_reason(family, raison).await {
 		tracing::warn!(family = family.slug(), error = %e, "publication du motif d'un refus a échoué");
 	}
@@ -437,35 +437,35 @@ pub(crate) async fn publier_motif(publ: &StatusPublisher<'_>, family: Family, ra
 /// ou pas répondu, et le pont ne change rien d'autre que ce topic.
 ///
 /// La phrase porte le motif technique **et** la conséquence pour Home Assistant
-/// ([`MOTIF_SANS_VERROUILLAGE`]) : ce qui est écrit ici ne verrouille aucune
+/// ([`REASON_SANS_VERROUILLAGE`]) : ce qui est écrit ici ne verrouille aucune
 /// entité. C'est la moitié que l'opératrice regarde en premier, et sans elle un
 /// `400` pendant une salve de quinze commandes ressemble à un réglage interdit.
-pub(crate) async fn publier_motif_indetermine(
+pub(crate) async fn publish_reason_unknown(
 	publ: &StatusPublisher<'_>,
 	family: Family,
 	raison: &str,
 ) {
-	publier_motif(publ, family, &format!("{raison}{MOTIF_SANS_VERROUILLAGE}")).await;
+	publish_reason(publ, family, &format!("{raison}{REASON_SANS_VERROUILLAGE}")).await;
 }
 
 /// Publie le motif d'un refus **transitoire** : la caméra a répondu mauvais, trop
 /// tard, ou en un bloc inexploitable, et la famille **reste publiée modifiable**.
 ///
-/// La conséquence ([`MOTIF_TRANSITOIRE`]) passe en tête, avant le motif technique
+/// La conséquence ([`REASON_TRANSITOIRE`]) passe en tête, avant le motif technique
 /// : c'est la moitié que l'opératrice regarde et elle doit survivre à la coupe à
 /// 160 caractères. Un `400` arraché pendant une salve de quinze commandes radio ne
 /// doit plus jamais ressembler à un réglage interdit.
-pub(crate) async fn publier_motif_transitoire(
+pub(crate) async fn publish_reason_transient(
 	publ: &StatusPublisher<'_>,
 	family: Family,
 	raison: &str,
 ) {
-	publier_motif(publ, family, &format!("{MOTIF_TRANSITOIRE}, {raison}")).await;
+	publish_reason(publ, family, &format!("{REASON_TRANSITOIRE}, {raison}")).await;
 }
 
 /// Fait disparaître le motif : la famille vient de répondre, la raison d'un
 /// refus passé n'a plus rien à faire sur le broker.
-pub(crate) async fn effacer_motif(publ: &StatusPublisher<'_>, family: Family) {
+pub(crate) async fn clear_reason(publ: &StatusPublisher<'_>, family: Family) {
 	if let Err(e) = publ.clear_family_reason(family).await {
 		tracing::warn!(family = family.slug(), error = %e, "effacement du motif d'un refus a échoué");
 	}
@@ -484,7 +484,7 @@ pub(crate) fn motif(err: &Error) -> String {
 		Error::Timeout(_)
 		| Error::TimeoutDisconnected
 		| Error::TimeoutError(_)
-		| Error::DiscoveryTimeout => MOTIF_TIMEOUT.to_string(),
+		| Error::DiscoveryTimeout => REASON_TIMEOUT.to_string(),
 		Error::CameraServiceUnavailable { code, .. } => {
 			format!("la caméra a refusé la commande (code {code})")
 		}
@@ -532,18 +532,18 @@ pub(crate) fn motif(err: &Error) -> String {
 /// — et le terrain l'a montré deux fois : `image` (26) répond `400` à la
 /// **lecture** et applique pourtant l'écriture du contraste, relue et vérifiée.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Lecture {
+pub(crate) enum Verdict {
 	/// La caméra a donné son bloc **et** nous savons le lui renvoyer : la
 	/// famille est modifiable. Une écriture qui aboutit est la même preuve, en
 	/// plus fort.
-	Ecrivable,
+	Writable,
 	/// Preuve **locale** et structurelle que l'écriture est impossible : le
 	/// porteur lu ne se renvoie pas (`<MdAlarm>`, refusé par
 	/// [`BcCamera::set_motion_cfg`]), ou la balise à modifier n'est pas dans la
 	/// réponse (`<OsdChannelName>` pour le nom et le filigrane). Dans les deux
 	/// cas c'est **nous** qui refusons, pas la caméra : ce sont les seuls
 	/// verdicts, avec celui de la famille sans bloc lu du tout, qui verrouillent.
-	NonEcrivable,
+	NotWritable,
 	/// La caméra a répondu mauvais, trop tard, ou en un bloc incompréhensible :
 	/// `400`, délai dépassé, réponse inexploitable. Ça ne prouve **rien** contre
 	/// l'écriture — un firmware endormi répond `400` aux blocs vidéo et les
@@ -552,25 +552,25 @@ pub(crate) enum Lecture {
 	/// **modifiable**, comme avant ce verdict, et la raison du refus est publiée
 	/// à côté : c'est la paire que l'opératrice demandait, « utilisable mais pas
 	/// muet ».
-	Transitoire,
+	Transient,
 	/// Rien n'a pu être tenté du tout : pas de session Baïchuan, identification
 	/// refusée, caméra injoignable, capacité absente. Ce n'est pas une réponse de
 	/// la caméra, donc le pont ne promet rien qu'il n'ait pu vérifier : la
 	/// découverte ne change **rien** ; le motif, lui, se publie.
-	Indetermine,
+	Unknown,
 }
 
-impl Lecture {
+impl Verdict {
 	/// Le booléen que comprend le publieur de découverte. `None` = « ne change
-	/// rien à ce qui est publié » ([`Lecture::Indetermine`]).
+	/// rien à ce qui est publié » ([`Verdict::Unknown`]).
 	pub(crate) fn ecrivable(self) -> Option<bool> {
 		match self {
-			Lecture::Ecrivable => Some(true),
-			Lecture::NonEcrivable => Some(false),
+			Verdict::Writable => Some(true),
+			Verdict::NotWritable => Some(false),
 			// Une lecture qui n'a pas abouti pour une raison passagère ne retire
 			// pas une commande qui fonctionnait : c'est le cœur de la correction.
-			Lecture::Transitoire => Some(true),
-			Lecture::Indetermine => None,
+			Verdict::Transient => Some(true),
+			Verdict::Unknown => None,
 		}
 	}
 }
@@ -584,25 +584,25 @@ impl Lecture {
 /// Changer quinze signatures pour une information que trois branches seulement
 /// connaît serait le pire endroit pour la payer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Portee {
+pub(crate) struct Writability {
 	/// La caméra accepte qu'on lui renvoie le bloc qu'elle vient d'envoyer.
 	pub ecrivable: bool,
 	/// La phrase qui dit pourquoi elle ne l'accepte pas, quand le cas général
-	/// ([`MOTIF_LECTURE_SEULE`]) ne suffit pas à nommer la balise en cause.
+	/// ([`REASON_LECTURE_SEULE`]) ne suffit pas à nommer la balise en cause.
 	pub motif: Option<&'static str>,
 }
 
-impl Portee {
+impl Writability {
 	/// Verdict neuf : « réécrivable, sans rien à signaler ».
 	pub(crate) fn nouvelle() -> Self {
-		Portee { ecrivable: true, motif: None }
+		Writability { ecrivable: true, motif: None }
 	}
 }
 
 /// Lit une famille, publie ses feuilles, et met le topic `reason` à jour : vide
 /// quand la famille est en bonne santé, la phrase du refus sinon. Répond
 /// `(famille, verdict)`, c'est-à-dire ce que la découverte doit publier — ou ne
-/// pas publier du tout ([`Lecture::Indetermine`]).
+/// pas publier du tout ([`Verdict::Unknown`]).
 ///
 /// C'est **là**, et pas chez l'appelant, que la famille bascule : lecture
 /// réussie → plus aucun motif ; refus → états effacés **et** motif publié. Les
@@ -613,37 +613,37 @@ impl Portee {
 ///
 /// * **la preuve locale** — porteur qui ne se renvoie pas, balise absente : elle
 ///   est prise dans [`sync_family`] elle-même, en `Ok`, et donne
-///   [`Lecture::NonEcrivable`] ;
+///   [`Verdict::NotWritable`] ;
 /// * **la réponse maussade** — `400`, délai dépassé, bloc incompréhensible : elle
-///   ne prouve rien du tout et donne [`Lecture::Transitoire`]. La famille se
+///   ne prouve rien du tout et donne [`Verdict::Transient`]. La famille se
 ///   publie modifiable, comme avant, avec la raison du refus écrit à côté ;
 /// * **la tentative impossible** — pas de session, caméra injoignable : le pont
-///   n'a rien pu vérifier et rend [`Lecture::Indetermine`], qui ne change rien à
+///   n'a rien pu vérifier et rend [`Verdict::Unknown`], qui ne change rien à
 ///   la découverte.
 ///
 /// Sur un refus qui ressemble à un « pas maintenant », une **seconde** tentative
 /// est faite ici même : les GET des réglages n'ont pas la boucle de rejeu que le
 /// dépôt applique déjà ailleurs au même code, et sans elle une salve complète
 /// perd les quatre blocs que la caméra finit par donner quand elle s'est
-/// réveillée. Une seule tentative de plus, pas davantage : `query/reglages` est
+/// réveillée. Une seule tentative de plus, pas davantage : `query/settings` est
 /// déjà une quinzaine de commandes radio sur une sonnette sur batterie. Le délai
 /// dépassé, lui, n'est pas rejoué — re-tenter une commande à laquelle la caméra
 /// n'a pas répondu, c'est payer deux fois une radio qui dort.
-pub(crate) async fn lire_famille(
+pub(crate) async fn read_family(
 	bc: &BcCamera,
 	publ: &StatusPublisher<'_>,
 	family: Family,
-) -> (Family, Lecture) {
-	let mut portee = Portee::nouvelle();
+) -> (Family, Verdict) {
+	let mut portee = Writability::nouvelle();
 	match sync_family(bc, publ, family, &mut portee).await {
 		Ok(n) => promettre(publ, family, portee, n).await,
-		Err(e) if est_reessayable(&e) => {
+		Err(e) if is_retryable(&e) => {
 			tracing::debug!(
 				family = family.slug(),
 				error = %e,
 				"lecture de réglage refusée d'un code transitoire : une seconde tentative"
 			);
-			let mut seconde = Portee::nouvelle();
+			let mut seconde = Writability::nouvelle();
 			match sync_family(bc, publ, family, &mut seconde).await {
 				Ok(n) => promettre(publ, family, seconde, n).await,
 				Err(deuxieme) => repli(publ, family, &deuxieme).await,
@@ -654,19 +654,19 @@ pub(crate) async fn lire_famille(
 }
 
 /// Batterie **déjà lue** par l'appelant : publie les cinq champs et rend le même
-/// verdict que [`lire_famille`], sans repayer la trame 253.
+/// verdict que [`read_family`], sans repayer la trame 253.
 ///
-/// Il existe parce que la salve de réveil ([`crate::salve`]) lit la batterie
+/// Il existe parce que la salve de réveil ([`crate::burst`]) lit la batterie
 /// elle-même — c'est pour son niveau qu'elle se déclenche — et doit quand même
-/// publier les motifs et le verdict comme le fait `query/reglages`. Deux chemins
+/// publier les motifs et le verdict comme le fait `query/settings`. Deux chemins
 /// qui publient la batterie avec deux règles de verdict, c'est exactement la
 /// divergence que ce module refuse partout ailleurs.
-pub(crate) async fn batterie_lue(
+pub(crate) async fn battery_read(
 	publ: &StatusPublisher<'_>,
 	issu: &CoreResult<BatteryInfo>,
-) -> (Family, Lecture) {
+) -> (Family, Verdict) {
 	match issu {
-		Ok(_) => promettre(publ, Family::Battery, Portee::nouvelle(), 5).await,
+		Ok(_) => promettre(publ, Family::Battery, Writability::nouvelle(), 5).await,
 		Err(e) => repli(publ, Family::Battery, e).await,
 	}
 }
@@ -677,9 +677,9 @@ pub(crate) async fn batterie_lue(
 async fn promettre(
 	publ: &StatusPublisher<'_>,
 	family: Family,
-	portee: Portee,
+	portee: Writability,
 	feuilles: usize,
-) -> (Family, Lecture) {
+) -> (Family, Verdict) {
 	tracing::debug!(
 		family = family.slug(),
 		leaves = feuilles,
@@ -687,12 +687,12 @@ async fn promettre(
 		"réglages synchronisés"
 	);
 	if portee.ecrivable {
-		effacer_motif(publ, family).await;
-		return (family, Lecture::Ecrivable);
+		clear_reason(publ, family).await;
+		return (family, Verdict::Writable);
 	}
 	// Pas un refus de la caméra : une promesse que nous ne ferons pas.
-	publier_motif(publ, family, portee.motif.unwrap_or(MOTIF_LECTURE_SEULE)).await;
-	(family, Lecture::NonEcrivable)
+	publish_reason(publ, family, portee.motif.unwrap_or(REASON_LECTURE_SEULE)).await;
+	(family, Verdict::NotWritable)
 }
 
 /// La caméra n'a rien donné d'exploitable : c'est le repli, et c'est lui qui
@@ -702,30 +702,30 @@ async fn promettre(
 /// rend pas avec la valeur de la dernière fois — et le motif est publié. Ce qui
 /// change est le verdict :
 ///
-/// * **passable** (400, délai, bloc incompréhensible) → [`Lecture::Transitoire`] :
+/// * **passable** (400, délai, bloc incompréhensible) → [`Verdict::Transient`] :
 ///   la famille se publie modifiable avec la raison à côté, parce qu'un refus de
 ///   **lecture** n'a jamais rien prouvé contre l'**écriture** ;
 /// * **tentative impossible** (pas de session, caméra injoignable, capacité
-///   absente) → [`Lecture::Indetermine`] : le pont ne peut promettre ce qu'il n'a
+///   absente) → [`Verdict::Unknown`] : le pont ne peut promettre ce qu'il n'a
 ///   pas pu tenter, la découverte garde ce qu'elle avait.
-async fn repli(publ: &StatusPublisher<'_>, family: Family, e: &Error) -> (Family, Lecture) {
+async fn repli(publ: &StatusPublisher<'_>, family: Family, e: &Error) -> (Family, Verdict) {
 	clear_family(publ, family).await;
-	if est_transitoire(e) {
+	if is_transient(e) {
 		tracing::debug!(
 			family = family.slug(),
 			error = %e,
 			"lecture de réglages passagèrement refusée : états effacés, motif publié, famille laissée modifiable"
 		);
-		publier_motif_transitoire(publ, family, &motif(e)).await;
-		return (family, Lecture::Transitoire);
+		publish_reason_transient(publ, family, &motif(e)).await;
+		return (family, Verdict::Transient);
 	}
 	tracing::debug!(
 		family = family.slug(),
 		error = %e,
 		"lecture de réglages non concluante : états effacés, motif publié, verdict inchangé"
 	);
-	publier_motif_indetermine(publ, family, &motif(e)).await;
-	(family, Lecture::Indetermine)
+	publish_reason_unknown(publ, family, &motif(e)).await;
+	(family, Verdict::Unknown)
 }
 
 /// Ce refus est-il une **raison passagère**, qui ne dit rien de l'écriture ?
@@ -736,7 +736,7 @@ async fn repli(publ: &StatusPublisher<'_>, family: Family, e: &Error) -> (Family
 /// l'ont essoufflée ; et le bloc reçu mais inutilisable, qu'un firmware endormi
 /// tronque ou renvoie vide. Un `500`, un refus d'identification ou une connexion
 /// tombée ne sont **pas** de ce lot : là, le pont n'a rien pu vérifier du tout.
-fn est_transitoire(e: &Error) -> bool {
+fn is_transient(e: &Error) -> bool {
 	match e {
 		Error::CameraServiceUnavailable { code: 400, .. } => true,
 		// Un refus de lecture avec texte reste un `400` : même verdict, et le
@@ -752,12 +752,12 @@ fn est_transitoire(e: &Error) -> bool {
 	}
 }
 
-/// Ce refus mérite-t-il la **seconde** tentative de [`lire_famille`] ? Seul le
+/// Ce refus mérite-t-il la **seconde** tentative de [`read_family`] ? Seul le
 /// `400` : c'est le seul que le dépôt traite déjà comme réessayable — voir la
 /// boucle de `bc_protocol::services.rs`, qui en tente cinq avant de se rendre.
 /// Un délai dépassé se paie deux fois en radio sur une caméra sur batterie, et
 /// une réponse incompréhensible ne s'améliore pas en la redemandant.
-fn est_reessayable(e: &Error) -> bool {
+fn is_retryable(e: &Error) -> bool {
 	matches!(
 		e,
 		Error::CameraServiceUnavailable { code: 400, .. } | Error::CameraRefused { code: 400, .. }
@@ -770,7 +770,7 @@ fn est_reessayable(e: &Error) -> bool {
 /// En cas d'échec (refus, timeout, bloc incompréhensible), l'erreur remonte et
 /// le dispatch efface les états conservés de la famille. Cet appel coûte au moins
 /// une commande caméra : il est réservé à la demande explicite
-/// (`query/reglages`), jamais à un cycle tournant.
+/// (`query/settings`), jamais à un cycle tournant.
 ///
 /// Chaque branche est un bloc `async` qui lui appartient, et ce n'est pas de
 /// l'esthétique : les blocs du protocole (`ImageCfg`, `SystemGeneral`,
@@ -784,7 +784,7 @@ pub(crate) async fn sync_family(
 	bc: &BcCamera,
 	publ: &StatusPublisher<'_>,
 	family: Family,
-	portee: &mut Portee,
+	portee: &mut Writability,
 ) -> Published {
 	match family {
 		Family::Audio => async {
@@ -819,7 +819,7 @@ pub(crate) async fn sync_family(
 			// trois autres — compromis assumé et écrit au §8 du rapport.
 			if cfg.channel_name.is_none() {
 				portee.ecrivable = false;
-				portee.motif = Some(MOTIF_SANS_OSDCHANNEL);
+				portee.motif = Some(REASON_SANS_OSDCHANNEL);
 			}
 			publish_osd(publ, &cfg).await;
 			Ok(4)
@@ -903,9 +903,9 @@ pub(crate) async fn sync_family(
 			if cfg.chime_id.is_none() {
 				portee.ecrivable = false;
 				portee.motif = Some(if cfg.list_answered_without_entry {
-					MOTIF_CARILLON_SANS_ENTREE
+					REASON_CARILLON_SANS_ENTREE
 				} else {
-					MOTIF_CARILLON_SANS_ID
+					REASON_CARILLON_SANS_ID
 				});
 			}
 			Ok(4)
@@ -924,7 +924,7 @@ pub(crate) async fn sync_family(
 			// silence par la vérification à faire ; et d'où l'absence d'état
 			// touché ici — les états des capteurs d'événements ne se relisent pas.
 			portee.ecrivable = false;
-			portee.motif = Some(MOTIF_AI_SANS_BALISE);
+			portee.motif = Some(REASON_AI_SANS_BALISE);
 			Ok(0)
 		}
 		.await,
@@ -936,16 +936,16 @@ pub(crate) async fn sync_family(
 /// le plus souvent besoin).
 ///
 /// **Jamais périodique.** Sur une sonnette sur batterie, chaque famille est une
-/// commande radio ; cette fonction n'est appelée que sur `query/reglages`, donc
+/// commande radio ; cette fonction n'est appelée que sur `query/settings`, donc
 /// sur demande humaine ou automatisation explicite.
 ///
 /// Le retour — un `Vec` que l'appelant fournit et qui se remplit au fil de l'eau
 /// — énumère **toutes** les familles dans l'ordre lu, chacune avec son verdict
-/// ([`Lecture`]) : c'est ce dont la découverte a besoin pour publier les réglages
+/// ([`Verdict`]) : c'est ce dont la découverte a besoin pour publier les réglages
 /// modifiables, en lecture seule, ou les laisser où ils sont. Une famille refusée
-/// d'un code passager y figure en [`Lecture::Transitoire`] et se publie
+/// d'un code passager y figure en [`Verdict::Transient`] et se publie
 /// **modifiable** avec sa raison à côté ; une famille qu'on n'a pas pu tenter du
-/// tout (pas de session, caméra injoignable) y figure en [`Lecture::Indetermine`]
+/// tout (pas de session, caméra injoignable) y figure en [`Verdict::Unknown`]
 /// et **ne change pas de statut**. Les confondre, c'était la régression du
 /// premier jour de terrain : quatre familles verrouillées par un `400` pendant que
 /// la caméra se réveillait.
@@ -958,11 +958,11 @@ pub(crate) async fn sync_family(
 pub(crate) async fn sync_all(
 	bc: &BcCamera,
 	publ: &StatusPublisher<'_>,
-	lues: &mut Vec<(Family, Lecture)>,
+	lues: &mut Vec<(Family, Verdict)>,
 ) {
 	lues.reserve(Family::ALL.len());
 	for family in Family::ALL {
-		lues.push(lire_famille(bc, publ, family).await);
+		lues.push(read_family(bc, publ, family).await);
 	}
 }
 

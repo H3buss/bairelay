@@ -253,8 +253,8 @@ fn subscribe_topics_count() {
 	// réglage ne doit jamais obliger à toucher la liste d'abonnement.
 	assert_eq!(subs.len(), 19);
 	assert!(subs.contains(&"bairelay/cam1/control/+/+".to_string()));
-	assert!(subs.contains(&"bairelay/cam1/query/reglages".to_string()));
-	assert!(subs.contains(&"bairelay/cam1/query/reglages/+".to_string()));
+	assert!(subs.contains(&"bairelay/cam1/query/settings".to_string()));
+	assert!(subs.contains(&"bairelay/cam1/query/settings/+".to_string()));
 }
 
 #[test]
@@ -298,6 +298,6 @@ fn legacy_neolink_prefix_subscribe_list_matches_pre_2g_paths() {
 	// préfixes : une installation migrée reçoit la découverte des réglages
 	// sans rien reconfigurer.
 	assert!(subs.contains(&"neolink/cam1/control/+/+".to_string()));
-	assert!(subs.contains(&"neolink/cam1/query/reglages".to_string()));
+	assert!(subs.contains(&"neolink/cam1/query/settings".to_string()));
 	assert_eq!(subs.len(), 19);
 }

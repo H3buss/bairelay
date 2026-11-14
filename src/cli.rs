@@ -32,8 +32,8 @@ Camera commands:
   siren          Trigger the siren once
   abilities      Dump the camera's abilityInfo XML + parsed permissions
   webhook        Read the camera's HTTP webhook configuration
-  reglages-audio Read (or with options, rewrite) the audioCfg volumes
-  reglages-carillon Read (or with options, rewrite) the paired-chime settings
+  audio-settings Read (or with options, rewrite) the audioCfg volumes
+  chime-settings Read (or with options, rewrite) the paired-chime settings
 
 Other:
   check-config   Validate the config file and exit (no camera connection)
@@ -300,7 +300,7 @@ pub enum Command {
 	///
 	/// Tags whose meaning is undocumented (`audioSelect`, `audioListId`,
 	/// `preAlarm`, `timeout`) are printed and echoed back untouched.
-	ReglagesAudio {
+	AudioSettings {
 		#[command(flatten)]
 		common: OneShotArgs,
 		/// volume — the loudspeaker volume, 0-100.
@@ -342,7 +342,7 @@ pub enum Command {
 	/// would re-arm the mute countdown, so an unchanged value costs no
 	/// command. The family is read again after any write and printed, so the
 	/// before / after you see is what the camera kept.
-	ReglagesCarillon {
+	ChimeSettings {
 		#[command(flatten)]
 		common: OneShotArgs,
 		/// volLevel — the chime volume, 0-4 (the documented range; the true
@@ -478,8 +478,8 @@ impl Cli {
 			| Command::Siren(_)
 			| Command::Abilities(_)
 			| Command::Webhook(_)
-			| Command::ReglagesAudio { .. }
-			| Command::ReglagesCarillon { .. }
+			| Command::AudioSettings { .. }
+			| Command::ChimeSettings { .. }
 			| Command::Pir { .. }
 			| Command::StatusLight { .. }
 			| Command::Ptz { .. }
@@ -546,8 +546,8 @@ impl Cli {
 			| Command::Abilities(a)
 			| Command::Webhook(a) => Some(&a.camera),
 			Command::Snapshot { common, .. }
-			| Command::ReglagesAudio { common, .. }
-			| Command::ReglagesCarillon { common, .. }
+			| Command::AudioSettings { common, .. }
+			| Command::ChimeSettings { common, .. }
 			| Command::Floodlight { common, .. }
 			| Command::Pir { common, .. }
 			| Command::StatusLight { common, .. }
@@ -1016,16 +1016,16 @@ mod tests {
 		);
 	}
 
-	/// `reglages-audio` is the read/write face of `<audioCfg>`: the bare form
+	/// `audio-settings` is the read/write face of `<audioCfg>`: the bare form
 	/// must be a plain read, and every option must reach the one-shot, with the
 	/// ability gate **off** unless `--gate` is passed (this doorbell's
 	/// `abilityInfo` under-reports, so gating by default would refuse a command
 	/// the camera answers).
 	#[test]
-	fn parse_reglages_audio() {
-		let cli = Cli::try_parse_from(["bairelay", "-c", "c.toml", "reglages-audio", "Sonnette"])
+	fn parse_audio_settings() {
+		let cli = Cli::try_parse_from(["bairelay", "-c", "c.toml", "audio-settings", "Sonnette"])
 			.unwrap();
-		let Command::ReglagesAudio {
+		let Command::AudioSettings {
 			common,
 			volume,
 			interphone,
@@ -1048,7 +1048,7 @@ mod tests {
 
 		let cli = Cli::try_parse_from([
 			"bairelay",
-			"reglages-audio",
+			"audio-settings",
 			"Sonnette",
 			"--volume",
 			"80",
@@ -1061,7 +1061,7 @@ mod tests {
 			"--gate",
 		])
 		.unwrap();
-		let Command::ReglagesAudio {
+		let Command::AudioSettings {
 			volume,
 			interphone,
 			messages,
@@ -1087,19 +1087,19 @@ mod tests {
 		assert!(*gate);
 
 		let cloned = crate::cli_convert::clone_command(&cli.command);
-		let Command::ReglagesAudio { interphone, .. } = &cloned else {
+		let Command::AudioSettings { interphone, .. } = &cloned else {
 			panic!("clone_command must preserve the variant")
 		};
 		assert_eq!(interphone, &Some(90));
 	}
 
-	/// `reglages-carillon` must parse as a bare read (every option `None`,
+	/// `chime-settings` must parse as a bare read (every option `None`,
 	/// no write intent) and as a full-option write.
 	#[test]
-	fn parse_reglages_carillon() {
-		let cli = Cli::try_parse_from(["bairelay", "-c", "c.toml", "reglages-carillon", "Sonnette"])
+	fn parse_chime_settings() {
+		let cli = Cli::try_parse_from(["bairelay", "-c", "c.toml", "chime-settings", "Sonnette"])
 			.unwrap();
-		let Command::ReglagesCarillon {
+		let Command::ChimeSettings {
 			common,
 			volume,
 			led,
@@ -1122,7 +1122,7 @@ mod tests {
 
 		let cli = Cli::try_parse_from([
 			"bairelay",
-			"reglages-carillon",
+			"chime-settings",
 			"Sonnette",
 			"--volume",
 			"4",
@@ -1135,7 +1135,7 @@ mod tests {
 			"--sonner",
 		])
 		.unwrap();
-		let Command::ReglagesCarillon {
+		let Command::ChimeSettings {
 			volume,
 			led,
 			melodie,
@@ -1161,7 +1161,7 @@ mod tests {
 		assert!(*sonner);
 
 		let cloned = crate::cli_convert::clone_command(&cli.command);
-		let Command::ReglagesCarillon { melodie, sonner, .. } = &cloned else {
+		let Command::ChimeSettings { melodie, sonner, .. } = &cloned else {
 			panic!("clone_command must preserve the variant")
 		};
 		assert_eq!(melodie, &Some(2));
@@ -1200,8 +1200,8 @@ mod tests {
 			"siren",
 			"abilities",
 			"webhook",
-			"reglages-audio",
-			"reglages-carillon",
+			"audio-settings",
+			"chime-settings",
 		] {
 			assert!(
 				help.contains(cmd),

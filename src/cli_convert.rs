@@ -180,14 +180,14 @@ pub fn clone_command(cmd: &cli::Command) -> cli::Command {
 		Command::Siren(a) => Command::Siren(clone_oneshot_args(a)),
 		Command::Abilities(a) => Command::Abilities(clone_oneshot_args(a)),
 		Command::Webhook(a) => Command::Webhook(clone_oneshot_args(a)),
-		Command::ReglagesAudio {
+		Command::AudioSettings {
 			common,
 			volume,
 			interphone,
 			messages,
 			visiteur,
 			gate,
-		} => Command::ReglagesAudio {
+		} => Command::AudioSettings {
 			common: clone_oneshot_args(common),
 			volume: volume.clone(),
 			interphone: interphone.clone(),
@@ -195,14 +195,14 @@ pub fn clone_command(cmd: &cli::Command) -> cli::Command {
 			visiteur: visiteur.clone(),
 			gate: *gate,
 		},
-		Command::ReglagesCarillon {
+		Command::ChimeSettings {
 			common,
 			volume,
 			led,
 			melodie,
 			silencieux,
 			sonner,
-		} => Command::ReglagesCarillon {
+		} => Command::ChimeSettings {
 			common: clone_oneshot_args(common),
 			volume: volume.clone(),
 			led: led.clone(),

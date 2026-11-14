@@ -22,7 +22,7 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 
-use crate::reglages::Family;
+use crate::settings::Family;
 
 use super::{
 	DiscoveryAvailability, DiscoveryContext, DiscoveryDevice, Feature, availability_blocks,
@@ -138,7 +138,7 @@ pub enum EntityKind {
 
 /// Une entité de réglage : la famille/feuille de topic, le libellé HA, et la
 /// plateforme. `family`/`leaf` **doivent** correspondre à
-/// [`crate::reglages::Family`] / [`crate::reglages::SettingCommand`] côté
+/// [`crate::settings::Family`] / [`crate::settings::SettingCommand`] côté
 /// parsing, et aux topics que le dispatch publie après relecture.
 #[derive(Debug, Clone, Copy)]
 pub struct EntitySpec {
@@ -860,7 +860,7 @@ pub const SPECS: &[EntitySpec] = &[
 		label: "Mélodie du carillon",
 		icon: Some("mdi:music-circle-outline"),
 		// L'identifiant de mélodie **lu** dans le 485 du carillon interrogé.
-		// Lecture seule assumée : aucune commande du protocole n'énumère les
+		// Verdict seule assumée : aucune commande du protocole n'énumère les
 		// mélodies (`id introuvable` dans la note de protocole, §1.4), et une
 		// entité `select` dont les options seraient inventées est exactement ce
 		// que ce pont refuse de publier. Les identifiants que la caméra imprime
@@ -985,7 +985,7 @@ mod tests {
 	#[test]
 	fn les_topics_de_control_correspondent_au_parsing() {
 		// Le pont `control/<famille>/<feuille>` n'est accepté que pour les
-		// familles/feuilles que `crate::reglages` sait parser : une spec qui
+		// familles/feuilles que `crate::settings` sait parser : une spec qui
 		// diverge créerait une entité HA dont la commande est ignorée.
 		let c = ctx();
 		for spec in SPECS {
@@ -997,7 +997,7 @@ mod tests {
 			}
 			let (family, leaf) = (spec.family, spec.leaf);
 			assert!(
-				crate::reglages::accepts(family, leaf),
+				crate::settings::accepts(family, leaf),
 				"découverte émet control/{family}/{leaf} que le parsing refuse"
 			);
 		}
@@ -1011,7 +1011,7 @@ mod tests {
 		// dise. Ce test est la barrière qui empêche cet état.
 		for spec in SPECS {
 			assert!(
-				crate::reglages::Family::from_slug(spec.family).is_some(),
+				crate::settings::Family::from_slug(spec.family).is_some(),
 				"la spec {}/{} porte une famille que le parsing ne connaît pas",
 				spec.family,
 				spec.leaf
@@ -1169,12 +1169,12 @@ mod tests {
 			assert_eq!(spec.label, libelle, "audio/{feuille}");
 			assert_eq!(spec.unique_id(&c), identifiant);
 			assert!(
-				crate::reglages::accepts("audio", feuille),
+				crate::settings::accepts("audio", feuille),
 				"la découverte publie audio/{feuille} que le parsing refuse"
 			);
 			// Et trois commandes distinctes, sinon deux entités écriraient la
 			// même balise sous deux noms différents.
-			let cmd = crate::reglages::SettingCommand::parse(Family::Audio, feuille, "50")
+			let cmd = crate::settings::SettingCommand::parse(Family::Audio, feuille, "50")
 				.unwrap_or_else(|| panic!("audio/{feuille} refusé au parsing"));
 			assert_eq!(cmd.family(), Family::Audio);
 			assert_eq!(cmd.leaf(), feuille);

@@ -21,7 +21,7 @@ use crate::oneshot::dispatch::{dispatch_oneshot, find_camera_config, snapshot_js
 use crate::oneshot::errors::ConfigError;
 use crate::oneshot::output::{format_failure, format_success, Mode, Outcome};
 use crate::oneshot::{
-	reglages_audio, reglages_carillon, runner, snapshot,
+	audio_settings, chime_settings, runner, snapshot,
 };
 
 /// Pick the one-shot output mode from the CLI flag. Extracted so the
@@ -48,11 +48,11 @@ pub fn load_validated_config(path: &Path) -> Result<Config> {
 	crate::config::apply_cloud_auth(&mut config, path);
 	// Same sibling-state-file rule for the settings verdicts: the families the
 	// bridge has proven modifiable are restored from
-	// `config-familles-lues.json` beside this config file, so a battery
+	// `config-families-read.json` beside this config file, so a battery
 	// doorbell doesn't pay a full fifteen-command salvo to remember what it
 	// already proved yesterday. Missing or corrupt file is the current
-	// behaviour, never a startup failure — see [`crate::etat_familles`].
-	crate::etat_familles::definir_chemin(path);
+	// behaviour, never a startup failure — see [`crate::family_state`].
+	crate::family_state::set_path(path);
 	validate_config(&config)
 		.map_err(|e| anyhow::anyhow!(e))
 		.context("Configuration validation failed")?;
@@ -406,14 +406,14 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 			})
 			.await;
 		}
-		// `reglages-audio` reads and writes `<audioCfg>` through
+		// `audio-settings` reads and writes `<audioCfg>` through
 		// `BcCamera::get_audio_cfg` / `set_audio_cfg`. Those two are on the
 		// concrete camera and pointedly not on `CameraDriver`, so the command
 		// takes this route like `talk-abilite` does. The argument checks run
 		// before the connection: this is a battery doorbell, and a volume of
 		// 120 is a typo about the operator's own command line — it must not
 		// cost a wake-up to be refused.
-		if let Command::ReglagesAudio {
+		if let Command::AudioSettings {
 			volume,
 			interphone,
 			messages,
@@ -422,7 +422,7 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 			..
 		} = &cli.command
 		{
-			let edit = reglages_audio::Edit {
+			let edit = audio_settings::Edit {
 				volume: *volume,
 				interphone: *interphone,
 				messages: *messages,
@@ -431,18 +431,18 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 			};
 			edit.check()?;
 			return runner::run(&cam_cfg, cancel, move |cam| {
-				async move { reglages_audio::run(cam, edit).await }.boxed()
+				async move { audio_settings::run(cam, edit).await }.boxed()
 			})
 			.await;
 		}
 
-		// `reglages-carillon` reads and writes the chime family through
+		// `chime-settings` reads and writes the chime family through
 		// `BcCamera::get_ding_dong_cfg` / `set_ding_dong_cfg` /
 		// `ring_ding_dong` — concrete camera, not the trait, same route.
 		// Argument checks again run before the connection: `--volume 9` is a
 		// typo, and even `--sonner` (which only rings) must be refused before
 		// a wake-up if it could not be valid.
-		if let Command::ReglagesCarillon {
+		if let Command::ChimeSettings {
 			volume,
 			led,
 			melodie,
@@ -451,7 +451,7 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 			..
 		} = &cli.command
 		{
-			let edit = reglages_carillon::Edit {
+			let edit = chime_settings::Edit {
 				volume: *volume,
 				led: *led,
 				melodie: *melodie,
@@ -460,7 +460,7 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 			};
 			edit.check()?;
 			return runner::run(&cam_cfg, cancel, move |cam| {
-				async move { reglages_carillon::run(cam, edit).await }.boxed()
+				async move { chime_settings::run(cam, edit).await }.boxed()
 			})
 			.await;
 		}
@@ -492,7 +492,7 @@ pub async fn run_oneshot_to<W1: std::io::Write, W2: std::io::Write>(
 /// `Outcome` serait un succès contradictoire — l'opératrice aurait dans son
 /// tube le JSON complet d'une lecture réussie *et* un code d'échec, et son
 /// script devrait deviner lequel des deux croire. C'est exactement le
-/// signalement qui a été fait pour `reglages-audio` et `reglages-carillon` ;
+/// signalement qui a été fait pour `audio-settings` et `chime-settings` ;
 /// ces deux commandes n'ont qu'une seule issue heureuse, un `Outcome`, donc
 /// l'invariant se teste ici, sans caméra — le chemin d'appel complet
 /// (`runner::run` → connexion réelle) n'est pas reproductible hors ligne.
@@ -1129,7 +1129,7 @@ on_motion = true
 	}
 
 	/// Une lecture réussie de réglages rend **0** — c'est l'invariant que le
-	/// signalement demandait pour `reglages-audio` et `reglages-carillon`, et
+	/// signalement demandait pour `audio-settings` et `chime-settings`, et
 	/// le seul endroit où il se décide est [`code_pour_sortie`]. Le chemin
 	/// complet (`runner::run` → caméra réelle) n'est pas reproductible hors
 	/// ligne ; ces deux commandes n'ont qu'une issue heureuse, un `Outcome`,
@@ -1139,8 +1139,8 @@ on_motion = true
 		use crate::oneshot::output::DingDongCfgInfo;
 		let cas = [
 			(
-				"reglages-audio",
-				Outcome::ReglagesAudio {
+				"audio-settings",
+				Outcome::AudioSettings {
 					tag: "audioCfg".into(),
 					changed: false,
 					block: bloc_audio_reglages(),
@@ -1148,8 +1148,8 @@ on_motion = true
 				},
 			),
 			(
-				"reglages-carillon",
-				Outcome::ReglagesCarillon {
+				"chime-settings",
+				Outcome::ChimeSettings {
 					changed: false,
 					block: DingDongCfgInfo::default(),
 					changes: vec![],
@@ -1178,7 +1178,7 @@ on_motion = true
 		let mut erreurs = Vec::new();
 		code_pour_sortie(
 			Mode::Json,
-			Ok(Outcome::ReglagesAudio {
+			Ok(Outcome::AudioSettings {
 				tag: "audioCfg".into(),
 				changed: false,
 				block: bloc_audio_reglages(),

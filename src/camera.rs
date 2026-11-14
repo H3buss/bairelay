@@ -234,7 +234,7 @@ pub struct CameraHandle {
 	/// tentative renonce. Portée par un `Arc`, elle dédoublonne les publications
 	/// entre les trois endroits qui la publient, et évite ainsi cinquante messages
 	/// identiques par heure sur un courtier domestique.
-	presence_publiee: Arc<bairelay_mqtt::PresencePubliee>,
+	presence_publiee: Arc<bairelay_mqtt::PublishedPresence>,
 	/// Serialises `control/ir` / `control/led`. Both are read-modify-
 	/// write of one `<LedState>` on the camera, so overlapping commands
 	/// would otherwise undo each other's field.
@@ -270,10 +270,10 @@ pub struct CameraHandle {
 	/// want short-grace timing.
 	prune_grace: Duration,
 	/// Garde de la salve de réveil : une salve à la fois, et pas deux dans la
-	/// fenêtre de [`crate::salve::FENETRE_GARDE`]. Trois sources annoncent le
+	/// fenêtre de [`crate::burst::GUARD_WINDOW`]. Trois sources annoncent le
 	/// même réveil (l'alarme de session, le webhook, la poussée du faux cloud) ;
-	/// c'est cet objet qui décide laquelle paie la lecture. Voir [`crate::salve`].
-	salve: Arc<crate::salve::SalveGarde>,
+	/// c'est cet objet qui décide laquelle paie la lecture. Voir [`crate::burst`].
+	salve: Arc<crate::burst::BurstGuard>,
 }
 
 impl CameraHandle {
@@ -344,7 +344,7 @@ impl CameraHandle {
 			preview_state_rx,
 			status_cache: Arc::new(StatusCache::default()),
 			battery_unsupported: Arc::new(AtomicBool::new(false)),
-			presence_publiee: Arc::new(bairelay_mqtt::PresencePubliee::default()),
+			presence_publiee: Arc::new(bairelay_mqtt::PublishedPresence::default()),
 			led_write_lock: tokio::sync::Mutex::new(()),
 			push_seq: AtomicU64::new(0),
 			camera_ip: std::sync::RwLock::new(None),
@@ -352,7 +352,7 @@ impl CameraHandle {
 			webhook_target: None,
 			webhook_memo: camera_tasks::ArmMemo::default(),
 			prune_grace: Duration::ZERO,
-			salve: Arc::new(crate::salve::SalveGarde::nouvelle(crate::salve::FENETRE_GARDE)),
+			salve: Arc::new(crate::burst::BurstGuard::nouvelle(crate::burst::GUARD_WINDOW)),
 		}
 	}
 
@@ -490,11 +490,11 @@ impl CameraHandle {
 			return Ok(());
 		};
 		// First call for this camera in this process: bring back the families the
-		// bridge already proved modifiable (see [`crate::etat_familles`]) so this
+		// bridge already proved modifiable (see [`crate::family_state`]) so this
 		// very first discovery publishes them as sliders instead of read-only
 		// sensors. Disk read only — no camera command, which is the whole point
 		// on a battery doorbell.
-		crate::etat_familles::amorcer(publisher, &self.config.name);
+		crate::family_state::amorcer(publisher, &self.config.name);
 		let Some(caps) = self.capabilities() else {
 			return Ok(());
 		};
@@ -527,7 +527,7 @@ impl CameraHandle {
 	/// quand rien n'a bougé (et donc quand aucun publisher n'est attaché).
 	///
 	/// `(famille, verdict)` avec les quatre verdicts de
-	/// [`crate::reglages::Lecture`] : modifiable, verrouillée par une preuve
+	/// [`crate::settings::Verdict`] : modifiable, verrouillée par une preuve
 	/// locale (`<MdAlarm>`, `<OsdChannelName>` absent), **transitoire** — une
 	/// erreur de lecture passagère, qui compte comme modifiable puisque le motif
 	/// est publié à côté — ou **indéterminée**, et une famille indéterminée ne
@@ -538,20 +538,20 @@ impl CameraHandle {
 	/// une interdiction.
 	///
 	/// Les verdicts qui bougent sont mémorisés sur le disque
-	/// ([`crate::etat_familles`]) : une famille prouvée modifiable le reste après
+	/// ([`crate::family_state`]) : une famille prouvée modifiable le reste après
 	/// un redémarrage du complément, sans que la caméra ait à le prouver deux
 	/// fois.
 	///
-	/// Appelé après une écriture avec relecture, après `query/reglages` (une
+	/// Appelé après une écriture avec relecture, après `query/settings` (une
 	/// entrée par famille relue) et après un aperçu. Jamais sur minuterie : la
 	/// batterie de la sonnette est la raison pour laquelle le pont n'interroge
 	/// pas la caméra tout seul.
-	// `pub(crate)` : le verdict voyage dans une signature, et [`crate::reglages::Lecture`]
+	// `pub(crate)` : le verdict voyage dans une signature, et [`crate::settings::Verdict`]
 	// reste interne au bin — une méthode `pub` qui le montrerait exposerait une
 	// interface privée (lint `private_interfaces`).
-	pub(crate) async fn reglages_familles_lues(
+	pub(crate) async fn mark_families_read(
 		&self,
-		lues: &[(bairelay_mqtt::reglages::Family, crate::reglages::Lecture)],
+		lues: &[(bairelay_mqtt::settings::Family, crate::settings::Verdict)],
 	) -> bool {
 		let Some(publisher) = self.discovery_publisher.as_ref() else {
 			return false;
@@ -576,24 +576,24 @@ impl CameraHandle {
 		// Persist the verdicts that just moved. This is the only place the bridge
 		// learns a family became (or stopped being) modifiable, and the next boot
 		// should not have to re-prove it over the radio.
-		crate::etat_familles::enregistrer(publisher, &self.config.name);
+		crate::family_state::enregistrer(publisher, &self.config.name);
 		true
 	}
 
 	/// Cas courant : une seule famille vient d'être relue **avec succès** (une
-	/// écriture, ou `query/reglages/<famille>`). Voir
-	/// [`Self::reglages_familles_lues`] pour le sens des deux verdicts.
-	pub(crate) async fn reglages_famille_lue(
+	/// écriture, ou `query/settings/<famille>`). Voir
+	/// [`Self::mark_families_read`] pour le sens des deux verdicts.
+	pub(crate) async fn mark_family_read(
 		&self,
-		famille: bairelay_mqtt::reglages::Family,
+		famille: bairelay_mqtt::settings::Family,
 		ecrivable: bool,
 	) -> bool {
 		let verdict = if ecrivable {
-			crate::reglages::Lecture::Ecrivable
+			crate::settings::Verdict::Writable
 		} else {
-			crate::reglages::Lecture::NonEcrivable
+			crate::settings::Verdict::NotWritable
 		};
-		self.reglages_familles_lues(&[(famille, verdict)]).await
+		self.mark_families_read(&[(famille, verdict)]).await
 	}
 
 	/// Shared per-camera status cache. Each status-publishing task
@@ -758,10 +758,10 @@ impl CameraHandle {
 		&self.wake_lock
 	}
 
-	/// La garde de la salve de réveil ([`crate::salve`]). `pub(crate)` : la
+	/// La garde de la salve de réveil ([`crate::burst`]). `pub(crate)` : la
 	/// garde est un type interne au bin, une méthode `pub` qui le montrerait
 	/// exposerait une interface privée (lint `private_interfaces`).
-	pub(crate) fn salve(&self) -> &Arc<crate::salve::SalveGarde> {
+	pub(crate) fn salve(&self) -> &Arc<crate::burst::BurstGuard> {
 		&self.salve
 	}
 
@@ -1398,7 +1398,7 @@ impl CameraHandle {
 					// mouvement) ouvre la fenêtre de lecture de la salve :
 					// c'est la seule batterie qu'on puisse lire sans réveil
 					// payé. La poignée est la caméra elle-même ; la garde
-					// d'une salve par réveil est dans `crate::salve`.
+					// d'une salve par réveil est dans `crate::burst`.
 					Some(Arc::clone(self)),
 				));
 			}

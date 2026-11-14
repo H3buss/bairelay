@@ -255,7 +255,7 @@ pub(crate) struct AlarmReport {
 /// publié est un réveil de la caméra endormie, donc la seule occasion de lire sa
 /// batterie sans réveil payé. La salve est proposée **après** la publication du
 /// `press` — jamais avant : l'automatisation de l'opératrice doit recevoir
-/// l'appui avant le bruit de la lecture ([`crate::salve`]).
+/// l'appui avant le bruit de la lecture ([`crate::burst`]).
 pub(crate) async fn report_doorbell_press(
 	camera_name: &str,
 	publisher: &StatusPublisher<'_>,
@@ -271,7 +271,7 @@ pub(crate) async fn report_doorbell_press(
 		tracing::warn!(camera = %camera_name, error = %e, "publish_doorbell_press failed");
 	}
 	if let Some(handle) = reveil {
-		crate::salve::declencher(std::sync::Arc::clone(handle), crate::salve::Reveil::Appui);
+		crate::burst::trigger(std::sync::Arc::clone(handle), crate::burst::Wake::Appui);
 	}
 }
 
@@ -308,9 +308,9 @@ pub(crate) async fn report_alarm_update(
 			// Le mouvement est publié : c'est un réveil, donc une fenêtre de
 			// lecture. Après la publication, comme pour l'appui.
 			if let Some(handle) = reveil {
-				crate::salve::declencher(
+				crate::burst::trigger(
 					std::sync::Arc::clone(handle),
-					crate::salve::Reveil::Mouvement,
+					crate::burst::Wake::Mouvement,
 				);
 			}
 		}

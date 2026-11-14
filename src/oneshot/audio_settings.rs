@@ -1,4 +1,4 @@
-//! `reglages-audio` one-shot — read the camera's `<audioCfg>` block (msg 264)
+//! `audio-settings` one-shot — read the camera's `<audioCfg>` block (msg 264)
 //! and, with a volume option, write it back (msg 265).
 //!
 //! # Why this command exists
@@ -120,7 +120,7 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 		.context("audioCfg read (cmd 264): the camera refused or never answered")?;
 
 	if edit.is_empty() {
-		return Ok(Outcome::ReglagesAudio {
+		return Ok(Outcome::AudioSettings {
 			tag: before.tag.element_name().to_string(),
 			changed: false,
 			block: info(&before),
@@ -181,7 +181,7 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 		})
 		.collect();
 
-	Ok(Outcome::ReglagesAudio {
+	Ok(Outcome::AudioSettings {
 		tag: after.tag.element_name().to_string(),
 		changed: true,
 		block: info(&after),
@@ -193,7 +193,7 @@ pub async fn run(cam: &BcCamera, edit: Edit) -> Result<Outcome> {
 /// [`CameraDriver`]. Mirrors [`crate::oneshot::talk_abilite::run_via_driver`].
 pub async fn run_via_driver(_cam: &dyn CameraDriver) -> Result<Outcome> {
 	anyhow::bail!(
-		"reglages-audio requires a concrete BcCamera; not supported through CameraDriver"
+		"audio-settings requires a concrete BcCamera; not supported through CameraDriver"
 	);
 }
 
@@ -258,7 +258,7 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_audio_edit_is_empty_only_without_options() {
+	fn audio_settings_edit_is_empty_only_without_options() {
 		assert!(Edit::default().is_empty());
 		// `--gate` alone is still a read: it changes who is allowed to ask,
 		// never what gets sent, so it must not turn the read into a write.
@@ -284,7 +284,7 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_audio_check_refuses_out_of_range_values() {
+	fn audio_settings_check_refuses_out_of_range_values() {
 		for (flag, edit) in [
 			(
 				"--volume",
@@ -335,7 +335,7 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_audio_value_of_reads_the_four_writable_tags() {
+	fn audio_settings_value_of_reads_the_four_writable_tags() {
 		let cfg = block();
 		assert_eq!(value_of(&cfg, TAG_VOLUME).as_deref(), Some("50"));
 		assert_eq!(
@@ -349,7 +349,7 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_audio_missing_doorbell_tag_is_a_usage_error_not_an_addition() {
+	fn audio_settings_missing_doorbell_tag_is_a_usage_error_not_an_addition() {
 		let mut cfg = block();
 		cfg.talk_and_reply_volume = None;
 		let err = present(
@@ -366,7 +366,7 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_audio_info_keeps_undocumented_tags_and_omits_absent_ones() {
+	fn audio_settings_info_keeps_undocumented_tags_and_omits_absent_ones() {
 		let mut cfg = block();
 		cfg.timeout = "0010".into();
 		cfg.visitor_volume = None;
@@ -384,7 +384,7 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn reglages_audio_run_via_driver_bails_with_named_reason() {
+	async fn audio_settings_run_via_driver_bails_with_named_reason() {
 		let fake = bairelay_neolink_core::bc_protocol::FakeCameraBuilder::new().build();
 		let err = run_via_driver(&*fake)
 			.await

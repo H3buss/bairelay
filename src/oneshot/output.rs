@@ -70,7 +70,7 @@ pub enum Outcome {
 	/// simply what the camera holds. After a write, `block` is the **re-read**
 	/// and each `changes` entry pairs the old text with what the camera kept,
 	/// which is the only proof available that the block was stored.
-	ReglagesAudio {
+	AudioSettings {
 		tag: String,
 		changed: bool,
 		block: AudioCfgInfo,
@@ -87,7 +87,7 @@ pub enum Outcome {
 	/// old text with what the camera kept — the only proof available that
 	/// the block was stored. `ring` appears only when `--sonner` asked for
 	/// the live test ring; the sound it should produce is the observation.
-	ReglagesCarillon {
+	ChimeSettings {
 		changed: bool,
 		block: DingDongCfgInfo,
 		changes: Vec<DingDongChange>,
@@ -209,7 +209,7 @@ pub struct AudioCfgInfo {
 	pub pascal: bool,
 }
 
-/// One tag a `reglages-audio` write touched, and what became of it: `before`
+/// One tag a `audio-settings` write touched, and what became of it: `before`
 /// is the text the read held, `requested` the text asked for, `after` the text
 /// the camera holds when the block is read back. `after != requested` means the
 /// firmware took the block and kept something else — which is why the write is
@@ -367,7 +367,7 @@ pub struct ChimeEventEntryInfo {
 	pub music_id: Option<String>,
 }
 
-/// One tag a `reglages-carillon` write touched, in the same
+/// One tag a `chime-settings` write touched, in the same
 /// before/requested/after shape as [`AudioCfgChange`]. `tag` names the XML tag
 /// (`volLevel`, `ledState`, `musicId(<event>)`) or `silentTime` for the
 /// `<time>` inside `<dingdongSilentMode>`.
@@ -510,7 +510,7 @@ fn format_human(outcome: &Outcome) -> (String, String) {
 				String::new(),
 			)
 		}
-		Outcome::ReglagesAudio {
+		Outcome::AudioSettings {
 			tag,
 			changed,
 			block,
@@ -580,7 +580,7 @@ fn format_human(outcome: &Outcome) -> (String, String) {
 			out.push_str(&format!("  version: {}\n", shown(&block.version)));
 			(out, String::new())
 		}
-		Outcome::ReglagesCarillon {
+		Outcome::ChimeSettings {
 			changed,
 			block,
 			changes,
@@ -1508,8 +1508,8 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_audio_human_reads_print_the_block() {
-		let r = Outcome::ReglagesAudio {
+	fn audio_settings_human_reads_print_the_block() {
+		let r = Outcome::AudioSettings {
 			tag: "audioCfg".into(),
 			changed: false,
 			block: audio_cfg_block(),
@@ -1543,8 +1543,8 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_audio_human_write_shows_before_and_after() {
-		let r = Outcome::ReglagesAudio {
+	fn audio_settings_human_write_shows_before_and_after() {
+		let r = Outcome::AudioSettings {
 			tag: "audioCfg".into(),
 			changed: true,
 			block: AudioCfgInfo {
@@ -1578,8 +1578,8 @@ mod tests {
 	/// A firmware that answers 200 and keeps the old value is the failure this
 	/// report exists to make visible.
 	#[test]
-	fn reglages_audio_human_flags_a_write_the_camera_ignored() {
-		let r = Outcome::ReglagesAudio {
+	fn audio_settings_human_flags_a_write_the_camera_ignored() {
+		let r = Outcome::AudioSettings {
 			tag: "AudioCfg".into(),
 			changed: true,
 			block: audio_cfg_block(),
@@ -1597,14 +1597,14 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_audio_json_keeps_camera_text_and_omits_absent_tags() {
+	fn audio_settings_json_keeps_camera_text_and_omits_absent_tags() {
 		let block = AudioCfgInfo {
 			visitor_volume: None,
 			visitor_loudspeaker: None,
 			pascal: true,
 			..audio_cfg_block()
 		};
-		let r = Outcome::ReglagesAudio {
+		let r = Outcome::AudioSettings {
 			tag: "AudioCfg".into(),
 			changed: false,
 			block,
@@ -1673,8 +1673,8 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_carillon_human_read_prints_every_answered_part() {
-		let r = Outcome::ReglagesCarillon {
+	fn chime_settings_human_read_prints_every_answered_part() {
+		let r = Outcome::ChimeSettings {
 			changed: false,
 			block: chime_block(),
 			changes: vec![],
@@ -1704,8 +1704,8 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_carillon_human_write_shows_before_after_and_ring() {
-		let r = Outcome::ReglagesCarillon {
+	fn chime_settings_human_write_shows_before_after_and_ring() {
+		let r = Outcome::ChimeSettings {
 			changed: true,
 			block: chime_block(),
 			changes: vec![DingDongChange {
@@ -1733,8 +1733,8 @@ mod tests {
 	}
 
 	#[test]
-	fn reglages_carillon_json_omits_refused_parts_and_absent_ring() {
-		let r = Outcome::ReglagesCarillon {
+	fn chime_settings_json_omits_refused_parts_and_absent_ring() {
+		let r = Outcome::ChimeSettings {
 			changed: false,
 			block: chime_block(),
 			changes: vec![],

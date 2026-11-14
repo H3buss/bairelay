@@ -114,7 +114,7 @@ impl Family {
 		})
 	}
 
-	/// Toutes les familles, dans l'ordre où un `query/reglages` complet les
+	/// Toutes les familles, dans l'ordre où un `query/settings` complet les
 	/// relit.
 	///
 	/// `Ai` est **en dernier** et ne coûte aucune commande radio : c'est le

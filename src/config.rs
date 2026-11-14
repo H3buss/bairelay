@@ -125,9 +125,9 @@ pub struct Config {
 	pub carnet: Option<CarnetConfig>,
 
 	/// What to do with the camera's own UDP event announcements (`0x31`).
-	/// Decoding and mirroring on `status/evenement` always happen; this block
+	/// Decoding and mirroring on `status/event` always happen; this block
 	/// only gates the paid part — interrogating the camera when it announces a
-	/// wake. Off by default. See `src/interrogation.rs`.
+	/// wake. Off by default. See `src/polling.rs`.
 	#[serde(default)]
 	pub annonces: AnnoncesConfig,
 
@@ -454,7 +454,7 @@ impl Default for CarnetConfig {
 /// Ce que le pont fait des annonces d'événement que la caméra pousse toute
 /// seule (famille `0x31`, voir `docs/canal-evenements-udp.md`).
 ///
-/// Le décodage et la publication sur `status/evenement` ne se règlent pas :
+/// Le décodage et la publication sur `status/event` ne se règlent pas :
 /// ils sont gratuits et c'est le diagnostic qui a manqué six semaines. Ce
 /// bloc-ci ne règle qu'une chose, la seule qui coûte : **interroger** la
 /// caméra sur son annonce de réveil, ce qui achète une session TCP.

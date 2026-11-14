@@ -91,11 +91,11 @@ pub async fn dispatch_oneshot(
 		Command::Abilities(_) => abilities::run(cam).await,
 		Command::Webhook(_) => webhook::run(cam).await,
 		// And for the audioCfg read/write: `get_audio_cfg` / `set_audio_cfg`
-		// are on `BcCamera`, not on the trait (see `reglages_audio`).
-		Command::ReglagesAudio { .. } => crate::oneshot::reglages_audio::run_via_driver(cam).await,
-		// Same for the chime family (see `reglages_carillon`).
-		Command::ReglagesCarillon { .. } => {
-			crate::oneshot::reglages_carillon::run_via_driver(cam).await
+		// are on `BcCamera`, not on the trait (see `audio_settings`).
+		Command::AudioSettings { .. } => crate::oneshot::audio_settings::run_via_driver(cam).await,
+		// Same for the chime family (see `chime_settings`).
+		Command::ChimeSettings { .. } => {
+			crate::oneshot::chime_settings::run_via_driver(cam).await
 		}
 		Command::Presets(_) => presets::run(cam).await,
 		Command::SetTime(_) => set_time::run(cam).await,

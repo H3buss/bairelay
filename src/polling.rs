@@ -10,7 +10,7 @@
 //! Ce que fait l'interrogation, et seulement cela : à `event` 3, prendre le
 //! verrou de réveil de la caméra et le tenir. C'est ce verrou qui dit à la
 //! boucle de connexion d'aller joindre la caméra — le même geste que la salve
-//! de lecture ([`crate::salve`]). Une fois la session établie, l'écouteur
+//! de lecture ([`crate::burst`]). Une fois la session établie, l'écouteur
 //! d'alarmes du pont ([`crate::camera_tasks::motion_listener`]) s'abonne de
 //! lui‑même au message 31 et lit l'état visiteur de chaque poussée : si la
 //! caméra tient cet état, l'appui part par le chemin déjà écrit, dédupliqué.
@@ -58,14 +58,14 @@ const SONDE: Duration = Duration::from_millis(250);
 /// Temps pendant lequel le verrou reste tenu **après** que la session est
 /// apparue : c'est celui de l'abonnement aux alarmes et de la première poussée.
 /// Une session qui arrive tard ne doit pas être lâchée dans la seconde.
-const TENUE_APRES_SESSION: Duration = Duration::from_secs(8);
+const HOLD_AFTER_SESSION: Duration = Duration::from_secs(8);
 
 /// Une interrogation à la fois, par caméra.
 ///
 /// La garde vit dans la tâche qui consomme les annonces, une par caméra
 /// configurée — jamais globale : deux caméras n'ont pas à se punir l'une
 /// l'autre.
-pub(crate) struct Garde {
+pub(crate) struct Guard {
 	/// Une tâche tient déjà le verrou de cette caméra. Partagée avec la tâche
 	/// lancée, qui la rend en finissant — y compris si elle est annulée.
 	en_cours: Arc<AtomicBool>,
@@ -75,7 +75,7 @@ pub(crate) struct Garde {
 	derniere_payee: Mutex<Option<Instant>>,
 }
 
-impl Garde {
+impl Guard {
 	pub(crate) fn nouvelle() -> Self {
 		Self {
 			en_cours: Arc::new(AtomicBool::new(false)),
@@ -128,11 +128,11 @@ impl Garde {
 /// session est venue, ou qu'elle n'est pas venue.
 ///
 /// `tenue` borne la fenêtre d'attente : le verrou est rendu au plus tard à ce
-/// moment‑là, sauf si la session arrive si tard que [`TENUE_APRES_SESSION`]
+/// moment‑là, sauf si la session arrive si tard que [`HOLD_AFTER_SESSION`]
 /// serait écrasé — auquel cas la fenêtre est allongée d'autant, sans dépasser
-/// `tenue + TENUE_APRES_SESSION`.
+/// `tenue + HOLD_AFTER_SESSION`.
 pub(crate) fn tenter(
-	garde: &Arc<Garde>,
+	garde: &Arc<Guard>,
 	handle: Arc<CameraHandle>,
 	tenue: Duration,
 	intervalle: Duration,
@@ -150,16 +150,16 @@ pub(crate) fn tenter(
 }
 
 /// Le corps de l'interrogation, une fois la garde réservée.
-async fn tache(garde: Arc<Garde>, handle: Arc<CameraHandle>, tenue: Duration, cancel: CancellationToken) {
+async fn tache(garde: Arc<Guard>, handle: Arc<CameraHandle>, tenue: Duration, cancel: CancellationToken) {
 	/// Le drapeau se rend quoi qu'il arrive : une tâche annulée au milieu d'un
 	/// `await` ne doit pas verrouiller la caméra pour toujours.
-	struct Rendu(Arc<Garde>);
-	impl Drop for Rendu {
+	struct Release(Arc<Guard>);
+	impl Drop for Release {
 		fn drop(&mut self) {
 			self.0.rendre();
 		}
 	}
-	let _rendu = Rendu(Arc::clone(&garde));
+	let _rendu = Release(Arc::clone(&garde));
 
 	let nom = handle.name().to_owned();
 	let debut = tokio::time::Instant::now();
@@ -175,7 +175,7 @@ async fn tache(garde: Arc<Garde>, handle: Arc<CameraHandle>, tenue: Duration, ca
 	tracing::debug!("interrogation : verrou de reveil pris camera={nom} verrous={}",
 		handle.wake_lock().count());
 
-	let plafond = debut + tenue + TENUE_APRES_SESSION;
+	let plafond = debut + tenue + HOLD_AFTER_SESSION;
 	let mut echeance = debut + tenue;
 	let mut vue = None;
 	loop {
@@ -188,7 +188,7 @@ async fn tache(garde: Arc<Garde>, handle: Arc<CameraHandle>, tenue: Duration, ca
 			vue = Some(quand);
 			garde.marquer_payee(quand);
 			// La session vient d'arriver : lui laisser le temps de l'abonnement.
-			echeance = (quand + TENUE_APRES_SESSION).min(plafond);
+			echeance = (quand + HOLD_AFTER_SESSION).min(plafond);
 			tracing::debug!("interrogation : session etablie apres {} ms camera={} — l'ecouteur d'alarmes a la main, verrou garde encore {} s",
 				duree_ms(debut, quand),
 				nom,
@@ -228,7 +228,7 @@ mod tests {
 
 	#[test]
 	fn la_premiere_demande_passe_toujours() {
-		let garde = Garde::nouvelle();
+		let garde = Guard::nouvelle();
 		assert!(garde.reserver(Duration::from_secs(30), Instant::now()));
 	}
 
@@ -236,7 +236,7 @@ mod tests {
 	fn une_seule_interrogation_a_la_fois() {
 		// La seconde demande tombe pendant que la première tient le verrou :
 		// refusée, sans même regarder l'intervalle.
-		let garde = Garde::nouvelle();
+		let garde = Guard::nouvelle();
 		let maintenant = Instant::now();
 		assert!(garde.reserver(Duration::from_secs(30), maintenant));
 		assert!(
@@ -249,7 +249,7 @@ mod tests {
 	fn l_intervalle_ne_punit_qu_une_session_obtenue() {
 		// Le coeur de la politique : une tentative qui n'a pas eu de session
 		// n'écrit rien, la prochaine annonce de réveil repart donc.
-		let garde = Garde::nouvelle();
+		let garde = Guard::nouvelle();
 		let maintenant = Instant::now();
 		assert!(garde.reserver(Duration::from_secs(30), maintenant));
 		garde.rendre();
@@ -268,7 +268,7 @@ mod tests {
 	fn un_refus_sur_intervalle_ne_consomme_rien() {
 		// Un refus ne doit pas repousser la date de la prochaine tentative
 		// autorisée : sinon une annonce de bruit en ferait rater une bonne.
-		let garde = Garde::nouvelle();
+		let garde = Guard::nouvelle();
 		let maintenant = Instant::now();
 		garde.marquer_payee(maintenant);
 		assert!(!garde.reserver(Duration::from_secs(30), maintenant + Duration::from_secs(1)));

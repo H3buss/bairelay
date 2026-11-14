@@ -65,7 +65,7 @@ pub(crate) fn push_edge(
 		hold,
 		cancel,
 		true,
-		crate::salve::Reveil::Poussee,
+		crate::burst::Wake::Poussee,
 	);
 	true
 }
@@ -87,7 +87,7 @@ pub(crate) fn motion_edge(
 		hold,
 		cancel,
 		true,
-		crate::salve::Reveil::Mouvement,
+		crate::burst::Wake::Mouvement,
 	);
 }
 
@@ -111,13 +111,13 @@ pub(crate) fn motion_hold(
 		hold,
 		cancel,
 		false,
-		crate::salve::Reveil::Mouvement,
+		crate::burst::Wake::Mouvement,
 	);
 }
 
 /// Le corps partagé des trois chemins de réveil mouvementé : tenir le verrou,
 /// publier l'état de mouvement s'il le faut, **puis** proposer la salve de
-/// lecture ([`crate::salve`]).
+/// lecture ([`crate::burst`]).
 ///
 /// L'ordre est une règle, pas un détail : l'événement doit être sur le bus avant
 /// la première commande de la salve, sinon l'automatisation de l'opératrice
@@ -131,7 +131,7 @@ fn spawn_motion_hold(
 	hold: Duration,
 	cancel: &CancellationToken,
 	publish_on: bool,
-	raison: crate::salve::Reveil,
+	raison: crate::burst::Wake,
 ) {
 	let seq = handle.push_seq().fetch_add(1, Ordering::SeqCst) + 1;
 	let mqtt = event_mqtt(&handle, mqtt).cloned();
@@ -150,7 +150,7 @@ fn spawn_motion_hold(
 		}
 		// L'événement est publié : la salve peut commencer, si ce réveil n'a pas
 		// déjà payé la sienne.
-		crate::salve::declencher(Arc::clone(&handle), raison);
+		crate::burst::trigger(Arc::clone(&handle), raison);
 
 		crate::run_support::sleep_or_cancel(hold, &cancel).await;
 

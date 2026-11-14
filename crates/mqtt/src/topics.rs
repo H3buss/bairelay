@@ -94,14 +94,14 @@ pub fn status_doorbell(prefix: &str, cam: &str) -> String {
 }
 
 /// Raw camera event announcement, as the camera pushed it over UDP:
-/// `{prefix}/{cam}/status/evenement`
+/// `{prefix}/{cam}/status/event`
 ///
 /// Non-retained, and the payload is the announcement's own JSON object
 /// (`{"event":4,"duration":19281,"totalduration":2225330,"reason":19}`). This is
 /// the diagnostic trail: when an `event`/`reason` value surprises us, the answer
 /// is here instead of in a fresh capture off the camera.
-pub fn status_evenement(prefix: &str, cam: &str) -> String {
-	format!("{prefix}/{cam}/status/evenement")
+pub fn status_event(prefix: &str, cam: &str) -> String {
+	format!("{prefix}/{cam}/status/event")
 }
 
 /// PTZ preset position: `{prefix}/{cam}/status/ptz/preset`
@@ -235,14 +235,14 @@ pub fn control_setting(prefix: &str, cam: &str, family: &str, leaf: &str) -> Str
 	format!("{prefix}/{cam}/control/{family}/{leaf}")
 }
 
-/// (Re)lecture de tous les réglages : `{prefix}/{cam}/query/reglages`
+/// (Re)lecture de tous les réglages : `{prefix}/{cam}/query/settings`
 pub fn query_settings(prefix: &str, cam: &str) -> String {
-	format!("{prefix}/{cam}/query/reglages")
+	format!("{prefix}/{cam}/query/settings")
 }
 
-/// (Re)lecture d'une famille : `{prefix}/{cam}/query/reglages/{family}`
+/// (Re)lecture d'une famille : `{prefix}/{cam}/query/settings/{family}`
 pub fn query_settings_family(prefix: &str, cam: &str, family: &str) -> String {
-	format!("{prefix}/{cam}/query/reglages/{family}")
+	format!("{prefix}/{cam}/query/settings/{family}")
 }
 
 // ── Subscribe list ─────────────────────────────────────────────────────
@@ -266,7 +266,7 @@ pub fn subscribe_topics(prefix: &str, cam: &str) -> Vec<String> {
 		control_wakeup(prefix, cam),
 		// Réglages : n'importe quelle feuille sous une famille. Le joker est
 		// volontaire — la liste des familles et des feuilles valides est dans
-		// `crate::reglages`, pas ici ; une paire inconnue est rejetée au
+		// `crate::settings`, pas ici ; une paire inconnue est rejetée au
 		// parsing, pas par le filtre du broker. Il couvre aussi
 		// `control/ptz/{preset,assign}`, déjà listés explicitement au-dessus.
 		format!("{prefix}/{cam}/control/+/+"),
@@ -276,7 +276,7 @@ pub fn subscribe_topics(prefix: &str, cam: &str) -> Vec<String> {
 		query_pir(prefix, cam),
 		query_ptz_preset(prefix, cam),
 		query_settings(prefix, cam),
-		format!("{prefix}/{cam}/query/reglages/+"),
+		format!("{prefix}/{cam}/query/settings/+"),
 	]
 }
 
@@ -309,10 +309,10 @@ mod tests {
 			status_setting_reason("bairelay", "cam1", "audio"),
 			"le motif doit rester une feuille de la famille, pas un topic à part"
 		);
-		assert_eq!(query_settings("bairelay", "cam1"), "bairelay/cam1/query/reglages");
+		assert_eq!(query_settings("bairelay", "cam1"), "bairelay/cam1/query/settings");
 		assert_eq!(
 			query_settings_family("bairelay", "cam1", "pir"),
-			"bairelay/cam1/query/reglages/pir"
+			"bairelay/cam1/query/settings/pir"
 		);
 	}
 
@@ -323,8 +323,8 @@ mod tests {
 			topics.contains(&"bairelay/cam1/control/+/+".to_string()),
 			"les feuilles de réglages ne seraient jamais reçues : {topics:?}"
 		);
-		assert!(topics.contains(&"bairelay/cam1/query/reglages".to_string()));
-		assert!(topics.contains(&"bairelay/cam1/query/reglages/+".to_string()));
+		assert!(topics.contains(&"bairelay/cam1/query/settings".to_string()));
+		assert!(topics.contains(&"bairelay/cam1/query/settings/+".to_string()));
 		// Aucun doublon : un abonnement en trop est invisible mais ment sur le
 		// nombre de souscriptions déclarées.
 		let mut tri = topics.clone();

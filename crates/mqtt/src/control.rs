@@ -7,13 +7,13 @@
 //!
 //! Deux formes cohabitent sous `control/` : l'action simple à quatre segments
 //! (`control/pir`, `control/siren`, …, héritée de neolink) et le réglage à
-//! cinq segments (`control/<famille>/<feuille>`, voir [`crate::reglages`]).
+//! cinq segments (`control/<famille>/<feuille>`, voir [`crate::settings`]).
 //! Les deux répondent `OK`/`FAIL` sur leur propre topic, d'où le filtre des
 //! mots réservés à chaque branche.
 
 use std::str;
 
-use crate::reglages::{Family, SettingCommand};
+use crate::settings::{Family, SettingCommand};
 use crate::topics;
 
 /// PTZ movement direction.
@@ -125,7 +125,7 @@ pub enum ControlCommand {
 		camera: String,
 	},
 	/// Relecture des réglages. `None` = toutes les familles
-	/// (`query/reglages`), `Some(f)` = une seule (`query/reglages/<famille>`).
+	/// (`query/settings`), `Some(f)` = une seule (`query/settings/<famille>`).
 	QuerySettings {
 		camera: String,
 		family: Option<Family>,
@@ -274,7 +274,7 @@ pub fn parse_control_message(prefix: &str, topic: &str, payload: &[u8]) -> Optio
 			return None;
 		}
 		parse_control_setting(&camera, parts[3], parts[4], payload_trimmed)
-	} else if parts.len() == 5 && parts[2] == "query" && parts[3] == "reglages" {
+	} else if parts.len() == 5 && parts[2] == "query" && parts[3] == "settings" {
 		if is_reserved_reply_token(payload_trimmed) {
 			return None;
 		}
@@ -441,7 +441,7 @@ fn parse_query_action(camera: &str, action: &str) -> Option<ControlCommand> {
 		"pir" => Some(ControlCommand::QueryPir {
 			camera: camera.to_string(),
 		}),
-		"reglages" => Some(ControlCommand::QuerySettings {
+		"settings" => Some(ControlCommand::QuerySettings {
 			camera: camera.to_string(),
 			family: None,
 		}),
@@ -487,7 +487,7 @@ fn parse_control_setting(
 	})
 }
 
-/// `query/reglages/<famille>`.
+/// `query/settings/<famille>`.
 fn parse_query_settings(camera: &str, family_slug: &str) -> Option<ControlCommand> {
 	Some(ControlCommand::QuerySettings {
 		camera: camera.to_string(),
@@ -667,16 +667,16 @@ mod tests {
 
 	#[test]
 	fn la_requete_des_reglages_se_parse_dans_les_deux_formes() {
-		let all = cmd("bairelay/cam1/query/reglages", "").expect("se parse");
+		let all = cmd("bairelay/cam1/query/settings", "").expect("se parse");
 		assert!(matches!(
 			all,
 			ControlCommand::QuerySettings { family: None, .. }
 		));
 		assert_eq!(
 			all.control_topic("bairelay"),
-			"bairelay/cam1/query/reglages"
+			"bairelay/cam1/query/settings"
 		);
-		let one = cmd("bairelay/cam1/query/reglages/pir", "").expect("se parse");
+		let one = cmd("bairelay/cam1/query/settings/pir", "").expect("se parse");
 		assert!(matches!(
 			one,
 			ControlCommand::QuerySettings {
@@ -686,12 +686,12 @@ mod tests {
 		));
 		assert_eq!(
 			one.control_topic("bairelay"),
-			"bairelay/cam1/query/reglages/pir"
+			"bairelay/cam1/query/settings/pir"
 		);
-		assert!(cmd("bairelay/cam1/query/reglages/inconnu", "").is_none());
+		assert!(cmd("bairelay/cam1/query/settings/inconnu", "").is_none());
 		for reply in ["OK", "FAIL"] {
-			assert!(cmd("bairelay/cam1/query/reglages", reply).is_none());
-			assert!(cmd("bairelay/cam1/query/reglages/pir", reply).is_none());
+			assert!(cmd("bairelay/cam1/query/settings", reply).is_none());
+			assert!(cmd("bairelay/cam1/query/settings/pir", reply).is_none());
 		}
 	}
 

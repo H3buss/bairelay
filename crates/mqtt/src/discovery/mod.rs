@@ -25,11 +25,11 @@ use crate::ai::AiObject;
 use crate::topics;
 use serde::{Deserialize, Serialize, Serializer};
 
-mod reglages;
+mod settings;
 pub mod publisher;
 
 pub use publisher::{CameraEnableFlags, DiscoveryPublisher};
-pub use reglages::{
+pub use settings::{
 	DiscoveryNumber, DiscoveryStateSensor, DiscoveryText, EntityKind, EntitySpec, SPECS, WEEKDAYS,
 	build_feature_entities,
 };
@@ -1029,7 +1029,7 @@ mod tests {
 		// `Feature::ALL` sans entrée dans `SPECS` = une fonctionnalité activée
 		// dans la config qui n'émet rien, sans le moindre message.
 		for f in Feature::ALL {
-			let n = reglages::specs_for(f).count();
+			let n = settings::specs_for(f).count();
 			if n == 0 {
 				continue;
 			}
@@ -1038,7 +1038,7 @@ mod tests {
 				"une spec porte la fonctionnalité {f:?} absente de Feature::ALL"
 			);
 		}
-		let reglages: Vec<Feature> = reglages::SPECS
+		let families: Vec<Feature> = settings::SPECS
 			.iter()
 			.map(|s| s.feature)
 			.collect::<Vec<_>>()
@@ -1047,8 +1047,8 @@ mod tests {
 			.into_iter()
 			.collect();
 		assert!(
-			reglages.len() >= 14,
-			"les familles de réglages ne sont plus toutes émissibles : {reglages:?}"
+			families.len() >= 14,
+			"not every setting family is offerable any more: {families:?}"
 		);
 	}
 

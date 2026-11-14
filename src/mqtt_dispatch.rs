@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use bairelay_mqtt::control::{ControlCommand, IrMode, PtzDirection};
-use bairelay_mqtt::reglages::Family;
+use bairelay_mqtt::settings::Family;
 use bairelay_mqtt::{topics, SharedMqttClient, StatusPublisher};
 
 use bairelay_neolink_core::bc_protocol::{CameraDriver, Direction, Error, LightState};
@@ -251,7 +251,7 @@ pub async fn dispatch_control(
 		}
 		// ── Réglages (`control/<famille>/<feuille>`) ────────────────────
 		// La valeur a déjà passé les bornes du protocole dans
-		// `bairelay_mqtt::reglages`. Ce qui reste est le geste de la maison :
+		// `bairelay_mqtt::settings`. Ce qui reste est le geste de la maison :
 		// relire le bloc, n'y retoucher que la balise demandée, l'écrire, relire,
 		// et publier la relecture — jamais la valeur demandée.
 		ControlCommand::Setting { setting, .. } => {
@@ -261,7 +261,7 @@ pub async fn dispatch_control(
 					let publisher = StatusPublisher::new(mqtt, topic_prefix, &camera_name);
 					let brut = timeout(
 						CMD_TIMEOUT,
-						crate::reglages::apply_setting(&bc_cfg, &publisher, &setting),
+						crate::settings::apply_setting(&bc_cfg, &publisher, &setting),
 					)
 					.await;
 					// Le délai est distingué de la réponse de la caméra : le
@@ -275,21 +275,21 @@ pub async fn dispatch_control(
 							// la famille est donc connue et réécrivable. C'est ce
 							// moment — et pas un sondage périodique — qui fait
 							// passer ses entités de « lisibles » à « modifiables ».
-							cam.reglages_famille_lue(famille, true).await;
+							cam.mark_family_read(famille, true).await;
 							// Et la famille va bien : la raison d'un refus
 							// précédent n'a plus rien à faire sur le broker.
-							crate::reglages::effacer_motif(&publisher, famille).await;
+							crate::settings::clear_reason(&publisher, famille).await;
 						}
 						Err(e) => {
 							// Le `FAIL` sur le topic de commande est éphémère :
 							// personne ne le retrouve dix minutes plus tard dans
 							// Home Assistant. Le motif, lui, est conservé.
 							let phrase = if en_delai {
-								crate::reglages::MOTIF_TIMEOUT.to_string()
+								crate::settings::REASON_TIMEOUT.to_string()
 							} else {
-								crate::reglages::motif(e)
+								crate::settings::motif(e)
 							};
-							crate::reglages::publier_motif(&publisher, famille, &phrase).await;
+							crate::settings::publish_reason(&publisher, famille, &phrase).await;
 							// Les états déjà lus ne sont pas effacés : la caméra
 							// n'a pas dit autre chose. En revanche une famille
 							// jamais relue ne devient pas modifiable pour autant.
@@ -309,10 +309,10 @@ pub async fn dispatch_control(
 					// Rien n'a été envoyé, et ce n'est pas la caméra qui a dit
 					// non : c'est le pont. Le FAIL est éphémère, la phrase reste.
 					let publisher = StatusPublisher::new(mqtt, topic_prefix, &camera_name);
-					crate::reglages::publier_motif(
+					crate::settings::publish_reason(
 						&publisher,
 						famille,
-						crate::reglages::MOTIF_SANS_SESSION,
+						crate::settings::REASON_SANS_SESSION,
 					)
 					.await;
 					Err(Error::Other("settings need a connected Baichuan session"))
@@ -336,7 +336,7 @@ pub async fn dispatch_control(
 			// effacé et la famille ne change pas de plateforme — elle garde ce
 			// qu'une lecture antérieure a prouvé.
 			let publisher = StatusPublisher::new(mqtt, topic_prefix, &camera_name);
-			crate::reglages::publier_motif(
+			crate::settings::publish_reason(
 				&publisher,
 				family,
 				"valeur refusée avant d'atteindre la caméra : hors des bornes du protocole",
@@ -367,7 +367,7 @@ pub async fn dispatch_control(
 		}
 		ControlCommand::QuerySettings { family, .. } => {
 			// Relecture à la demande explicite. Chaque famille est une commande
-			// caméra — sur une sonnette sur batterie, `query/reglages` sans
+			// caméra — sur une sonnette sur batterie, `query/settings` sans
 			// famille en costaud une quinzaine : c'est le prix d'un appui
 			// d'opératrice ou d'une automatisation volontaire, et c'est bien pour
 			// ça que rien ici n'est périodique.
@@ -386,7 +386,7 @@ pub async fn dispatch_control(
 					// découverte ne bouge alors pas). Le `Vec` se remplit au fil
 					// de l'eau : une synchronisation complète interrompue par le
 					// délai conserve quand même ce qui a été lu avant l'arrêt.
-					let mut lues: Vec<(Family, crate::reglages::Lecture)> = Vec::new();
+					let mut lues: Vec<(Family, crate::settings::Verdict)> = Vec::new();
 					match family {
 						Some(f) => lues.push(sync_one(&bc_cfg, &publisher, f).await),
 						None => {
@@ -394,7 +394,7 @@ pub async fn dispatch_control(
 							// avant de lire le vecteur, d'où le `let`.
 							let interrompue = timeout(
 								SETTINGS_TIMEOUT,
-								crate::reglages::sync_all(&bc_cfg, &publisher, &mut lues),
+								crate::settings::sync_all(&bc_cfg, &publisher, &mut lues),
 							)
 							.await
 							.is_err();
@@ -411,13 +411,13 @@ pub async fn dispatch_control(
 					// relues passent des capteurs de bonne foi aux entités
 					// modifiables, en une seule rafale (payload vide sur l'ancien
 					// topic de découverte avant la nouvelle configuration).
-					cam.reglages_familles_lues(&lues).await;
+					cam.mark_families_read(&lues).await;
 					tracing::info!(
 						camera = %camera_name,
 						lues = lues.len(),
 						modifiables = lues
 							.iter()
-							.filter(|(_, v)| matches!(v, crate::reglages::Lecture::Ecrivable))
+							.filter(|(_, v)| matches!(v, crate::settings::Verdict::Writable))
 							.count(),
 						// Verdicts promis **malgré** un refus de lecture : la
 						// famille est modifiable et son topic `reason` porte la
@@ -425,11 +425,11 @@ pub async fn dispatch_control(
 						// journal, une salve maussade sans avoir à relire MQTT.
 						passageres = lues
 							.iter()
-							.filter(|(_, v)| matches!(v, crate::reglages::Lecture::Transitoire))
+							.filter(|(_, v)| matches!(v, crate::settings::Verdict::Transient))
 							.count(),
 						indetermines = lues
 							.iter()
-							.filter(|(_, v)| matches!(v, crate::reglages::Lecture::Indetermine))
+							.filter(|(_, v)| matches!(v, crate::settings::Verdict::Unknown))
 							.count(),
 						"réglages relus et publiés"
 					);
@@ -586,7 +586,7 @@ async fn publish_pir_after_write(
 	}
 	// La sensibilité a sa propre feuille ; `reglages::publish_pir` porte la règle
 	// d'orthographe (`sensiValue` sur les firmwares récents, `sensitivity` avant).
-	crate::reglages::publish_pir(&publisher, &reread).await;
+	crate::settings::publish_pir(&publisher, &reread).await;
 	if kept != demanded {
 		tracing::warn!(
 			camera = %cam_name,
@@ -600,11 +600,11 @@ async fn publish_pir_after_write(
 
 /// Relit une seule famille et rend le verdict que la découverte doit publier.
 ///
-/// Échec = états effacés **et** motif publié ; `reglages::lire_famille` s'en
+/// Échec = états effacés **et** motif publié ; `reglages::read_family` s'en
 /// charge pour ce que la caméra a refusé, et le délai, qui se déclenche **ici**,
 /// est mis en mot à la main. Un délai ne prouve pas que le réglage est interdit —
 /// il prouve que la caméra n'a pas répondu — donc il rend le même verdict qu'un
-/// refus passager, [`crate::reglages::Lecture::Transitoire`] : la famille reste
+/// refus passager, [`crate::settings::Verdict::Transient`] : la famille reste
 /// modifiable et la raison s'affiche à côté. Ce qui ne doit plus se promettre,
 /// c'est l'inverse : une famille dont on n'a **jamais** rien lu, et cette règle-là
 /// tient parce qu'une famille jamais relue reste absente de la découverte
@@ -613,18 +613,18 @@ async fn sync_one(
 	bc: &bairelay_neolink_core::bc_protocol::BcCamera,
 	publ: &StatusPublisher<'_>,
 	family: Family,
-) -> (Family, crate::reglages::Lecture) {
-	match timeout(REREAD_TIMEOUT * 3, crate::reglages::lire_famille(bc, publ, family)).await {
+) -> (Family, crate::settings::Verdict) {
+	match timeout(REREAD_TIMEOUT * 3, crate::settings::read_family(bc, publ, family)).await {
 		Ok(lue) => lue,
 		Err(_) => {
 			tracing::warn!(
 				family = family.slug(),
 				"relecture d'une famille de réglages expirée : états effacés, motif publié, famille laissée modifiable"
 			);
-			crate::reglages::clear_family(publ, family).await;
-			crate::reglages::publier_motif_transitoire(publ, family, crate::reglages::MOTIF_TIMEOUT)
+			crate::settings::clear_family(publ, family).await;
+			crate::settings::publish_reason_transient(publ, family, crate::settings::REASON_TIMEOUT)
 				.await;
-			(family, crate::reglages::Lecture::Transitoire)
+			(family, crate::settings::Verdict::Transient)
 		}
 	}
 }
@@ -1940,7 +1940,7 @@ mod tests {
 	// en 200, et ce qu'elle répond à la relecture qui suit n'est pas ce qui
 	// avait été demandé.
 
-	use bairelay_mqtt::reglages::{Family, SettingCommand};
+	use bairelay_mqtt::settings::{Family, SettingCommand};
 	use bairelay_neolink_core::bc::model::{
 		Bc, MSG_ID_DING_DONG_CTRL, MSG_ID_GET_AUDIO_CFG, MSG_ID_GET_DING_DONG_CFG,
 		MSG_ID_GET_DING_DONG_LIST, MSG_ID_GET_IMAGE, MSG_ID_GET_MOTION_DETECT, MSG_ID_GET_NTP,
@@ -2376,7 +2376,7 @@ mod tests {
 		);
 	}
 
-	/// `query/reglages/ntp` : les trois feuilles de la famille sont publiées
+	/// `query/settings/ntp` : les trois feuilles de la famille sont publiées
 	/// depuis la seule lecture, plus le JSON du bloc pour les automates.
 	#[test]
 	fn dispatch_query_reglages_publie_les_feuilles_de_la_famille() {
@@ -2438,7 +2438,7 @@ mod tests {
 			"le JSON du bloc part sur status/ntp/json ; observations : {rows:?}"
 		);
 		assert!(
-			rows.iter().any(|(t, p, _)| t == "bairelay/cam-ntp/query/reglages/ntp" && p == b"OK"),
+			rows.iter().any(|(t, p, _)| t == "bairelay/cam-ntp/query/settings/ntp" && p == b"OK"),
 			"la requête aboutit : OK ; observations : {rows:?}"
 		);
 	}
@@ -2945,7 +2945,7 @@ mod tests {
 			.expect_msg(MSG_ID_GET_IMAGE)
 			.reply_with(|req| reply_200_xml(req, image_xml("128")))
 			// Seconde relecture : les deux tentatives échouent (la première est
-			// suivie d'un rejeu unique, cf. `reglages::lire_famille`).
+			// suivie d'un rejeu unique, cf. `reglages::read_family`).
 			.expect_msg(MSG_ID_GET_IMAGE)
 			.reply_with(|req| reply_err_code(req, 400))
 			.expect_msg(MSG_ID_GET_IMAGE)
@@ -3042,7 +3042,7 @@ mod tests {
 
 	async fn jamais_lue_puis_quarante_cent() {
 		let connexion = MockConnection::new()
-			// Les deux tentatives de `lire_famille` : le rejeu unique après un 400.
+			// Les deux tentatives de `read_family` : le rejeu unique après un 400.
 			.expect_msg(MSG_ID_GET_IMAGE)
 			.reply_with(|req| reply_err_code(req, 400))
 			.expect_msg(MSG_ID_GET_IMAGE)

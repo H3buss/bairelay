@@ -136,7 +136,7 @@ impl BcCamera {
 	/// jamais « le réglage est vide ». La variante, et non le jumeau sans texte,
 	/// parce que ce refus-là arrive **avec** une réponse de la caméra : c'est la
 	/// seule fois où le dialecte explique son non.
-	async fn reglages_get(&self, msg_id: u32) -> Result<Bc> {
+	async fn raw_get(&self, msg_id: u32) -> Result<Bc> {
 		let connection = self.get_connection();
 		let msg_num = self.new_message_num();
 		let mut sub = connection.subscribe(msg_id, msg_num).await?;
@@ -215,20 +215,20 @@ impl BcCamera {
 
 	/// Demande de lecture **fabriquée à la main**, pour l'expertise des `400`.
 	///
-	/// [`reglages_get`](Self::reglages_get) n'a qu'une forme : en-tête de 24
+	/// [`raw_get`](Self::raw_get) n'a qu'une forme : en-tête de 24
 	/// octets, ni extension ni corps. Quand une famille refuse, cette forme
 	/// unique est la seule variable qu'on ait jamais variée — c'est-à-dire
 	/// aucune. Cette sonde varie précisément ce qui n'a jamais été mesuré :
 	///
-	/// * [`DemandeBrute::extension_channel`] — `<Extension><channelId>0</channelId></Extension>`,
+	/// * [`RawRequest::extension_channel`] — `<Extension><channelId>0</channelId></Extension>`,
 	///   la forme qu'envoient **toutes** les commandes que cette caméra sert
 	///   (audio 264, PIR 212, carillon, AbilityInfo 151) et qu'aucune des
 	///   quatre familles en 400 n'envoie ;
-	/// * [`DemandeBrute::extension_rf`] — `<rfId>`, l'autre adressage connu de
+	/// * [`RawRequest::extension_rf`] — `<rfId>`, l'autre adressage connu de
 	///   ce firmware (celui du PIR) ;
-	/// * [`DemandeBrute::corps`] — un corps qui **nomme le bloc demandé**, la
+	/// * [`RawRequest::corps`] — un corps qui **nomme le bloc demandé**, la
 	///   forme que la doc prête à d'autres firmwares ;
-	/// * [`DemandeBrute::canal_entete`] — l'octet 12 de l'en-tête, pour les
+	/// * [`RawRequest::canal_entete`] — l'octet 12 de l'en-tête, pour les
 	///   variantes NVR.
 	///
 	/// Le corps passe par [`BcXml`], donc par le chiffrement normal : une
@@ -238,7 +238,7 @@ impl BcCamera {
 	///
 	/// Rien ici ne re-tente ni ne juge : la sonde rend le code et ce que la
 	/// caméra a écrit, et c'est à l'opératrice de lire.
-	pub async fn reglages_brut(&self, msg_id: u32, d: DemandeBrute) -> Result<ReponseBrute> {
+	pub async fn raw_exchange(&self, msg_id: u32, d: RawRequest) -> Result<RawResponse> {
 		let connection = self.get_connection();
 		let msg_num = self.new_message_num();
 		let mut sub = connection.subscribe(msg_id, msg_num).await?;
@@ -261,7 +261,7 @@ impl BcCamera {
 		};
 		sub.send(req).await?;
 		let msg = sub.recv().await?;
-		let mut brut = ReponseBrute {
+		let mut brut = RawResponse {
 			code: msg.meta.response_code,
 			msg_id: msg.meta.msg_id,
 			classe_recue: msg.meta.class,
@@ -287,7 +287,7 @@ impl BcCamera {
 	/// Sort le bloc demandé d'une réponse. Le `Bc` est rendu tel quel quand il
 	/// n'y est pas, pour que l'appelant l'utilise comme ancre d'erreur sans
 	/// avoir à le cloner.
-	fn reglages_block<T>(
+	fn settings_block<T>(
 		msg: Bc,
 		extract: impl FnOnce(&BcXml) -> Option<T>,
 	) -> std::result::Result<T, Bc> {
@@ -307,7 +307,7 @@ impl BcCamera {
 	/// répondent pas sur les SET » : un non-200 est un refus, l'absence de
 	/// réponse dans la fenêtre est un succès **à vérifier par la relecture**
 	/// que l'appelant fait juste après.
-	async fn reglages_set(&self, msg_id: u32, xml: BcXml) -> Result<()> {
+	async fn raw_set(&self, msg_id: u32, xml: BcXml) -> Result<()> {
 		let connection = self.get_connection();
 		let msg_num = self.new_message_num();
 		let mut sub = connection.subscribe(msg_id, msg_num).await?;
@@ -340,8 +340,8 @@ impl BcCamera {
 	/// Lit `<Ntp>` (msg 38) : activation, serveur, port et période de
 	/// resynchronisation **en minutes**.
 	pub async fn get_ntp(&self) -> Result<Ntp> {
-		let msg = self.reglages_get(MSG_ID_GET_NTP).await?;
-		Self::reglages_block(msg, |xml| xml.ntp.clone()).map_err(|msg| Error::UnintelligibleReply {
+		let msg = self.raw_get(MSG_ID_GET_NTP).await?;
+		Self::settings_block(msg, |xml| xml.ntp.clone()).map_err(|msg| Error::UnintelligibleReply {
 			reply: Arc::new(msg),
 			why: "Expected Ntp xml but it was not received",
 		})
@@ -351,7 +351,7 @@ impl BcCamera {
 	/// caméra a stocké après**. `cfg` doit venir de [`get_ntp`](Self::get_ntp)
 	/// avec seulement les balises voulues touchées.
 	pub async fn set_ntp(&self, cfg: &Ntp) -> Result<Ntp> {
-		self.reglages_set(
+		self.raw_set(
 			MSG_ID_SET_NTP,
 			BcXml {
 				ntp: Some(cfg.clone()),
@@ -367,8 +367,8 @@ impl BcCamera {
 	/// Lit `<AutoReboot>` (msg 101). Attention à l'asymétrie des ids : ici le
 	/// setter est le plus **petit** des deux.
 	pub async fn get_auto_reboot(&self) -> Result<AutoReboot> {
-		let msg = self.reglages_get(MSG_ID_GET_AUTO_REBOOT).await?;
-		Self::reglages_block(msg, |xml| xml.auto_reboot.clone())
+		let msg = self.raw_get(MSG_ID_GET_AUTO_REBOOT).await?;
+		Self::settings_block(msg, |xml| xml.auto_reboot.clone())
 			.map_err(|msg| Error::UnintelligibleReply {
 				reply: Arc::new(msg),
 				why: "Expected AutoReboot xml but it was not received",
@@ -379,7 +379,7 @@ impl BcCamera {
 	/// `Sunday`…`Saturday` / `everyday` n'est pas validé ici : c'est le texte
 	/// que la caméra a imprimé qui repart, et c'est elle qui tranche.
 	pub async fn set_auto_reboot(&self, cfg: &AutoReboot) -> Result<AutoReboot> {
-		self.reglages_set(
+		self.raw_set(
 			MSG_ID_SET_AUTO_REBOOT,
 			BcXml {
 				auto_reboot: Some(cfg.clone()),
@@ -396,8 +396,8 @@ impl BcCamera {
 	/// débruiteur appliqué au micro. Le protocole n'a **aucun** gain micro ni
 	/// coupure micro ; c'est ce qui s'en rapproche le plus.
 	pub async fn get_ai_denoise(&self) -> Result<AiDenoise> {
-		let msg = self.reglages_get(MSG_ID_GET_AI_DENOISE).await?;
-		Self::reglages_block(msg, |xml| xml.ai_denoise.clone())
+		let msg = self.raw_get(MSG_ID_GET_AI_DENOISE).await?;
+		Self::settings_block(msg, |xml| xml.ai_denoise.clone())
 			.map_err(|msg| Error::UnintelligibleReply {
 				reply: Arc::new(msg),
 				why: "Expected aiDenoise xml but it was not received",
@@ -408,7 +408,7 @@ impl BcCamera {
 	/// de version repart telle qu'elle est arrivée — `Version` majuscule comme
 	/// le documente la lib de référence, ou `version` minuscule.
 	pub async fn set_ai_denoise(&self, cfg: &AiDenoise) -> Result<AiDenoise> {
-		self.reglages_set(
+		self.raw_set(
 			MSG_ID_SET_AI_DENOISE,
 			BcXml {
 				ai_denoise: Some(cfg.clone()),
@@ -423,12 +423,12 @@ impl BcCamera {
 
 	/// Lit `<sleepState>` (msg 574) : la caméra sur batterie dort-elle ?
 	///
-	/// Lecture seule : aucun setter n'est documenté, et endormir un appareil
+	/// Verdict seule : aucun setter n'est documenté, et endormir un appareil
 	/// sur batterie par une écriture de réglage n'est pas le rôle de ce pont.
 	/// C'est aussi la seule façon de le savoir **sans le réveiller**.
 	pub async fn get_sleep_state(&self) -> Result<SleepState> {
-		let msg = self.reglages_get(MSG_ID_GET_SLEEP_STATE).await?;
-		Self::reglages_block(msg, |xml| xml.sleep_state.clone())
+		let msg = self.raw_get(MSG_ID_GET_SLEEP_STATE).await?;
+		Self::settings_block(msg, |xml| xml.sleep_state.clone())
 			.map_err(|msg| Error::UnintelligibleReply {
 				reply: Arc::new(msg),
 				why: "Expected sleepState xml but it was not received",
@@ -442,8 +442,8 @@ impl BcCamera {
 	/// `<Wifi>` (116) n'est **pas** exposé : le firmware peut y renvoyer la
 	/// clé du point d'accès, et un état MQTT est lisible par tout le broker.
 	pub async fn get_wifi_signal(&self) -> Result<WifiSignal> {
-		let msg = self.reglages_get(MSG_ID_GET_WIFI_SIGNAL).await?;
-		Self::reglages_block(msg, |xml| xml.wifi_signal.clone())
+		let msg = self.raw_get(MSG_ID_GET_WIFI_SIGNAL).await?;
+		Self::settings_block(msg, |xml| xml.wifi_signal.clone())
 			.map_err(|msg| Error::UnintelligibleReply {
 				reply: Arc::new(msg),
 				why: "Expected WifiSignal xml but it was not received",
@@ -459,7 +459,7 @@ impl BcCamera {
 	/// [`Error::UnintelligibleReply`] : « la caméra n'a rien dit » ne doit
 	/// jamais se lire comme « les curseurs sont à zéro ».
 	pub async fn get_image_cfg(&self) -> Result<ImageCfg> {
-		let msg = self.reglages_get(MSG_ID_GET_IMAGE).await?;
+		let msg = self.raw_get(MSG_ID_GET_IMAGE).await?;
 		let (video_input, advance) = match &msg.body {
 			BcBody::ModernMsg(ModernMsg {
 				payload: Some(BcPayloads::BcXml(xml)),
@@ -479,7 +479,7 @@ impl BcCamera {
 	/// Écrit les blocs image (msg 25) — **les deux**, puis relit (26) et
 	/// renvoie la relecture.
 	pub async fn set_image_cfg(&self, cfg: &ImageCfg) -> Result<ImageCfg> {
-		self.reglages_set(
+		self.raw_set(
 			MSG_ID_SET_IMAGE,
 			BcXml {
 				video_input: Some(cfg.video_input.clone()),
@@ -499,7 +499,7 @@ impl BcCamera {
 	/// (lire l'OSD sur le 26, écrire `<Osd>` sur le 25) produisait des écritures
 	/// jamais appliquées — il n'est pas rejoué ici.
 	pub async fn get_osd_cfg(&self) -> Result<OsdCfg> {
-		let msg = self.reglages_get(MSG_ID_GET_OSD).await?;
+		let msg = self.raw_get(MSG_ID_GET_OSD).await?;
 		let (datetime, channel_name) = match &msg.body {
 			BcBody::ModernMsg(ModernMsg {
 				payload: Some(BcPayloads::BcXml(xml)),
@@ -520,7 +520,7 @@ impl BcCamera {
 	/// `<topLeftX>`/`<topLeftY>` sont des 16.16 normalisés : ils repartent
 	/// comme ils sont arrivés, jamais recalculés.
 	pub async fn set_osd_cfg(&self, cfg: &OsdCfg) -> Result<OsdCfg> {
-		self.reglages_set(
+		self.raw_set(
 			MSG_ID_SET_OSD,
 			BcXml {
 				osd_datetime: Some(cfg.datetime.clone()),
@@ -538,7 +538,7 @@ impl BcCamera {
 	/// imprimée : [`MotionCfg::Md`] si elle a répondu `<MD>`,
 	/// [`MotionCfg::MdAlarm`] si elle a répondu `<MdAlarm>`.
 	pub async fn get_motion_cfg(&self) -> Result<MotionCfg> {
-		let msg = self.reglages_get(MSG_ID_GET_MOTION_DETECT).await?;
+		let msg = self.raw_get(MSG_ID_GET_MOTION_DETECT).await?;
 		let (md, md_alarm) = match &msg.body {
 			BcBody::ModernMsg(ModernMsg {
 				payload: Some(BcPayloads::BcXml(xml)),
@@ -567,7 +567,7 @@ impl BcCamera {
 	pub async fn set_motion_cfg(&self, cfg: &MotionCfg) -> Result<MotionCfg> {
 		match cfg {
 			MotionCfg::Md(m) => {
-				self.reglages_set(
+				self.raw_set(
 					MSG_ID_SET_MOTION_DETECT,
 					BcXml {
 						md: Some(m.clone()),
@@ -596,8 +596,8 @@ impl BcCamera {
 	/// l'écriture que le firmware avale sans rien dire. Le refus est donc dans
 	/// la conception, pas dans l'appel.
 	pub async fn get_privacy_masks(&self) -> Result<Shelter> {
-		let msg = self.reglages_get(MSG_ID_GET_PRIVACY_MASK).await?;
-		Self::reglages_block(msg, |xml| xml.shelter.clone())
+		let msg = self.raw_get(MSG_ID_GET_PRIVACY_MASK).await?;
+		Self::settings_block(msg, |xml| xml.shelter.clone())
 			.map_err(|msg| Error::UnintelligibleReply {
 				reply: Arc::new(msg),
 				why: "Expected Shelter xml but it was not received",
@@ -612,7 +612,7 @@ impl BcCamera {
 	/// (`startMonth`, `startWeekIndex`, `startWeekday`, …) repart intact, seule
 	/// la balise touchée change.
 	pub async fn set_dst(&self, cfg: &Dst) -> Result<Dst> {
-		self.reglages_set(
+		self.raw_set(
 			MSG_ID_SET_DST,
 			BcXml {
 				dst: Some(cfg.clone()),
@@ -632,8 +632,8 @@ impl BcCamera {
 	/// (`<OsdChannelName><name>`, msg 45) ni le nom MQTT de la caméra : ce sont
 	/// trois choses distinctes.
 	pub async fn get_general(&self) -> Result<SystemGeneral> {
-		let msg = self.reglages_get(MSG_ID_GET_GENERAL).await?;
-		Self::reglages_block(msg, |xml| xml.system_general.clone())
+		let msg = self.raw_get(MSG_ID_GET_GENERAL).await?;
+		Self::settings_block(msg, |xml| xml.system_general.clone())
 			.map_err(|msg| Error::UnintelligibleReply {
 				reply: Arc::new(msg),
 				why: "Reply did not contain a SystemGeneral block",
@@ -664,7 +664,7 @@ impl BcCamera {
 		if only_name {
 			out.device_name_only = Some(1);
 		}
-		self.reglages_set(
+		self.raw_set(
 			MSG_ID_SET_GENERAL,
 			BcXml {
 				system_general: Some(out),
@@ -1587,10 +1587,10 @@ mod tests {
 	}
 }
 
-/// Ce que la caméra a répondu à une [`DemandeBrute`] : le code, et les deux
+/// Ce que la caméra a répondu à une [`RawRequest`] : le code, et les deux
 /// moitiés du corps **telles qu'elles ont été comprises**.
 #[derive(Debug, Default, Clone)]
-pub struct ReponseBrute {
+pub struct RawResponse {
 	/// Le `response_code` de l'en-tête : 200, 400, 405…
 	pub code: u16,
 	/// Le `msg_id` rendu par la caméra (le nôtre, d'habitude).
@@ -1623,7 +1623,7 @@ pub struct ReponseBrute {
 /// d'aujourd'hui, ce qui sert de témoin dans la série. Consommée par l'appel :
 /// `BcXml` n'est pas `Clone`, et le corps part tel quel sur le câble.
 #[derive(Debug, Default)]
-pub struct DemandeBrute {
+pub struct RawRequest {
 	/// `channelId` **d'en-tête** (octet 12). `None` = celui de la caméra.
 	pub canal_entete: Option<u8>,
 	/// `Some(n)` : ajoute `<channelId>n</channelId>` à l'extension.
@@ -1643,7 +1643,7 @@ pub struct DemandeBrute {
 	pub classe: Option<u16>,
 }
 
-impl DemandeBrute {
+impl RawRequest {
 	/// Le témoin : la trame que la bibliothèque envoie aujourd'hui.
 	pub fn temoin() -> Self {
 		Self::default()
@@ -1673,7 +1673,7 @@ impl DemandeBrute {
 
 /// La forme que **ce** micrologiciel attend pour une trame de réglage — lecture
 /// **et** écriture —, mesurée le 13/11/2026 avec la sonde MQTT
-/// ([`super::reglages_brut`], pilotée depuis
+/// ([`super::settings_brut`], pilotée depuis
 /// `bairelay/<cam>/control/sonde/<serial>`).
 ///
 /// Quatre familles refusaient `400` sans jamais écrire de réponse. La variable
