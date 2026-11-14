@@ -115,6 +115,22 @@ pub struct Config {
 	#[serde(default)]
 	pub webhook: Option<WebhookConfig>,
 
+	/// Optional `[carnet]` block. Disabled by default. When enabled, bairelay
+	/// opens a read-only raw `AF_PACKET` socket and appends one header-only
+	/// line per retained frame to `journal`: who knocks at the machine while
+	/// the battery camera sleeps. Nothing is ever answered and no payload byte
+	/// is ever written. Linux only; a refused socket (`EPERM`, no `CAP_NET_RAW`)
+	/// logs one warning and the bridge runs on without it. See `src/carnet.rs`.
+	#[serde(default)]
+	pub carnet: Option<CarnetConfig>,
+
+	/// What to do with the camera's own UDP event announcements (`0x31`).
+	/// Decoding and mirroring on `status/evenement` always happen; this block
+	/// only gates the paid part — interrogating the camera when it announces a
+	/// wake. Off by default. See `src/interrogation.rs`.
+	#[serde(default)]
+	pub annonces: AnnoncesConfig,
+
 	/// Neolink-compat: tokio-console debugging knob. Bairelay does not
 	/// integrate `tokio-console`; verbosity is driven by `RUST_LOG`
 	/// (or `-v` / `-vv` / `-vvv` on the CLI). Accepted so old configs
@@ -172,6 +188,8 @@ impl Default for Config {
 			wake_server: None,
 			push_listener: None,
 			webhook: None,
+			carnet: None,
+			annonces: AnnoncesConfig::default(),
 			tokio_console: None,
 			stream_prune_grace_secs: default_prune_grace_secs(),
 			cloud_account: None,
@@ -285,6 +303,18 @@ fn default_webhook_port() -> u16 {
 	DEFAULT_WEBHOOK_PORT
 }
 
+/// Default `[carnet] journal`: the add-on's config mount, which survives
+/// restarts and is readable from the Home Assistant file editor.
+fn default_carnet_journal() -> String {
+	"/config/sonnette/carnet-trames.txt".to_string()
+}
+
+/// Default `[carnet] taille_max_octets`: 2 MB ≈ 12 000 header lines, i.e.
+/// several nights of a doorbell's worth of traffic on an SD card.
+fn default_carnet_taille_max() -> u64 {
+	2_000_000
+}
+
 /// A parsed `webhook_advertise`: an IP or hostname plus a non-zero port.
 /// `Display` gives `host:port`, bracketing an IPv6 host.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -352,6 +382,135 @@ pub fn parse_webhook_advertise(raw: &str) -> Result<WebhookAdvertise, String> {
 		crate::bc_opts::AddressHost::Name(name) => name,
 	};
 	Ok(WebhookAdvertise { host, port })
+}
+
+// ── CarnetConfig ───────────────────────────────────────────────────────
+
+/// Passive frame-header capture (`[carnet]`), for the one question no other
+/// listener can answer: what does the battery camera send while it is asleep,
+/// and at what does it aim. A read-only raw `AF_PACKET` socket, Linux only,
+/// `CAP_NET_RAW` required. `src/carnet.rs` holds the line format, the filter
+/// and the degradation contract (a refused socket warns and changes nothing
+/// else).
+///
+/// Validation is deliberately not part of [`validate_config`]: the carnet is a
+/// diagnostic, so a bad value here warns at spawn instead of holding the whole
+/// bridge down. A misspelled key is still a hard error, via
+/// `deny_unknown_fields`.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CarnetConfig {
+	#[serde(default)]
+	pub enable: bool,
+
+	/// Interface to bind the raw socket to. Empty — the default — keeps every
+	/// interface the kernel sees.
+	#[serde(default)]
+	pub interface: String,
+
+	/// Stop capturing after this many seconds, so a carnet left enabled by
+	/// mistake cannot fill the SD card. Unset — the default — captures until
+	/// the bridge stops.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub durree_secs: Option<u64>,
+
+	/// Journal path. `/config` is the add-on's config mount.
+	#[serde(default = "default_carnet_journal")]
+	pub journal: String,
+
+	/// Journal size before it is cut aside to `<journal>.1` and restarted.
+	#[serde(default = "default_carnet_taille_max")]
+	pub taille_max_octets: u64,
+
+	/// Extra camera identities to always retain: IPv4/IPv6 addresses and/or
+	/// MAC addresses (`18:2c:65:d6:e6:92`). Camera addresses from
+	/// `[[camera]]` are derived automatically; the MAC is not derivable and is
+	/// what makes an ARP or a runt frame attributable to the camera.
+	#[serde(default)]
+	pub camera: Vec<String>,
+
+	/// Extra ports to retain, on top of the ports bairelay listens on and the
+	/// always-interesting DNS/DHCP ones.
+	#[serde(default)]
+	pub ports: Vec<u16>,
+}
+
+impl Default for CarnetConfig {
+	fn default() -> Self {
+		Self {
+			enable: false,
+			interface: String::new(),
+			durree_secs: None,
+			journal: default_carnet_journal(),
+			taille_max_octets: default_carnet_taille_max(),
+			camera: Vec::new(),
+			ports: Vec::new(),
+		}
+	}
+}
+
+// ── AnnoncesConfig ─────────────────────────────────────────────────────
+
+/// Ce que le pont fait des annonces d'événement que la caméra pousse toute
+/// seule (famille `0x31`, voir `docs/canal-evenements-udp.md`).
+///
+/// Le décodage et la publication sur `status/evenement` ne se règlent pas :
+/// ils sont gratuits et c'est le diagnostic qui a manqué six semaines. Ce
+/// bloc-ci ne règle qu'une chose, la seule qui coûte : **interroger** la
+/// caméra sur son annonce de réveil, ce qui achète une session TCP.
+///
+/// Comme [`CarnetConfig`], la validation n'est pas dans [`validate_config`] :
+/// un réglage de diagnostic ne doit pas empêcher le pont de démarrer. Une clé
+/// mal orthographiée reste une erreur dure, grâce à `deny_unknown_fields`.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AnnoncesConfig {
+	/// Tenir le verrou de réveil quand la caméra annonce `event` 3, pour que
+	/// la session s'établisse et que l'écouteur d'alarmes lise l'état
+	/// visiteur : l'appui arrive alors en quelques secondes au lieu de
+	/// dix‑huit. Éteint par défaut — le coût par réveil est à mesurer avant
+	/// de l'allumer sur une caméra dont la détection de mouvement est active.
+	#[serde(default)]
+	pub interroger: bool,
+
+	/// Fenêtre d'attente du verrou, en secondes, à compter du réveil : le temps
+	/// pendant lequel on laisse la boucle de connexion joindre la caméra. Si la
+	/// session arrive, le verrou est gardé huit secondes de plus — celles de
+	/// l'abonnement aux alarmes et de la première poussée. Trop court, on
+	/// renonce avant que la caméra réponde (relevé : une fois sur quatre, la
+	/// session est venue après vingt secondes).
+	#[serde(default = "default_annonces_tenue")]
+	pub tenue_secs: u64,
+
+	/// Secondes minimum entre deux interrogations **ayant obtenu une session**,
+	/// sur la même caméra. En mode nominal, chaque véhicule qui passe réveille
+	/// la caméra : cette borne est ce qui empêche un passage de voiture de
+	/// coûter quatre sessions. Une tentative sans session ne la consomme pas.
+	#[serde(default = "default_annonces_intervalle")]
+	pub intervalle_secs: u64,
+}
+
+/// Défaut de `[annonces] tenue_secs` : vingt‑cinq secondes. Les quatre chronos
+/// du 13 novembre 2026 donnent 604 ms, 2 413 ms, 604 ms et un échec après
+/// 20 001 ms — la caméra a répondu douze secondes après qu'on eut renoncé.
+fn default_annonces_tenue() -> u64 {
+	25
+}
+
+/// Défaut de `[annonces] intervalle_secs` : trente secondes, soit plus que la
+/// durée relevée d'un enregistrement sur appui (dix‑neuf secondes).
+fn default_annonces_intervalle() -> u64 {
+	30
+}
+
+impl Default for AnnoncesConfig {
+	fn default() -> Self {
+		Self {
+			interroger: false,
+			tenue_secs: default_annonces_tenue(),
+			intervalle_secs: default_annonces_intervalle(),
+		}
+	}
 }
 
 // ── UserConfig ─────────────────────────────────────────────────────────
@@ -545,6 +704,21 @@ pub struct CameraConfig {
 	#[serde(default)]
 	pub webhook: bool,
 
+	/// Declare that this camera can do two-way audio even though its
+	/// `abilityInfo` does not list `two_way_audio`, so the talk path
+	/// (`parler`, `pont-audio`) is allowed for **this camera only**.
+	///
+	/// This is a firmware under-declaration, verified by `talk-abilite`: the
+	/// doorbell answers `<TalkAbility>` (msg 10) with `version 1.1`, `FDX`
+	/// duplex and an `adpcm` 16000 Hz / 16 bit / 1024-sample-per-block
+	/// configuration, while its 56-entry `abilityInfo` lists no talk ability
+	/// at all. Default `false` keeps the ability gate exactly as strict as it
+	/// has always been for every other camera — and setting it on a camera
+	/// that genuinely lacks the microphone only makes the camera refuse the
+	/// talk config, it does not make bairelay any less strict elsewhere.
+	#[serde(default)]
+	pub two_way_audio: bool,
+
 	// ── Neolink migration compat (deprecated; warn + ignore) ──────────
 	// Each Option<_> exists only so old configs parse cleanly under
 	// `deny_unknown_fields`. `warn_neolink_compat_fields` emits a one-
@@ -608,6 +782,7 @@ impl Default for CameraConfig {
 			permitted_users: Vec::new(),
 			debug: None,
 			webhook: false,
+			two_way_audio: false,
 			print_format: None,
 			update_time: None,
 			buffer_duration: None,

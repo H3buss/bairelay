@@ -64,6 +64,36 @@ pub enum Outcome {
 		url: Option<String>,
 		verify_cert: Option<bool>,
 	},
+	/// Loudspeaker and intercom volumes (`<audioCfg>`, cmd 264 / 265). `tag`
+	/// is the element spelling the camera used — the name a write goes back
+	/// out under. `changed` is false for a plain read, and `block` is then
+	/// simply what the camera holds. After a write, `block` is the **re-read**
+	/// and each `changes` entry pairs the old text with what the camera kept,
+	/// which is the only proof available that the block was stored.
+	ReglagesAudio {
+		tag: String,
+		changed: bool,
+		block: AudioCfgInfo,
+		changes: Vec<AudioCfgChange>,
+	},
+	/// Paired-chime settings (cmds 483 / 484 / 485 / 486 / 609, and 485
+	/// `ringWithMusic` for the `--sonner` test). The chime is spread over
+	/// five questions the doorbell answers for it, and each part a camera
+	/// doesn't have is **refused, not answered empty** — so a part is absent
+	/// from `block` when the camera refused that question (no wireless
+	/// chime, no wired input), which is a finding about the camera, not an
+	/// empty block it wrote. `changed` is false for a plain read; after a
+	/// write `block` is the **re-read** and each `changes` entry pairs the
+	/// old text with what the camera kept — the only proof available that
+	/// the block was stored. `ring` appears only when `--sonner` asked for
+	/// the live test ring; the sound it should produce is the observation.
+	ReglagesCarillon {
+		changed: bool,
+		block: DingDongCfgInfo,
+		changes: Vec<DingDongChange>,
+		#[serde(skip_serializing_if = "Option::is_none")]
+		ring: Option<ChimeRingInfo>,
+	},
 	PtzMoveTo {
 		preset_id: u8,
 	},
@@ -108,6 +138,11 @@ pub enum Outcome {
 	},
 }
 
+/// Serde helper: omit counters that happened to be zero.
+fn is_zero(v: &usize) -> bool {
+	*v == 0
+}
+
 #[derive(Debug, Serialize, PartialEq)]
 pub struct AbilityEntry {
 	pub module: String,
@@ -132,6 +167,226 @@ pub struct ServiceEntry {
 	pub name: String,
 	pub port: u32,
 	pub enabled: Option<bool>,
+}
+
+/// The camera's `<audioCfg>` block, flattened for `--json`, with every value
+/// kept as the **camera's own text** (the protocol layer never parses these
+/// into numbers, precisely so an unparseable or undocumented value survives a
+/// read/write round trip — see [`bairelay_neolink_core::bc::xml::AudioCfg`]).
+///
+/// The three doorbell tags are omitted from JSON when this firmware doesn't
+/// print them: an absent tag is a finding about the camera, not an empty
+/// string it wrote.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AudioCfgInfo {
+	/// `@version` of the reply.
+	pub version: String,
+	/// `channelId`.
+	pub channel_id: String,
+	/// `volume`: the loudspeaker volume (0-100 per the protocol note).
+	pub volume: String,
+	/// `timeout` — meaning undocumented; shown for comparison and echoed
+	/// back unchanged on a write.
+	pub timeout: String,
+	/// `audioSelect` — meaning undocumented, never written by the web UI.
+	pub audio_select: String,
+	/// `preAlarm` — meaning undocumented, never written by the web UI.
+	pub pre_alarm: String,
+	/// `audioListId` — meaning undocumented, never written by the web UI.
+	pub audio_list_id: String,
+	/// `talkAndReplyVolume`: how loud the answer you speak through the app
+	/// comes out of the doorbell. The reason this command exists.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub talk_and_reply_volume: Option<String>,
+	/// `visitorVolume`: how loud the pre-set greeting clips play.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub visitor_volume: Option<String>,
+	/// `visitorLoudspeaker`: whether the loudspeaker is live for a visitor.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub visitor_loudspeaker: Option<String>,
+	/// True when the camera spelled the element `<AudioCfg>` instead of
+	/// `<audioCfg>` — recorded so a write can answer with the same name.
+	pub pascal: bool,
+}
+
+/// One tag a `reglages-audio` write touched, and what became of it: `before`
+/// is the text the read held, `requested` the text asked for, `after` the text
+/// the camera holds when the block is read back. `after != requested` means the
+/// firmware took the block and kept something else — which is why the write is
+/// always followed by a read.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AudioCfgChange {
+	/// The XML tag name, as the camera names it.
+	pub tag: String,
+	pub before: String,
+	pub requested: String,
+	pub after: String,
+}
+
+/// The chime family aggregated for `--json`: what [`bairelay_neolink_core::bc::xml::DingDongCfg`]
+/// holds after the read sweep (483 wired block, 484 paired list, 485 params,
+/// 609 silent mode, 486 per-event melodies). Values are the **camera's own
+/// text** for the same reason `AudioCfgInfo` keeps text: an undocumented value
+/// must survive a read/write round trip untouched.
+///
+/// A part is *absent* (omitted from JSON) when the camera refused or never
+/// answered that question — `None` and `Some(vec![])` in the core aggregate
+/// mean "refused" and "answered with no entries", and this flattening keeps
+/// that difference: refused parts vanish, answered-empty parts print as an
+/// empty list.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+pub struct DingDongCfgInfo {
+	/// The chime id the per-chime questions (485 / 609) were asked about —
+	/// the first numeric id in the 484 list, online preferred.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub chime_id: Option<String>,
+	/// The 484 paired-chime list, one entry per chime.
+	#[serde(skip_serializing_if = "Vec::is_empty")]
+	pub chimes: Vec<ChimeDeviceInfo>,
+	/// The 483 hardwired-chime block, when this doorbell has a wired input.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub ctrl: Option<ChimeCtrlInfo>,
+	/// The 485 per-chime parameters (`name` / `volLevel` / `ledState`).
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub params: Option<ChimeParamsInfo>,
+	/// The 609 silent-mode block (`<time>`, unit undocumented).
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub silent: Option<ChimeSilentInfo>,
+	/// The 486 per-event melody blocks, one entry per device.
+	#[serde(skip_serializing_if = "Vec::is_empty")]
+	pub events: Vec<ChimeEventInfo>,
+}
+
+/// One `<dingdongDeviceInfo>` of the 484 list.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ChimeDeviceInfo {
+	/// The addressable id (`deviceId` or `id`, whichever the camera wrote).
+	pub id: String,
+	/// `deviceName` / `name`, when the camera gave the chime one.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub name: Option<String>,
+	/// `netState` / `netstate`: `1` online, `0` not answering keep-alives.
+	/// Absent when the camera printed neither spelling.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub net_state: Option<String>,
+}
+
+/// The 483 hardwired-chime block. Both switch spellings appear exactly as the
+/// camera wrote them — `bopen` or `enable`, never both — because a write
+/// returns the spelling the camera used.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ChimeCtrlInfo {
+	pub version: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub channel_id: Option<String>,
+	#[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+	pub cfg_type: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub bopen: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub enable: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub bsave: Option<String>,
+	/// Meaning (unit!) undocumented; echoed back unchanged on a write.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub time: Option<String>,
+	/// A refusal **reason**, not a setting: a battery doorbell with no wired
+	/// chime answers `adptNotAC`. Printed so `bopen = 0` stops looking like a
+	/// choice somebody made.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub result: Option<String>,
+}
+
+/// The 485 per-chime parameters.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ChimeParamsInfo {
+	pub version: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub id: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub name: Option<String>,
+	/// 0-4 typical; the true ceiling is undocumented.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub vol_level: Option<String>,
+	/// LED switch, 0 or 1.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub led_state: Option<String>,
+	/// Only some firmwares echo a melody here; the writable melodies are the
+	/// 486/487 events, not this tag.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub music_id: Option<String>,
+}
+
+/// The 609 silent-mode block.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ChimeSilentInfo {
+	pub version: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub id: Option<String>,
+	/// Mute window; unit undocumented (seconds is the reference client's
+	/// behaviour, not a documented fact).
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub time: Option<String>,
+	#[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+	pub cfg_type: Option<String>,
+}
+
+/// One 486 `<deviceCfg>` block: the chime (or doorbell) and its per-event
+/// melodies.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ChimeEventInfo {
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub id: Option<String>,
+	/// Read-only ring id some firmware prints; never written back.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub ring_id: Option<String>,
+	/// The chime's name as the 486 reply prints it beside the id (read-only
+	/// label — the writable name is the 485 one).
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub name: Option<String>,
+	/// The chime's own firmware, the `<version>` CHILD of `<deviceCfg>`
+	/// (measured `00A2`) — not the XML version attribute.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub firm_version: Option<String>,
+	#[serde(skip_serializing_if = "Vec::is_empty")]
+	pub entries: Vec<ChimeEventEntryInfo>,
+}
+
+/// One `<alarminCfg>`: what event (`type`), whether it rings (`valid` or
+/// `switch`, whichever spelling arrived — the event vocabulary is whatever
+/// the camera printed), and which melody.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ChimeEventEntryInfo {
+	#[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+	pub event_type: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub valid: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub switch: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub music_id: Option<String>,
+}
+
+/// One tag a `reglages-carillon` write touched, in the same
+/// before/requested/after shape as [`AudioCfgChange`]. `tag` names the XML tag
+/// (`volLevel`, `ledState`, `musicId(<event>)`) or `silentTime` for the
+/// `<time>` inside `<dingdongSilentMode>`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DingDongChange {
+	pub tag: String,
+	pub before: String,
+	pub requested: String,
+	pub after: String,
+}
+
+/// The live test ring `--sonner` performed after the (re-)read: the chime id
+/// ringed and the melody asked for. Success here means the doorbell answered
+/// the chime family; **hearing** the ring is the operator's observation the
+/// protocol can never report.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ChimeRingInfo {
+	pub chime_id: String,
+	pub music_id: String,
 }
 
 pub fn format_success(mode: Mode, outcome: &Outcome) -> (String, String) {
@@ -255,6 +510,243 @@ fn format_human(outcome: &Outcome) -> (String, String) {
 				String::new(),
 			)
 		}
+		Outcome::ReglagesAudio {
+			tag,
+			changed,
+			block,
+			changes,
+		} => {
+			// Every value here arrived as camera text, so it goes through
+			// `display_text`: a broken block must not put escape sequences on
+			// the operator's terminal.
+			let shown = |v: &str| {
+				if v.is_empty() {
+					"(empty)".to_string()
+				} else {
+					display_text(v, AUDIO_CFG_FIELD_DISPLAY_MAX)
+				}
+			};
+			let mut out = format!(
+				"audioCfg <{tag}>: {}\n",
+				if *changed {
+					"read, written, read back"
+				} else {
+					"read"
+				}
+			);
+			if *changed {
+				out.push_str("  modified:\n");
+				for c in changes {
+					// The firmware can answer 200 and keep the old value, so
+					// the line reports what the camera holds, not what was
+					// asked for.
+					let note = if c.after == c.requested {
+						String::new()
+					} else {
+						format!(" -> not stored, camera has {}", shown(&c.after))
+					};
+					out.push_str(&format!(
+						"    {}: {} -> {}{}\n",
+						c.tag,
+						shown(&c.before),
+						shown(&c.requested),
+						note,
+					));
+				}
+			}
+			out.push_str(&format!("  volume: {}\n", shown(&block.volume)));
+			for (name, value) in [
+				(
+					"talkAndReplyVolume (interphone)",
+					block.talk_and_reply_volume.as_deref(),
+				),
+				("visitorVolume", block.visitor_volume.as_deref()),
+				("visitorLoudspeaker", block.visitor_loudspeaker.as_deref()),
+			] {
+				match value {
+					Some(v) => out.push_str(&format!("  {name}: {}\n", shown(v))),
+					// Not printed as `(none)`: this firmware does not have the
+					// tag, and saying so is the point.
+					None => out.push_str(&format!("  {name}: (not in this camera's block)\n")),
+				}
+			}
+			// Undocumented, but part of the block and sent back verbatim by a
+			// write, so they belong in the report.
+			out.push_str(&format!("  timeout: {}\n", shown(&block.timeout)));
+			out.push_str(&format!("  audioSelect: {}\n", shown(&block.audio_select)));
+			out.push_str(&format!("  preAlarm: {}\n", shown(&block.pre_alarm)));
+			out.push_str(&format!("  audioListId: {}\n", shown(&block.audio_list_id)));
+			out.push_str(&format!("  channelId: {}\n", shown(&block.channel_id)));
+			out.push_str(&format!("  version: {}\n", shown(&block.version)));
+			(out, String::new())
+		}
+		Outcome::ReglagesCarillon {
+			changed,
+			block,
+			changes,
+			ring,
+		} => {
+			// Every value arrived as camera text; `display_text` bounds what a
+			// broken block can push into the terminal.
+			let shown = |v: &str| {
+				if v.is_empty() {
+					"(empty)".to_string()
+				} else {
+					display_text(v, CHIME_FIELD_DISPLAY_MAX)
+				}
+			};
+			let mut out = format!(
+				"carillon: {}\n",
+				if *changed {
+					"read, written, read back"
+				} else {
+					"read"
+				}
+			);
+			if *changed {
+				out.push_str("  modified:\n");
+				for c in changes {
+					// A chime SET answering 200 while keeping the old text is
+					// possible (this family shares the 265 silence quirk), so
+					// report what the camera holds, not what was asked.
+					let note = if c.after == c.requested {
+						String::new()
+					} else {
+						format!(" -> not stored, camera has {}", shown(&c.after))
+					};
+					out.push_str(&format!(
+						"    {}: {} -> {}{}\n",
+						c.tag,
+						shown(&c.before),
+						shown(&c.requested),
+						note,
+					));
+				}
+			}
+			match block.chime_id.as_deref() {
+				Some(id) => out.push_str(&format!("  chime: {}\n", shown(id))),
+				// Three situations used to collapse into this one line, and one
+				// of them was a lie: the field camera DOES name its chime — this
+				// build just could not read the container. An empty list and an
+				// unreadable list are not the same finding.
+				None if !block.chimes.is_empty() => out.push_str(&format!(
+					"  chime: (484 named {} chime(s), none with an addressable id)\n",
+					block.chimes.len()
+				)),
+				None => out.push_str(
+					"  chime: (484 printed nothing readable — refused, or a shape this build cannot decode)\n",
+				),
+			}
+			for d in &block.chimes {
+				let state = match d.net_state.as_deref() {
+					Some("1") => "online".to_string(),
+					Some("0") => "offline".to_string(),
+					Some(other) => format!("netState {}", shown(other)),
+					None => "state unknown".to_string(),
+				};
+				let name = d.name.as_deref().map(shown).unwrap_or_else(|| "(unnamed)".into());
+				out.push_str(&format!("  device {}: {name} ({state})\n", shown(&d.id)));
+			}
+			match &block.ctrl {
+				Some(c) => {
+					// Show the switch under the spelling the camera used.
+					let (tag, state) = match (c.bopen.as_deref(), c.enable.as_deref()) {
+						(Some(v), _) => ("bopen", Some(v)),
+						(None, Some(v)) => ("enable", Some(v)),
+						(None, None) => ("", None),
+					};
+					match state {
+						Some(v) => out.push_str(&format!("  ctrl (hardwired): {tag} = {}\n", shown(v))),
+						None => out.push_str("  ctrl (hardwired): (no switch tag)\n"),
+					}
+					if let Some(t) = c.time.as_deref() {
+						out.push_str(&format!("  ctrl time: {} (unit undocumented)\n", shown(t)));
+					}
+					if let Some(t) = c.cfg_type.as_deref() {
+						out.push_str(&format!("  ctrl type: {}\n", shown(t)));
+					}
+					out.push_str(&format!("  ctrl version: {}\n", shown(&c.version)));
+					if let Some(r) = c.result.as_deref() {
+						out.push_str(&format!(
+							"  ctrl result: {} (the camera's own reason — not a setting)\n",
+							shown(r)
+						));
+					}
+				}
+				// Refused and unanswered collapse to this one line; the raw
+				// code lives in the command's stderr diagnostics, not here.
+				None => out.push_str("  ctrl (hardwired): (483 not answered)\n"),
+			}
+			match &block.params {
+				Some(p) => {
+					for (name, value) in [
+						("name", p.name.as_deref()),
+						("volLevel", p.vol_level.as_deref()),
+						("ledState", p.led_state.as_deref()),
+					] {
+						match value {
+							Some(v) => out.push_str(&format!("  params {name}: {}\n", shown(v))),
+							None => {
+								out.push_str(&format!(
+									"  params {name}: (not in this chime's block)\n"
+								))
+							}
+						}
+					}
+				}
+				None => out.push_str("  params: (485 not answered)\n"),
+			}
+			match &block.silent {
+				Some(s) => match s.time.as_deref() {
+					Some(t) => out.push_str(&format!(
+						"  silent: time {} (0 = not muted; unit undocumented)\n",
+						shown(t)
+					)),
+					None => out.push_str("  silent: (no <time> in this block)\n"),
+				},
+				None => out.push_str("  silent: (609 not answered)\n"),
+			}
+			if block.events.is_empty() {
+				out.push_str("  events (486): (none printed)\n");
+			}
+			for dev in &block.events {
+				let dev_id = dev.id.as_deref().map(shown).unwrap_or_else(|| "(no id)".into());
+				let mut ligne = format!("  events: device {dev_id}");
+				if let Some(n) = dev.name.as_deref() {
+					ligne.push_str(&format!(" — {}", shown(n)));
+				}
+				if let Some(f) = dev.firm_version.as_deref() {
+					ligne.push_str(&format!(" (chime firmware {})", shown(f)));
+				}
+				out.push_str(&ligne);
+				out.push('\n');
+				for e in &dev.entries {
+					let event = e.event_type.as_deref().map(shown).unwrap_or_else(|| "(no type)".into());
+					let (tag, state) = match (e.valid.as_deref(), e.switch.as_deref()) {
+						(Some(v), _) => ("valid", Some(v)),
+						(None, Some(v)) => ("switch", Some(v)),
+						(None, None) => ("", None),
+					};
+					let state = match state {
+						Some(v) => format!("{tag} {}", shown(v)),
+						None => "(no switch tag)".into(),
+					};
+					let music = match e.music_id.as_deref() {
+						Some(m) => shown(m),
+						None => "(no musicId)".into(),
+					};
+					out.push_str(&format!("    {event}: {state}, musicId {music}\n"));
+				}
+			}
+			if let Some(r) = ring {
+				out.push_str(&format!(
+					"  ring: one ring asked on chime {} musicId {} — hearing it is the proof\n",
+					shown(&r.chime_id),
+					shown(&r.music_id),
+				));
+			}
+			(out, String::new())
+		}
 		Outcome::PtzMoveTo { preset_id } => (
 			String::new(),
 			format!("ok (moved to preset {})\n", preset_id),
@@ -336,8 +828,31 @@ fn format_human(outcome: &Outcome) -> (String, String) {
 	}
 }
 
+/// `", "`-joined list, or `"(none)"` when empty. Camera-supplied values go
+/// through [`sanitize_display`] so a broken reply can't inject escapes.
+fn join_or_none(items: &[String]) -> String {
+	if items.is_empty() {
+		return "(none)".to_string();
+	}
+	items
+		.iter()
+		.map(|s| sanitize_display(s))
+		.collect::<Vec<_>>()
+		.join(", ")
+}
+
 /// Longest camera-supplied string, in characters, printed in human mode.
 const URL_DISPLAY_MAX: usize = 512;
+
+/// Longest `<audioCfg>` value printed in human mode. These are numbers by
+/// protocol; the cap exists only to bound what a broken reply can print.
+const AUDIO_CFG_FIELD_DISPLAY_MAX: usize = 64;
+
+/// Longest chime-family value printed in human mode. Chime names are
+/// user-chosen text (the operator can call a chime anything), so the cap
+/// bounds length only — control characters are still escaped by
+/// `sanitize_display`.
+const CHIME_FIELD_DISPLAY_MAX: usize = 96;
 
 /// Replace control characters with their escaped form so camera-supplied
 /// text cannot inject terminal escape sequences.
@@ -974,5 +1489,268 @@ mod tests {
 		assert_eq!(v["hardware"], "IPC_523SD8MP");
 		assert_eq!(v["build_day"], "build 23112233");
 		assert!(v.get("kind").is_none());
+	}
+
+	fn audio_cfg_block() -> AudioCfgInfo {
+		AudioCfgInfo {
+			version: "1.1".into(),
+			channel_id: "0".into(),
+			volume: "50".into(),
+			timeout: "10".into(),
+			audio_select: "0".into(),
+			pre_alarm: "0".into(),
+			audio_list_id: "0".into(),
+			talk_and_reply_volume: Some("40".into()),
+			visitor_volume: Some("70".into()),
+			visitor_loudspeaker: Some("1".into()),
+			pascal: false,
+		}
+	}
+
+	#[test]
+	fn reglages_audio_human_reads_print_the_block() {
+		let r = Outcome::ReglagesAudio {
+			tag: "audioCfg".into(),
+			changed: false,
+			block: audio_cfg_block(),
+			changes: vec![],
+		};
+		let (stdout, stderr) = format_success(Mode::Human, &r);
+		assert_eq!(stderr, "");
+		assert!(
+			stdout.starts_with("audioCfg <audioCfg>: read\n"),
+			"{stdout}"
+		);
+		for line in [
+			"  volume: 50\n",
+			"  talkAndReplyVolume (interphone): 40\n",
+			"  visitorVolume: 70\n",
+			"  visitorLoudspeaker: 1\n",
+			// The tags nobody documented are printed too: they are part of
+			// what a write sends back, so the operator must be able to see them.
+			"  timeout: 10\n",
+			"  audioSelect: 0\n",
+			"  preAlarm: 0\n",
+			"  audioListId: 0\n",
+			"  version: 1.1\n",
+		] {
+			assert!(stdout.contains(line), "missing {line:?} in:\n{stdout}");
+		}
+		assert!(
+			!stdout.contains("modified:"),
+			"a read writes nothing: {stdout}"
+		);
+	}
+
+	#[test]
+	fn reglages_audio_human_write_shows_before_and_after() {
+		let r = Outcome::ReglagesAudio {
+			tag: "audioCfg".into(),
+			changed: true,
+			block: AudioCfgInfo {
+				talk_and_reply_volume: Some("90".into()),
+				..audio_cfg_block()
+			},
+			changes: vec![AudioCfgChange {
+				tag: "talkAndReplyVolume".into(),
+				before: "40".into(),
+				requested: "90".into(),
+				after: "90".into(),
+			}],
+		};
+		let (stdout, _) = format_success(Mode::Human, &r);
+		assert!(
+			stdout.contains("read, written, read back"),
+			"the write must say it read back: {stdout}"
+		);
+		assert!(
+			stdout.contains("talkAndReplyVolume: 40 -> 90\n"),
+			"{stdout}"
+		);
+		// The block printed after the write is the re-read, not the request.
+		assert!(
+			stdout.contains("talkAndReplyVolume (interphone): 90\n"),
+			"{stdout}"
+		);
+		assert!(!stdout.contains("not stored"), "{stdout}");
+	}
+
+	/// A firmware that answers 200 and keeps the old value is the failure this
+	/// report exists to make visible.
+	#[test]
+	fn reglages_audio_human_flags_a_write_the_camera_ignored() {
+		let r = Outcome::ReglagesAudio {
+			tag: "AudioCfg".into(),
+			changed: true,
+			block: audio_cfg_block(),
+			changes: vec![AudioCfgChange {
+				tag: "talkAndReplyVolume".into(),
+				before: "40".into(),
+				requested: "90".into(),
+				after: "40".into(),
+			}],
+		};
+		let (stdout, _) = format_success(Mode::Human, &r);
+		assert!(stdout.starts_with("audioCfg <AudioCfg>:"), "{stdout}");
+		assert!(stdout.contains("not stored"), "{stdout}");
+		assert!(stdout.contains("camera has 40"), "{stdout}");
+	}
+
+	#[test]
+	fn reglages_audio_json_keeps_camera_text_and_omits_absent_tags() {
+		let block = AudioCfgInfo {
+			visitor_volume: None,
+			visitor_loudspeaker: None,
+			pascal: true,
+			..audio_cfg_block()
+		};
+		let r = Outcome::ReglagesAudio {
+			tag: "AudioCfg".into(),
+			changed: false,
+			block,
+			changes: vec![],
+		};
+		let (stdout, _) = format_success(Mode::Json, &r);
+		let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+		assert_eq!(v["ok"], true);
+		assert!(v.get("kind").is_none());
+		assert_eq!(v["tag"], "AudioCfg");
+		assert_eq!(v["changed"], false);
+		// Text, not numbers: what the camera wrote is what a write sends back.
+		assert_eq!(v["block"]["volume"], "50");
+		assert_eq!(v["block"]["talk_and_reply_volume"], "40");
+		assert_eq!(v["block"]["pascal"], true);
+		// A tag this firmware doesn't print is absent, not empty.
+		assert!(v["block"].get("visitor_volume").is_none(), "{stdout}");
+		assert!(v["block"].get("visitor_loudspeaker").is_none(), "{stdout}");
+		assert!(v["changes"].is_array());
+	}
+
+	fn chime_block() -> DingDongCfgInfo {
+		DingDongCfgInfo {
+			chime_id: Some("1".into()),
+			chimes: vec![ChimeDeviceInfo {
+				id: "1".into(),
+				name: Some("Carillon".into()),
+				net_state: Some("1".into()),
+			}],
+			ctrl: None,
+			params: Some(ChimeParamsInfo {
+				version: "1.1".into(),
+				id: Some("1".into()),
+				name: Some("Carillon".into()),
+				vol_level: Some("2".into()),
+				led_state: Some("1".into()),
+				music_id: None,
+			}),
+			silent: Some(ChimeSilentInfo {
+				version: "1.1".into(),
+				id: Some("1".into()),
+				time: Some("0".into()),
+				cfg_type: None,
+			}),
+			events: vec![ChimeEventInfo {
+				id: Some("1".into()),
+				ring_id: Some("7".into()),
+				name: Some("Reolink Chime".into()),
+				firm_version: Some("00A2".into()),
+				entries: vec![
+					ChimeEventEntryInfo {
+						event_type: Some("people".into()),
+						valid: Some("1".into()),
+						switch: None,
+						music_id: Some("0".into()),
+					},
+					ChimeEventEntryInfo {
+						event_type: Some("visitor".into()),
+						valid: None,
+						switch: Some("0".into()),
+						music_id: Some("2".into()),
+					},
+				],
+			}],
+		}
+	}
+
+	#[test]
+	fn reglages_carillon_human_read_prints_every_answered_part() {
+		let r = Outcome::ReglagesCarillon {
+			changed: false,
+			block: chime_block(),
+			changes: vec![],
+			ring: None,
+		};
+		let (stdout, stderr) = format_success(Mode::Human, &r);
+		assert_eq!(stderr, "");
+		assert!(stdout.starts_with("carillon: read\n"), "{stdout}");
+		for line in [
+			"  chime: 1\n",
+			"  device 1: Carillon (online)\n",
+			"  params volLevel: 2\n",
+			"  params ledState: 1\n",
+			"  silent: time 0 ",
+			"    people: valid 1, musicId 0\n",
+			// The second spelling shows under its own name — the two mean the
+			// same thing and the report says so by using the camera's word.
+			"    visitor: switch 0, musicId 2\n",
+		] {
+			assert!(stdout.contains(line), "missing {line:?} in:\n{stdout}");
+		}
+		// A refused part says it was refused instead of printing nothing:
+		// "no wired chime" is a finding, not a formatting gap.
+		assert!(stdout.contains("ctrl (hardwired): (483 not answered)"), "{stdout}");
+		assert!(!stdout.contains("modified:"), "a read writes nothing: {stdout}");
+		assert!(!stdout.contains("ring:"), "{stdout}");
+	}
+
+	#[test]
+	fn reglages_carillon_human_write_shows_before_after_and_ring() {
+		let r = Outcome::ReglagesCarillon {
+			changed: true,
+			block: chime_block(),
+			changes: vec![DingDongChange {
+				tag: "silentTime".into(),
+				before: "0".into(),
+				requested: "600".into(),
+				after: "0".into(),
+			}],
+			ring: Some(ChimeRingInfo {
+				chime_id: "1".into(),
+				music_id: "2".into(),
+			}),
+		};
+		let (stdout, _) = format_success(Mode::Human, &r);
+		assert!(stdout.contains("read, written, read back"), "{stdout}");
+		// The firmware kept the old value: visible, not implied.
+		assert!(
+			stdout.contains("silentTime: 0 -> 600 -> not stored, camera has 0"),
+			"{stdout}"
+		);
+		assert!(
+			stdout.contains("ring: one ring asked on chime 1 musicId 2"),
+			"{stdout}"
+		);
+	}
+
+	#[test]
+	fn reglages_carillon_json_omits_refused_parts_and_absent_ring() {
+		let r = Outcome::ReglagesCarillon {
+			changed: false,
+			block: chime_block(),
+			changes: vec![],
+			ring: None,
+		};
+		let (stdout, _) = format_success(Mode::Json, &r);
+		let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+		assert_eq!(v["ok"], true);
+		assert_eq!(v["changed"], false);
+		// Camera text, not numbers.
+		assert_eq!(v["block"]["chime_id"], "1");
+		assert_eq!(v["block"]["params"]["vol_level"], "2");
+		assert_eq!(v["block"]["events"][0]["entries"][1]["switch"], "0");
+		// Refused 483: absent, not empty; a ring that didn't happen: absent.
+		assert!(v["block"].get("ctrl").is_none(), "{stdout}");
+		assert!(v.get("ring").is_none(), "{stdout}");
+		assert!(v["changes"].is_array());
 	}
 }

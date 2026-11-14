@@ -250,10 +250,17 @@ pub(crate) struct AlarmReport {
 /// Publish a doorbell press, unless another source (the session, the
 /// webhook or a forwarded alarm) published one within
 /// [`crate::status_cache::DOORBELL_PRESS_DEDUPE_WINDOW`].
+///
+/// `reveil` est la poignée de la caméra, quand l'appelant la détient : un appui
+/// publié est un réveil de la caméra endormie, donc la seule occasion de lire sa
+/// batterie sans réveil payé. La salve est proposée **après** la publication du
+/// `press` — jamais avant : l'automatisation de l'opératrice doit recevoir
+/// l'appui avant le bruit de la lecture ([`crate::salve`]).
 pub(crate) async fn report_doorbell_press(
 	camera_name: &str,
 	publisher: &StatusPublisher<'_>,
 	status_cache: &StatusCache,
+	reveil: Option<&std::sync::Arc<crate::camera::CameraHandle>>,
 ) {
 	if !status_cache.claim_doorbell_press(tokio::time::Instant::now()) {
 		tracing::debug!(camera = %camera_name, "Doorbell press already reported");
@@ -262,6 +269,9 @@ pub(crate) async fn report_doorbell_press(
 	tracing::info!(camera = %camera_name, "Doorbell pressed");
 	if let Err(e) = publisher.publish_doorbell_press().await {
 		tracing::warn!(camera = %camera_name, error = %e, "publish_doorbell_press failed");
+	}
+	if let Some(handle) = reveil {
+		crate::salve::declencher(std::sync::Arc::clone(handle), crate::salve::Reveil::Appui);
 	}
 }
 
@@ -283,6 +293,7 @@ pub(crate) async fn report_alarm_update(
 	ai_caps: CameraCapabilitiesView,
 	report: &mut AlarmReport,
 	update: &AlarmUpdate,
+	reveil: Option<&std::sync::Arc<crate::camera::CameraHandle>>,
 ) {
 	match update.motion {
 		MotionStatus::Start(_) => {
@@ -294,6 +305,14 @@ pub(crate) async fn report_alarm_update(
 				true,
 			)
 			.await;
+			// Le mouvement est publié : c'est un réveil, donc une fenêtre de
+			// lecture. Après la publication, comme pour l'appui.
+			if let Some(handle) = reveil {
+				crate::salve::declencher(
+					std::sync::Arc::clone(handle),
+					crate::salve::Reveil::Mouvement,
+				);
+			}
 		}
 		MotionStatus::Stop(_) => {
 			report_motion(
@@ -322,8 +341,42 @@ pub(crate) async fn report_alarm_update(
 			*last = Some(objects);
 		}
 	}
+	// Une ligne par poussée d'alarme. C'est l'absence de cette ligne qui a
+	// laissé juger, à l'aveugle, qu'un appui publié à 13:13 était un faux
+	// positif : sans la poussée brute, on ne peut pas savoir ce que la caméra
+	// a réellement dit. Le format tient sur une ligne et garde les trois
+	// informations qui décident tout : l'état de mouvement, l'état brut du
+	// visiteur, et ce que le bord montant en a déduit.
+	let motion_state = match update.motion {
+		MotionStatus::Start(_) => "on",
+		MotionStatus::Stop(_) => "off",
+		MotionStatus::NoChange(_) => "—",
+	};
+	let visitor_state = match update.visitor {
+		Some(true) => "1",
+		Some(false) => "0",
+		None => "?",
+	};
+	let object_state = match update.objects {
+		Some(o) => format!("{o:?}"),
+		None => "—".to_owned(),
+	};
+	tracing::debug!(
+		camera = %camera_name,
+		motion = motion_state,
+		visitor = visitor_state,
+		objects = %object_state,
+		doorbell = update.doorbell_press,
+		"Alarm push"
+	);
 	if update.doorbell_press {
-		report_doorbell_press(camera_name, publisher, status_cache).await;
+		report_doorbell_press(
+			camera_name,
+			publisher,
+			status_cache,
+			reveil,
+		)
+		.await;
 	}
 }
 
@@ -339,6 +392,11 @@ pub async fn motion_listener(
 	status_cache: Arc<StatusCache>,
 	caps: CameraCapabilities,
 	held_press_window: Option<Duration>,
+	// La poignée de la caméra, quand l'appelant en a une : un réveil spontané
+	// entendu sur l'alarme de session (mouvement, appui) doit pouvoir proposer la
+	// salve de lecture. `None` dans les tests qui n'ont pas de caméra complète —
+	// la salve est alors simplement absente.
+	reveil: Option<Arc<crate::camera::CameraHandle>>,
 ) {
 	let publisher = StatusPublisher::new(&mqtt, &topic_prefix, &camera_name);
 	// Sustained network flap with N cameras × M retries/min produces a
@@ -430,6 +488,7 @@ pub async fn motion_listener(
 						ai_caps,
 						&mut report,
 						&update,
+						reveil.as_ref(),
 					)
 					.await;
 					wake_hold.apply(&update);
@@ -1385,6 +1444,7 @@ mod tests {
 			empty_cache(),
 			CameraCapabilities::default(),
 			None,
+			None,
 		));
 
 		// Push a Start event and wait briefly for the publish to
@@ -2065,6 +2125,7 @@ mod tests {
 			empty_cache(),
 			CameraCapabilities::default(),
 			None,
+			None,
 		));
 
 		// Start then Stop in quick succession.
@@ -2126,6 +2187,7 @@ mod tests {
 			hold,
 			empty_cache(),
 			CameraCapabilities::default(),
+			None,
 			None,
 		));
 
@@ -2199,6 +2261,7 @@ mod tests {
 			empty_cache(),
 			CameraCapabilities::default(),
 			None,
+			None,
 		));
 
 		// Start → Stop → Start, all within the hold-down window.
@@ -2267,6 +2330,7 @@ mod tests {
 			empty_cache(),
 			CameraCapabilities::default(),
 			None,
+			None,
 		));
 
 		motion_tx
@@ -2326,6 +2390,7 @@ mod tests {
 			Duration::from_secs(30),
 			empty_cache(),
 			CameraCapabilities::default(),
+			None,
 			None,
 		));
 
@@ -2423,6 +2488,7 @@ mod tests {
 				Arc::clone(&cache),
 				caps,
 				held_press_window,
+				None,
 			));
 			Self {
 				txs,
@@ -3237,6 +3303,7 @@ mod tests {
 			Duration::from_secs(30),
 			empty_cache(),
 			CameraCapabilities::default(),
+			None,
 			None,
 		));
 

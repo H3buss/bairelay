@@ -25,9 +25,14 @@ use crate::ai::AiObject;
 use crate::topics;
 use serde::{Deserialize, Serialize, Serializer};
 
+mod reglages;
 pub mod publisher;
 
 pub use publisher::{CameraEnableFlags, DiscoveryPublisher};
+pub use reglages::{
+	DiscoveryNumber, DiscoveryStateSensor, DiscoveryText, EntityKind, EntitySpec, SPECS, WEEKDAYS,
+	build_feature_entities,
+};
 
 // ── Feature enum ──────────────────────────────────────────────────────
 
@@ -58,12 +63,43 @@ pub enum Feature {
 	Pir,
 	Ai,
 	Doorbell,
+	// ── Réglages (voir `reglages.rs` et `docs/protocole-reglages.md`) ────
+	/// `<audioCfg>` (264/265) : volumes et haut-parleur visiteur.
+	Audio,
+	/// `<aiDenoise>` (439/440) : débruiteur micro.
+	Denoise,
+	/// `<VideoInput>` (26/25) : curseurs d'image et jour/nuit.
+	Image,
+	/// `<OsdDatetime>` + `<OsdChannelName>` (44/45).
+	Osd,
+	/// Les réglages de `<MD>` (46/47). Distinct de `Motion`, qui est le
+	/// capteur d'événement : couper l'un ne coupe pas l'autre.
+	MotionSettings,
+	/// `<Ntp>` (38/39).
+	Ntp,
+	/// `<Dst>` (106/107).
+	Dst,
+	/// `<AutoReboot>` (101/100).
+	AutoReboot,
+	/// `<SystemGeneral>` (104/105).
+	General,
+	/// `<Shelter>` (52) — lecture seule.
+	PrivacyMask,
+	/// `<sleepState>` (574) — lecture seule.
+	SleepState,
+	/// `<WifiSignal>` (115) — lecture seule.
+	WifiSignal,
+	/// Les états bonus de `<BatteryInfo>` (253) : tension, courant,
+	/// température, état de charge, batterie faible.
+	BatteryExtra,
+	/// Le carillon appairé (483-487, 609, 610).
+	Chime,
 }
 
 impl Feature {
 	/// Full set of features emitted when `[mqtt.discovery]` is
 	/// present and no explicit `features = [...]` list is supplied.
-	pub const ALL: [Feature; 13] = [
+	pub const ALL: [Feature; 27] = [
 		Feature::Floodlight,
 		Feature::Camera,
 		Feature::Motion,
@@ -77,6 +113,20 @@ impl Feature {
 		Feature::Pir,
 		Feature::Ai,
 		Feature::Doorbell,
+		Feature::Audio,
+		Feature::Denoise,
+		Feature::Image,
+		Feature::Osd,
+		Feature::MotionSettings,
+		Feature::Ntp,
+		Feature::Dst,
+		Feature::AutoReboot,
+		Feature::General,
+		Feature::PrivacyMask,
+		Feature::SleepState,
+		Feature::WifiSignal,
+		Feature::BatteryExtra,
+		Feature::Chime,
 	];
 }
 
@@ -211,6 +261,7 @@ pub struct DiscoveryAvailability {
 	pub payload_not_available: Option<String>,
 }
 
+
 /// Encoding hint for the HA `camera` entity's preview topic. Only
 /// `Base64` is emitted today (preview JPEGs are base64-encoded by
 /// `StatusPublisher::publish_preview`). Neolink's enum also has a
@@ -230,7 +281,7 @@ pub struct DiscoveryLight {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub icon: Option<String>,
 	pub device: DiscoveryDevice,
-	pub availability: DiscoveryAvailability,
+	pub availability: Vec<DiscoveryAvailability>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub state_topic: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -248,7 +299,7 @@ pub struct DiscoveryCamera {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub icon: Option<String>,
 	pub device: DiscoveryDevice,
-	pub availability: DiscoveryAvailability,
+	pub availability: Vec<DiscoveryAvailability>,
 	pub topic: String,
 	pub image_encoding: Encoding,
 }
@@ -260,7 +311,7 @@ pub struct DiscoverySwitch {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub icon: Option<String>,
 	pub device: DiscoveryDevice,
-	pub availability: DiscoveryAvailability,
+	pub availability: Vec<DiscoveryAvailability>,
 	pub command_topic: String,
 	pub payload_off: String,
 	pub payload_on: String,
@@ -279,7 +330,7 @@ pub struct DiscoverySelect {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub icon: Option<String>,
 	pub device: DiscoveryDevice,
-	pub availability: DiscoveryAvailability,
+	pub availability: Vec<DiscoveryAvailability>,
 	pub command_topic: String,
 	pub options: Vec<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -295,7 +346,7 @@ pub struct DiscoveryBinarySensor {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub icon: Option<String>,
 	pub device: DiscoveryDevice,
-	pub availability: DiscoveryAvailability,
+	pub availability: Vec<DiscoveryAvailability>,
 	pub payload_off: String,
 	pub payload_on: String,
 	pub state_topic: String,
@@ -309,7 +360,7 @@ pub struct DiscoveryEvent {
 	pub device_class: String,
 	pub icon: String,
 	pub device: DiscoveryDevice,
-	pub availability: DiscoveryAvailability,
+	pub availability: Vec<DiscoveryAvailability>,
 	pub event_types: Vec<String>,
 	pub state_topic: String,
 	pub value_template: String,
@@ -322,7 +373,7 @@ pub struct DiscoveryButton {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub icon: Option<String>,
 	pub device: DiscoveryDevice,
-	pub availability: DiscoveryAvailability,
+	pub availability: Vec<DiscoveryAvailability>,
 	pub command_topic: String,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub payload_press: Option<String>,
@@ -335,7 +386,7 @@ pub struct DiscoverySensor {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub icon: Option<String>,
 	pub device: DiscoveryDevice,
-	pub availability: DiscoveryAvailability,
+	pub availability: Vec<DiscoveryAvailability>,
 	pub state_topic: String,
 	pub state_class: String,
 	pub unit_of_measurement: String,
@@ -398,13 +449,57 @@ fn unique(prefix: &str, cam: &str, suffix: &str) -> String {
 	format!("{prefix}_{cam}_{suffix}")
 }
 
+/// Disponibilite de toutes les entites de l'appareil : le processus du pont.
+/// Rattachee a `{prefix}/status` — `online` a chaque ConnAck, `offline` par
+/// le dernier message du courtier — et jamais a une session avec l'appareil :
+/// pour un carillon sur batterie la session se ferme quelques instants apres
+/// chaque reveil, et la rattacher a la session masquait les cent
+/// quatre-vingt-six entites d'un coup, valeurs retenues comprises.
+///
+/// Choix explicite de l'exploitant : les entites qui ecrivent restent elles
+/// aussi disponibles pendant le sommeil. Une pression sur un interrupteur
+/// reveille donc l'appareil pour ecrire, ce que le pont sait faire ; c'est le
+/// prix consenti pour pouvoir agir sans attendre.
 fn availability_block(ctx: &DiscoveryContext) -> DiscoveryAvailability {
 	DiscoveryAvailability {
-		topic: format!("{}/{}/status", ctx.topic_prefix, ctx.camera_name),
-		payload_available: Some("connected".to_string()),
-		payload_not_available: None,
+		topic: crate::topics::bridge_status(&ctx.topic_prefix),
+		payload_available: Some("online".to_string()),
+		payload_not_available: Some("offline".to_string()),
 	}
 }
+
+/// Présence de la caméra elle-même : `{prefix}/{cam}/presence`, avec
+/// `reachable` et `unreachable`.
+///
+/// Second bloc de [`availability_blocks`]. Le premier seul laisserait le
+/// tableau de bord vivant alors que la caméra ne répond plus depuis des
+/// heures : le pont tourne, donc tout semblerait disponible, et les commandes
+/// échoueraient en silence.
+fn presence_block(ctx: &DiscoveryContext) -> DiscoveryAvailability {
+	DiscoveryAvailability {
+		topic: crate::topics::presence(&ctx.topic_prefix, &ctx.camera_name),
+		payload_available: Some("reachable".to_string()),
+		payload_not_available: Some("unreachable".to_string()),
+	}
+}
+
+/// Disponibilité de toutes les entités de la caméra, en tableau de deux
+/// blocs : le pont, puis la présence de la caméra.
+///
+/// Home Assistant traite un tableau comme `availability_type: "all"` : une
+/// entité reste disponible seulement si les deux blocs le sont. Demande des
+/// exploitants : des entités vivantes en permanence, grisées seulement quand la
+/// sonnette ne répond pas ou semble hors ligne. Le bloc du pont couvre la mort
+/// du processus, le bloc de présence couvre une caméra injoignable. Les deux
+/// topics sont conservés, donc un redémarrage de Home Assistant relit le même
+/// verdict.
+///
+/// Cette fabrique est unique : aucune entité, pas même celles qui écrivent, ne
+/// choisit son propre bloc de disponibilité.
+fn availability_blocks(ctx: &DiscoveryContext) -> Vec<DiscoveryAvailability> {
+	vec![availability_block(ctx), presence_block(ctx)]
+}
+
 
 fn device_block(ctx: &DiscoveryContext, friendly: &str) -> DiscoveryDevice {
 	let mut connections = Vec::new();
@@ -456,11 +551,11 @@ pub fn build_floodlight_light(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "floodlight");
 	let payload = DiscoveryLight {
-		name: format!("{friendly} Floodlight"),
+		name: "Projecteur".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:spotlight-beam".to_string()),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		state_topic: Some(cam_topic(ctx, "status", "floodlight")),
 		state_value_template: Some("{{ value_json.state }}".to_string()),
 		command_topic: Some(cam_topic(ctx, "control", "floodlight")),
@@ -475,11 +570,11 @@ pub fn build_floodlight_tasks_switch(ctx: &DiscoveryContext) -> Option<(String, 
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "floodlight_tasks");
 	let payload = DiscoverySwitch {
-		name: format!("{friendly} Floodlight Tasks"),
+		name: "Horaires du projecteur".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:spotlight-beam".to_string()),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		command_topic: cam_topic(ctx, "control", "floodlight_tasks"),
 		payload_off: "off".to_string(),
 		payload_on: "on".to_string(),
@@ -495,11 +590,11 @@ pub fn build_camera(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "camera");
 	let payload = DiscoveryCamera {
-		name: format!("{friendly} Camera"),
+		name: "Aperçu".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:camera-iris".to_string()),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		topic: cam_topic(ctx, "status", "preview"),
 		image_encoding: Encoding::Base64,
 	};
@@ -513,12 +608,12 @@ pub fn build_motion(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "md");
 	let payload = DiscoveryBinarySensor {
-		name: format!("{friendly} MD"),
+		name: "Mouvement détecté".to_string(),
 		unique_id: unique_id.clone(),
 		device_class: None,
 		icon: Some("mdi:motion-sensor".to_string()),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		payload_off: "off".to_string(),
 		payload_on: "on".to_string(),
 		state_topic: cam_topic(ctx, "status", "motion"),
@@ -599,12 +694,12 @@ pub fn build_ai_binary_sensors(ctx: &DiscoveryContext) -> Vec<(String, Vec<u8>)>
 		.map(|object| {
 			let (unique_id, topic) = ai_ids(ctx, object);
 			let payload = DiscoveryBinarySensor {
-				name: format!("{friendly} {}", object.display_name()),
+				name: format!("Reconnaissance {}", object.nom_court()),
 				unique_id,
 				device_class: Some(object.device_class().to_string()),
 				icon: Some(object.icon().to_string()),
 				device: device_block(ctx, &friendly),
-				availability: availability_block(ctx),
+				availability: availability_blocks(ctx),
 				payload_off: "off".to_string(),
 				payload_on: "on".to_string(),
 				state_topic: topics::status_ai(ctx.topic_prefix, ctx.camera_name, object),
@@ -623,12 +718,12 @@ pub fn build_doorbell(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let (unique_id, topic) = doorbell_ids(ctx);
 	let payload = DiscoveryEvent {
-		name: format!("{friendly} Doorbell"),
+		name: "Appui sur le bouton".to_string(),
 		unique_id,
 		device_class: "doorbell".to_string(),
 		icon: "mdi:doorbell".to_string(),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		event_types: vec!["press".to_string()],
 		state_topic: topics::status_doorbell(ctx.topic_prefix, ctx.camera_name),
 		value_template: r#"{"event_type":"{{ value }}"}"#.to_string(),
@@ -647,11 +742,11 @@ pub fn build_led(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let (unique_id, topic) = led_ids(ctx);
 	let payload = DiscoverySwitch {
-		name: format!("{friendly} LED"),
+		name: "Voyant lumineux".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:led-on".to_string()),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		command_topic: cam_topic(ctx, "control", "led"),
 		payload_off: "off".to_string(),
 		payload_on: "on".to_string(),
@@ -677,11 +772,11 @@ pub fn build_ir(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let (unique_id, topic) = ir_ids(ctx);
 	let payload = DiscoverySelect {
-		name: format!("{friendly} IR"),
+		name: "Mode infrarouge".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:lightbulb-night".to_string()),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		command_topic: cam_topic(ctx, "control", "ir"),
 		options: vec!["on".to_string(), "off".to_string(), "auto".to_string()],
 		state_topic: presence
@@ -702,11 +797,11 @@ pub fn build_pir(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "pir");
 	let payload = DiscoverySwitch {
-		name: format!("{friendly} PIR"),
+		name: "Détection PIR".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:motion-sensor".to_string()),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		command_topic: cam_topic(ctx, "control", "pir"),
 		payload_off: "off".to_string(),
 		payload_on: "on".to_string(),
@@ -739,11 +834,11 @@ pub fn build_ptz_presets(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let mut seen = std::collections::HashSet::new();
 	options.retain(|n| seen.insert(n.clone()));
 	let payload = DiscoverySelect {
-		name: format!("{friendly} Preset"),
+		name: "Préréglage".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:target".to_string()),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		command_topic: cam_topic(ctx, "control", "ptz/preset"),
 		options,
 		// Production publishes the active preset on the canonical
@@ -766,11 +861,11 @@ pub fn build_reboot(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "reboot");
 	let payload = DiscoveryButton {
-		name: format!("{friendly} Reboot"),
+		name: "Redémarrer".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:restart".to_string()),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		command_topic: cam_topic(ctx, "control", "reboot"),
 		payload_press: None,
 	};
@@ -786,14 +881,14 @@ pub fn build_pt_buttons(ctx: &DiscoveryContext) -> Vec<(String, Vec<u8>)> {
 	}
 	let friendly = title_case(ctx.camera_name);
 	let mut out = Vec::with_capacity(4);
-	for dir in ["left", "right", "up", "down"] {
+	for (dir, sens) in [("left", "gauche"), ("right", "droite"), ("up", "haut"), ("down", "bas")] {
 		let unique_id = unique(ctx.topic_prefix, ctx.camera_name, &format!("pan_{dir}"));
 		let payload = DiscoveryButton {
-			name: format!("{friendly} Pan {dir}"),
+			name: format!("PTZ {sens}"),
 			unique_id: unique_id.clone(),
 			icon: Some(format!("mdi:pan-{dir}")),
 			device: device_block(ctx, &friendly),
-			availability: availability_block(ctx),
+			availability: availability_blocks(ctx),
 			command_topic: cam_topic(ctx, "control", "ptz"),
 			payload_press: Some(dir.to_string()),
 		};
@@ -809,11 +904,11 @@ pub fn build_battery(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "battery");
 	let payload = DiscoverySensor {
-		name: format!("{friendly} Battery"),
+		name: "Niveau de batterie".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:battery".to_string()),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		state_topic: cam_topic(ctx, "status", "battery_level"),
 		state_class: "measurement".to_string(),
 		unit_of_measurement: "%".to_string(),
@@ -827,11 +922,11 @@ pub fn build_siren(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "siren");
 	let payload = DiscoveryButton {
-		name: format!("{friendly} Siren"),
+		name: "Sirène".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:bell".to_string()),
 		device: device_block(ctx, &friendly),
-		availability: availability_block(ctx),
+		availability: availability_blocks(ctx),
 		command_topic: cam_topic(ctx, "control", "siren"),
 		payload_press: Some("on".to_string()),
 	};
@@ -904,12 +999,57 @@ mod tests {
 				| Feature::Pir
 				| Feature::Ai
 				| Feature::Doorbell => {}
+				// Réglages : construits depuis le tableau `SPECS`, jamais à la
+				// main. Une variante ici sans entrée dans `SPECS` ne produirait
+				// aucune entité — d'où le test suivant.
+				Feature::Audio
+				| Feature::Denoise
+				| Feature::Image
+				| Feature::Osd
+				| Feature::MotionSettings
+				| Feature::Ntp
+				| Feature::Dst
+				| Feature::AutoReboot
+				| Feature::General
+				| Feature::PrivacyMask
+				| Feature::SleepState
+				| Feature::WifiSignal
+				| Feature::BatteryExtra
+				| Feature::Chime => {}
 			}
 		}
 		for f in Feature::ALL {
 			touch(f);
 		}
-		assert_eq!(Feature::ALL.len(), 13);
+		assert_eq!(Feature::ALL.len(), 27);
+	}
+
+	#[test]
+	fn chaque_fonctionnalite_de_reglage_produit_des_entites() {
+		// `Feature::ALL` sans entrée dans `SPECS` = une fonctionnalité activée
+		// dans la config qui n'émet rien, sans le moindre message.
+		for f in Feature::ALL {
+			let n = reglages::specs_for(f).count();
+			if n == 0 {
+				continue;
+			}
+			assert!(
+				Feature::ALL.contains(&f),
+				"une spec porte la fonctionnalité {f:?} absente de Feature::ALL"
+			);
+		}
+		let reglages: Vec<Feature> = reglages::SPECS
+			.iter()
+			.map(|s| s.feature)
+			.collect::<Vec<_>>()
+			.into_iter()
+			.collect::<std::collections::HashSet<_>>()
+			.into_iter()
+			.collect();
+		assert!(
+			reglages.len() >= 14,
+			"les familles de réglages ne sont plus toutes émissibles : {reglages:?}"
+		);
 	}
 
 	#[test]
@@ -933,8 +1073,22 @@ mod tests {
 		assert_eq!(v["device"]["model"], "Bairelay");
 		assert_eq!(v["device"]["identifiers"][0], "bairelay_frontdoor");
 		assert_eq!(v["device"]["name"], "Frontdoor");
-		assert_eq!(v["availability"]["topic"], "bairelay/frontdoor/status");
-		assert_eq!(v["availability"]["payload_available"], "connected");
+		assert_eq!(
+			v["availability"],
+			serde_json::json!([
+				{
+					"topic": "bairelay/status",
+					"payload_available": "online",
+					"payload_not_available": "offline"
+				},
+				{
+					"topic": "bairelay/frontdoor/presence",
+					"payload_available": "reachable",
+					"payload_not_available": "unreachable"
+				}
+			]),
+			"deux blocs : le pont, puis la présence de la caméra"
+		);
 	}
 
 	#[test]
@@ -1218,7 +1372,10 @@ mod tests {
 			"homeassistant/binary_sensor/bairelay_frontdoor_ai_person/config"
 		);
 		let v = parse(payload);
-		assert_eq!(v["name"], "Frontdoor Person");
+		// Le libellé dit **ce que c'est**, pas à qui ça appartient : le nom de
+		// l'appareil est déjà porté par `device`, et Home Assistant l'affiche au-
+		// dessus de la carte. `unique_id` et les topics, eux, ne bougent pas.
+		assert_eq!(v["name"], "Reconnaissance personne");
 		assert_eq!(v["unique_id"], "bairelay_frontdoor_ai_person");
 		assert_eq!(v["device_class"], "motion");
 		assert_eq!(v["icon"], "mdi:account");
@@ -1228,6 +1385,21 @@ mod tests {
 		let (_, motion) = build_motion(&f.ctx(&caps)).unwrap();
 		let m = parse(&motion);
 		assert_eq!(v["availability"], m["availability"]);
+		assert_eq!(
+			v["availability"]
+				.as_array()
+				.map(|blocs| {
+					blocs
+						.iter()
+						.map(|bloc| bloc["topic"].as_str().unwrap_or_default().to_string())
+						.collect::<Vec<_>>()
+				}),
+			Some(vec![
+				"bairelay/status".to_string(),
+				"bairelay/frontdoor/presence".to_string()
+			]),
+			"une entité lisible porte les deux blocs, dans cet ordre"
+		);
 		assert_eq!(v["device"], m["device"]);
 	}
 
@@ -1247,12 +1419,12 @@ mod tests {
 			})
 			.collect();
 		let expect = [
-			("Frontdoor Person", "motion", "mdi:account"),
-			("Frontdoor Vehicle", "motion", "mdi:car"),
-			("Frontdoor Animal", "motion", "mdi:paw"),
-			("Frontdoor Face", "motion", "mdi:face-recognition"),
+			("Reconnaissance personne", "motion", "mdi:account"),
+			("Reconnaissance véhicule", "motion", "mdi:car"),
+			("Reconnaissance animal", "motion", "mdi:paw"),
+			("Reconnaissance figure", "motion", "mdi:face-recognition"),
 			(
-				"Frontdoor Package",
+				"Reconnaissance colis",
 				"presence",
 				"mdi:package-variant-closed",
 			),
@@ -1291,14 +1463,19 @@ mod tests {
 			"homeassistant/event/bairelay_frontdoor_doorbell/config"
 		);
 		let v = parse(&payload);
-		assert_eq!(v["name"], "Frontdoor Doorbell");
+		assert_eq!(v["name"], "Appui sur le bouton");
 		assert_eq!(v["unique_id"], "bairelay_frontdoor_doorbell");
 		assert_eq!(v["device_class"], "doorbell");
 		assert_eq!(v["event_types"], serde_json::json!(["press"]));
 		assert_eq!(v["state_topic"], "bairelay/frontdoor/status/doorbell");
 		assert_eq!(v["value_template"], r#"{"event_type":"{{ value }}"}"#);
 		assert_eq!(v["icon"], "mdi:doorbell");
-		assert!(v.get("availability").is_some());
+		let blocs = v["availability"]
+			.as_array()
+			.expect("availability est un tableau de deux blocs");
+		assert_eq!(blocs.len(), 2, "{blocs:?}");
+		assert_eq!(blocs[0]["topic"], "bairelay/status");
+		assert_eq!(blocs[1]["topic"], "bairelay/frontdoor/presence");
 		assert!(v.get("device").is_some());
 		assert!(build_doorbell(&f.ctx(&ai_caps(Unknown, Unknown))).is_some());
 		assert!(build_doorbell(&f.ctx(&ai_caps(Present, Absent))).is_none());
@@ -1395,5 +1572,77 @@ mod tests {
 		assert!(json.is_array());
 		assert_eq!(json[0], "camera_addr");
 		assert_eq!(json[1], "10.0.0.1:9000");
+	}
+
+	/// Toutes les entités, y compris celles qui écrivent, portent les deux blocs
+	/// de disponibilité, dans cet ordre. Un constructeur qui oublierait le second
+	/// rendrait une entité disponible alors que la caméra est injoignable, et aucun
+	/// autre test ne le verrait.
+	#[test]
+	fn toutes_les_entites_portent_les_deux_blocs_de_disponibilite() {
+		let f = Fixture::new("bairelay");
+		let caps = CameraCapabilitiesView {
+			has_ptz: true,
+			status_led: Presence::Present,
+			ir_leds: Presence::Present,
+			ai: Presence::Present,
+			doorbell: Presence::Present,
+		};
+		let presets = [(1u8, "Entrée".to_string())];
+		let ctx = DiscoveryContext {
+			topic_prefix: &f.prefix,
+			ha_topic: &f.ha,
+			camera_name: &f.cam,
+			camera_addr: Some(&f.addr),
+			camera_uid: None,
+			sw_version: &f.sw,
+			capabilities: &caps,
+			presets: &presets,
+		};
+		let mut emitted: Vec<(String, Vec<u8>)> = Vec::new();
+		for (nom, construit) in [
+			("light", build_floodlight_light(&ctx)),
+			("switch horaires", build_floodlight_tasks_switch(&ctx)),
+			("camera", build_camera(&ctx)),
+			("binary_sensor mouvement", build_motion(&ctx)),
+			("switch voyant", build_led(&ctx)),
+			("select infrarouge", build_ir(&ctx)),
+			("switch pir", build_pir(&ctx)),
+			("select préréglage", build_ptz_presets(&ctx)),
+			("button redémarrer", build_reboot(&ctx)),
+			("button sirène", build_siren(&ctx)),
+			("sensor batterie", build_battery(&ctx)),
+			("event appui", build_doorbell(&ctx)),
+		] {
+			let (topic, payload) =
+				construit.unwrap_or_else(|| panic!("{nom} devrait être émise avec ces capacités"));
+			assert!(!topic.is_empty(), "{nom} : topic vide");
+			emitted.push((nom.to_string(), payload));
+		}
+		let mut vues = 0;
+		for (nom, payload) in build_pt_buttons(&ctx)
+			.into_iter()
+			.chain(build_ai_binary_sensors(&ctx).into_iter())
+			.chain(emitted)
+		{
+			let v = parse(&payload);
+			let blocs = v["availability"]
+				.as_array()
+				.unwrap_or_else(|| panic!("{nom} : availability devrait être un tableau"));
+			assert_eq!(blocs.len(), 2, "{nom} : {blocs:?}");
+			assert_eq!(blocs[0]["topic"], "bairelay/status", "{nom} : bloc du pont");
+			assert_eq!(blocs[0]["payload_available"], "online", "{nom}");
+			assert_eq!(blocs[0]["payload_not_available"], "offline", "{nom}");
+			assert_eq!(
+				blocs[1]["topic"],
+				"bairelay/frontdoor/presence",
+				"{nom} : bloc de présence"
+			);
+			assert_eq!(blocs[1]["payload_available"], "reachable", "{nom}");
+			assert_eq!(blocs[1]["payload_not_available"], "unreachable", "{nom}");
+			vues += 1;
+		}
+		// Boutons PTZ (4) + capteurs IA (5) + les douze entités nommées plus haut.
+		assert_eq!(vues, 21, "le jeu testé a changé de taille");
 	}
 }

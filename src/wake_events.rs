@@ -58,7 +58,15 @@ pub(crate) fn push_edge(
 	if !claim_wake(&handle, WakeSource::Push) {
 		return false;
 	}
-	motion_edge(handle, mqtt, topic_prefix, hold, cancel);
+	spawn_motion_hold(
+		handle,
+		mqtt,
+		topic_prefix,
+		hold,
+		cancel,
+		true,
+		crate::salve::Reveil::Poussee,
+	);
 	true
 }
 
@@ -72,7 +80,15 @@ pub(crate) fn motion_edge(
 	hold: Duration,
 	cancel: &CancellationToken,
 ) {
-	spawn_motion_hold(handle, mqtt, topic_prefix, hold, cancel, true);
+	spawn_motion_hold(
+		handle,
+		mqtt,
+		topic_prefix,
+		hold,
+		cancel,
+		true,
+		crate::salve::Reveil::Mouvement,
+	);
 }
 
 /// Hold the camera's wake lock for `hold` so the connect loop reaches
@@ -88,9 +104,26 @@ pub(crate) fn motion_hold(
 	hold: Duration,
 	cancel: &CancellationToken,
 ) {
-	spawn_motion_hold(handle, mqtt, topic_prefix, hold, cancel, false);
+	spawn_motion_hold(
+		handle,
+		mqtt,
+		topic_prefix,
+		hold,
+		cancel,
+		false,
+		crate::salve::Reveil::Mouvement,
+	);
 }
 
+/// Le corps partagé des trois chemins de réveil mouvementé : tenir le verrou,
+/// publier l'état de mouvement s'il le faut, **puis** proposer la salve de
+/// lecture ([`crate::salve`]).
+///
+/// L'ordre est une règle, pas un détail : l'événement doit être sur le bus avant
+/// la première commande de la salve, sinon l'automatisation de l'opératrice
+/// découvre l'appui ou le mouvement avec le retard de toute la lecture. C'est
+/// aussi pour ça que la salve est une tâche séparée : elle ne peut pas voler la
+/// publication qui la précède.
 fn spawn_motion_hold(
 	handle: Arc<CameraHandle>,
 	mqtt: Option<&SharedMqttClient>,
@@ -98,6 +131,7 @@ fn spawn_motion_hold(
 	hold: Duration,
 	cancel: &CancellationToken,
 	publish_on: bool,
+	raison: crate::salve::Reveil,
 ) {
 	let seq = handle.push_seq().fetch_add(1, Ordering::SeqCst) + 1;
 	let mqtt = event_mqtt(&handle, mqtt).cloned();
@@ -114,6 +148,9 @@ fn spawn_motion_hold(
 			}
 			handle.status_cache().set_motion(true);
 		}
+		// L'événement est publié : la salve peut commencer, si ce réveil n'a pas
+		// déjà payé la sienne.
+		crate::salve::declencher(Arc::clone(&handle), raison);
 
 		crate::run_support::sleep_or_cancel(hold, &cancel).await;
 

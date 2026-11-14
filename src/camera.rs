@@ -228,6 +228,13 @@ pub struct CameraHandle {
 	/// `spawn_session_tasks` consults it so a reconnect doesn't restart
 	/// the poller and re-run the same futile probes on every wake.
 	battery_unsupported: Arc<AtomicBool>,
+	/// Dernier verdict de présence publié pour cette caméra, partagé par toute sa
+	/// durée de vie. La présence ne suit pas la session : elle passe à `reachable`
+	/// quand une tentative de joindre la caméra a réussi, à `unreachable` quand une
+	/// tentative renonce. Portée par un `Arc`, elle dédoublonne les publications
+	/// entre les trois endroits qui la publient, et évite ainsi cinquante messages
+	/// identiques par heure sur un courtier domestique.
+	presence_publiee: Arc<bairelay_mqtt::PresencePubliee>,
 	/// Serialises `control/ir` / `control/led`. Both are read-modify-
 	/// write of one `<LedState>` on the camera, so overlapping commands
 	/// would otherwise undo each other's field.
@@ -262,6 +269,11 @@ pub struct CameraHandle {
 	/// is strictly less than this, so zero disables it for tests that
 	/// want short-grace timing.
 	prune_grace: Duration,
+	/// Garde de la salve de réveil : une salve à la fois, et pas deux dans la
+	/// fenêtre de [`crate::salve::FENETRE_GARDE`]. Trois sources annoncent le
+	/// même réveil (l'alarme de session, le webhook, la poussée du faux cloud) ;
+	/// c'est cet objet qui décide laquelle paie la lecture. Voir [`crate::salve`].
+	salve: Arc<crate::salve::SalveGarde>,
 }
 
 impl CameraHandle {
@@ -332,6 +344,7 @@ impl CameraHandle {
 			preview_state_rx,
 			status_cache: Arc::new(StatusCache::default()),
 			battery_unsupported: Arc::new(AtomicBool::new(false)),
+			presence_publiee: Arc::new(bairelay_mqtt::PresencePubliee::default()),
 			led_write_lock: tokio::sync::Mutex::new(()),
 			push_seq: AtomicU64::new(0),
 			camera_ip: std::sync::RwLock::new(None),
@@ -339,6 +352,7 @@ impl CameraHandle {
 			webhook_target: None,
 			webhook_memo: camera_tasks::ArmMemo::default(),
 			prune_grace: Duration::ZERO,
+			salve: Arc::new(crate::salve::SalveGarde::nouvelle(crate::salve::FENETRE_GARDE)),
 		}
 	}
 
@@ -475,6 +489,12 @@ impl CameraHandle {
 		let Some(publisher) = self.discovery_publisher.as_ref() else {
 			return Ok(());
 		};
+		// First call for this camera in this process: bring back the families the
+		// bridge already proved modifiable (see [`crate::etat_familles`]) so this
+		// very first discovery publishes them as sliders instead of read-only
+		// sensors. Disk read only — no camera command, which is the whole point
+		// on a battery doorbell.
+		crate::etat_familles::amorcer(publisher, &self.config.name);
 		let Some(caps) = self.capabilities() else {
 			return Ok(());
 		};
@@ -500,6 +520,80 @@ impl CameraHandle {
 	#[doc(hidden)]
 	pub fn set_capabilities_for_test(&self, caps: CameraCapabilities) {
 		*self.capabilities.write_recover() = Some(caps);
+	}
+
+	/// Enregistre le résultat de lectures de réglages et republie la découverte
+	/// **une seule fois**, si au moins une famille a changé d'état. Répond `false`
+	/// quand rien n'a bougé (et donc quand aucun publisher n'est attaché).
+	///
+	/// `(famille, verdict)` avec les quatre verdicts de
+	/// [`crate::reglages::Lecture`] : modifiable, verrouillée par une preuve
+	/// locale (`<MdAlarm>`, `<OsdChannelName>` absent), **transitoire** — une
+	/// erreur de lecture passagère, qui compte comme modifiable puisque le motif
+	/// est publié à côté — ou **indéterminée**, et une famille indéterminée ne
+	/// bouge pas. C'est le point que le premier jour
+	/// de terrain a fait tomber : quatre familles venaient d'être lues ou écrites
+	/// avec succès, une salve complète leur a valu un `400`, et le pont les
+	/// lisait comme des réglages interdits. Un mauvais répond une fois n'est pas
+	/// une interdiction.
+	///
+	/// Les verdicts qui bougent sont mémorisés sur le disque
+	/// ([`crate::etat_familles`]) : une famille prouvée modifiable le reste après
+	/// un redémarrage du complément, sans que la caméra ait à le prouver deux
+	/// fois.
+	///
+	/// Appelé après une écriture avec relecture, après `query/reglages` (une
+	/// entrée par famille relue) et après un aperçu. Jamais sur minuterie : la
+	/// batterie de la sonnette est la raison pour laquelle le pont n'interroge
+	/// pas la caméra tout seul.
+	// `pub(crate)` : le verdict voyage dans une signature, et [`crate::reglages::Lecture`]
+	// reste interne au bin — une méthode `pub` qui le montrerait exposerait une
+	// interface privée (lint `private_interfaces`).
+	pub(crate) async fn reglages_familles_lues(
+		&self,
+		lues: &[(bairelay_mqtt::reglages::Family, crate::reglages::Lecture)],
+	) -> bool {
+		let Some(publisher) = self.discovery_publisher.as_ref() else {
+			return false;
+		};
+		let mut a_change = false;
+		for &(famille, verdict) in lues {
+			let Some(ecrivable) = verdict.ecrivable() else {
+				continue;
+			};
+			a_change |= publisher.marque_famille_lue(&self.config.name, famille, ecrivable);
+		}
+		if !a_change {
+			return false;
+		}
+		if let Err(e) = self.publish_discovery().await {
+			tracing::debug!(
+				camera = %self.config.name,
+				error = %e,
+				"republier la découverte après lecture des réglages a échoué ; la prochaine relecture réessaiera"
+			);
+		}
+		// Persist the verdicts that just moved. This is the only place the bridge
+		// learns a family became (or stopped being) modifiable, and the next boot
+		// should not have to re-prove it over the radio.
+		crate::etat_familles::enregistrer(publisher, &self.config.name);
+		true
+	}
+
+	/// Cas courant : une seule famille vient d'être relue **avec succès** (une
+	/// écriture, ou `query/reglages/<famille>`). Voir
+	/// [`Self::reglages_familles_lues`] pour le sens des deux verdicts.
+	pub(crate) async fn reglages_famille_lue(
+		&self,
+		famille: bairelay_mqtt::reglages::Family,
+		ecrivable: bool,
+	) -> bool {
+		let verdict = if ecrivable {
+			crate::reglages::Lecture::Ecrivable
+		} else {
+			crate::reglages::Lecture::NonEcrivable
+		};
+		self.reglages_familles_lues(&[(famille, verdict)]).await
 	}
 
 	/// Shared per-camera status cache. Each status-publishing task
@@ -664,6 +758,35 @@ impl CameraHandle {
 		&self.wake_lock
 	}
 
+	/// La garde de la salve de réveil ([`crate::salve`]). `pub(crate)` : la
+	/// garde est un type interne au bin, une méthode `pub` qui le montrerait
+	/// exposerait une interface privée (lint `private_interfaces`).
+	pub(crate) fn salve(&self) -> &Arc<crate::salve::SalveGarde> {
+		&self.salve
+	}
+
+	/// Le client MQTT de cette caméra, `None` quand le pont tourne sans
+	/// broker. La salve en a besoin pour publier son propre état en plus des
+	/// réglages : le publieur d'état emprunte le client, il faut donc le nommer
+	/// ici aussi.
+	pub(crate) fn mqtt_client(&self) -> Option<&bairelay_mqtt::SharedMqttClient> {
+		self.mqtt_client.as_ref()
+	}
+
+	/// Un flux de cette caméra a-t-il des abonnés ?
+	///
+	/// C'est le garde-fou « jamais pendant un flux » de la salve de réveil :
+	/// une caméra qui pousse déjà de la vidéo n'est pas le moment de lui
+	/// demander dix blocs XML. Les sources sans abonné (créées puis laissées
+	/// vide par un lecteur RTSP parti) ne comptent pas : elles ne font plus
+	/// rouler la radio.
+	pub(crate) fn flux_en_cours(&self) -> bool {
+		self.stream_sources
+			.read_recover()
+			.values()
+			.any(|source| source.subscribers() > 0)
+	}
+
 	pub fn is_cancelled(&self) -> bool {
 		self.cancel.is_cancelled()
 	}
@@ -693,6 +816,18 @@ impl CameraHandle {
 	/// boundary without touching the binary's call-sites.
 	pub fn bc_camera(&self) -> Option<Arc<dyn CameraDriver>> {
 		self.bc_camera.read_recover().clone()
+	}
+
+	/// La caméra connectée, sous son type concret [`BcCamera`].
+	///
+	/// Les réglages (volumes, image, OSD, NTP, masques, carillon…) ne passent
+	/// pas par [`CameraDriver`] : ce sont des couples lecture/écriture propres au
+	/// protocole Baïchuan, et le trait n'a pas vocation à porter trente méthodes.
+	/// Ce slot est rempli et vidé en même temps que celui de
+	/// [`Self::bc_camera`] (voir `run_connected_session`), donc un `Some` ici
+	/// veut dire « session ouverte » et un réglage peut être tenté.
+	pub fn bc_camera_concrete(&self) -> Option<Arc<BcCamera>> {
+		self.bc_camera_concrete.read_recover().clone()
 	}
 
 	/// Signal the camera to disconnect (used by the watchdog for idle cameras).
@@ -940,6 +1075,34 @@ impl CameraHandle {
 		Ok((Arc::new(camera), device_info.device_type))
 	}
 
+	/// Publie le verdict de présence de la caméra, en message conservé, une fois
+	/// par transition seulement.
+	///
+	/// Trois événements le pilotent, et tous trois existent déjà : le démarrage du
+	/// pont (verdict optimiste), une session ouverte (contact réussi), une tentative
+	/// de connexion qui renonce. Jamais un appel réseau de plus vers la caméra : la
+	/// configuration en service pose `interroger = false`, et un réveil pour rien
+	/// coûte de la batterie.
+	async fn publier_presence(&self, joignable: bool) {
+		let Some(ref mqtt) = self.mqtt_client else {
+			return;
+		};
+		let publisher = bairelay_mqtt::StatusPublisher::with_presence(
+			mqtt,
+			&self.topic_prefix,
+			&self.config.name,
+			Arc::clone(&self.presence_publiee),
+		);
+		if let Err(e) = publisher.publish_presence(joignable).await {
+			tracing::warn!(
+				camera = %self.config.name,
+				joignable,
+				error = %e,
+				"Failed to publish presence status"
+			);
+		}
+	}
+
 	/// Send periodic keepalive probes to detect connection loss.
 	/// Uses [`CameraDriver::keepalive_probe`] (a lenient wrapper over
 	/// `get_linktype()` matching neolink's choice) and tolerates up to
@@ -1074,6 +1237,13 @@ impl CameraHandle {
 				tracing::warn!(camera = %self.config.name, error = %e, "Failed to publish connected status");
 			}
 		}
+
+		// Contact réussi : une session ouverte est une tentative de joindre la caméra
+		// qui a abouti. Toute commande et toute requête abouties se déroulent dans une
+		// session, donc ce point les couvre toutes, sans interrogation de plus. La
+		// fermeture de la session, elle, ne dit rien de la présence : une sonnette
+		// endormie reste joignable sur demande.
+		self.publier_presence(true).await;
 
 		*self.bc_camera.write_recover() = Some(Arc::clone(&driver));
 		*self.bc_camera_concrete.write_recover() = concrete.clone();
@@ -1224,6 +1394,12 @@ impl CameraHandle {
 					self.status_cache(),
 					caps,
 					self.held_press_window(),
+					// Un réveil entendu sur l'alarme de session (appui,
+					// mouvement) ouvre la fenêtre de lecture de la salve :
+					// c'est la seule batterie qu'on puisse lire sans réveil
+					// payé. La poignée est la caméra elle-même ; la garde
+					// d'une salve par réveil est dans `crate::salve`.
+					Some(Arc::clone(self)),
 				));
 			}
 			// `battery_unsupported` latches when the poller concludes the
@@ -1424,6 +1600,11 @@ impl CameraHandle {
 			let _ = publisher.publish_motion_unknown().await;
 		}
 
+		// Verdict de présence optimiste au démarrage : rien ne dit encore que la
+		// caméra est injoignable, et griser tout un tableau de bord avant le premier
+		// contact serait un mensonge que le premier échec corrige de lui-même.
+		self.publier_presence(true).await;
+
 		// Spawn the preview publisher at camera lifetime (NOT session
 		// scope): it must keep publishing status/preview with the
 		// current overlay caption across disconnect/sleep windows, so
@@ -1502,6 +1683,13 @@ impl CameraHandle {
 					.await;
 				}
 				Err(e) => {
+					// Renonciation : cette branche est le point le plus en amont qui
+					// rassemble tous les échecs de contact, délai dépassé, découverte en
+					// échec, prise de connexion en échec ou identifiants refusés. Elle se
+					// présente une fois le déroulé normal de la tentative terminé, les rondes
+					// internes de découverte ayant eu leur budget. La présence passe ici, et
+					// nulle part ailleurs.
+					self.publier_presence(false).await;
 					if is_login_failure(&e) {
 						tracing::error!(camera = %self.config.name, error = %format!("{:#}", e), "Authentication failed — check credentials. Stopping retries.");
 						self.set_state(CameraState::Disconnected);
@@ -1765,6 +1953,18 @@ impl CameraHandle {
 	#[allow(dead_code)] // used by upcoming mqtt_dispatch tests in this phase
 	pub(crate) fn set_driver_for_test(&self, driver: Arc<dyn CameraDriver>) {
 		*self.bc_camera.write_recover() = Some(driver);
+		self.set_state(CameraState::Connected);
+	}
+
+	/// Test helper: installe un [`BcCamera`] concret (branché sur une
+	/// `MockConnection` scriptée) dans **les deux** slots, comme le fait
+	/// `run_connected_session`. Les tests de réglages en ont besoin : le dispatch
+	/// des réglages appelle [`Self::bc_camera_concrete`], que les faux
+	/// `CameraDriver` ne peuvent pas remplir.
+	#[cfg(test)]
+	pub(crate) fn set_bc_camera_for_test(&self, cam: Arc<BcCamera>) {
+		*self.bc_camera.write_recover() = Some(Arc::clone(&cam) as Arc<dyn CameraDriver>);
+		*self.bc_camera_concrete.write_recover() = Some(cam);
 		self.set_state(CameraState::Connected);
 	}
 

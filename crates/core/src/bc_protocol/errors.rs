@@ -56,6 +56,31 @@ pub enum Error {
 		code: u16,
 	},
 
+	/// Refus de **lecture d'un réglage**, avec ce que la caméra a écrit en
+	/// réponse.
+	///
+	/// Jumeau de [`Error::CameraServiceUnavailable`] augmenté du `detail` : le
+	/// texte du bloc reçu en réponse au refus, là où le jumeau ne rend que le
+	/// code. Ce n'est pas un champ de plus sur le jumeau — ses trente-deux sites
+	/// de construction n'ont pour la plupart aucun bloc XML sous la main (stream,
+	/// login, PTZ, snap…), et imposer un `detail: String::new()` partout pour
+	/// servir une seule famille de commandes serait payer l'orchestre pour un
+	/// soliste.
+	///
+	/// Le `detail` est **déjà borné** (voir `couper` côté réglages) ; il
+	/// n'est jamais publié tel quel, `raison_publiable` s'en charge plus haut.
+	#[error(
+		"Camera refused msg {id} with code {code}: {detail}"
+	)]
+	CameraRefused {
+		/// The message ID
+		id: u32,
+		/// The return code — same scale as [`Self::CameraServiceUnavailable`]
+		code: u16,
+		/// Ce que la caméra a répondu, en une ligne et borné
+		detail: String,
+	},
+
 	/// Raised when the camera responds with a status code over than OK during login
 	#[error("Camera responded with Err during login")]
 	CameraLoginFail,
@@ -253,6 +278,15 @@ pub enum Error {
 	/// A generic catch all error
 	#[error("Other error: {0}")]
 	Other(&'static str),
+
+	/// The caller asked for something the protocol forbids — a tag the
+	/// camera never printed, an id it never listed. Nothing went on the
+	/// wire. Not a camera fault and not a network fault: the caller fixes
+	/// it by not asking. (The chime family raises this from code that must
+	/// phrase the refusal per tag, so the text is dynamic; `Other` is
+	/// `&'static str` and cannot carry that.)
+	#[error("Usage error: {0}")]
+	Usage(String),
 
 	/// Cloud ("account camera") bundle minting against apis.reolink.com failed.
 	#[error("Cloud bundle mint failed: {0}")]

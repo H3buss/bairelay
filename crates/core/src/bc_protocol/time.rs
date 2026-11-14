@@ -691,6 +691,7 @@ mod tests {
 							time_format: Some(1),
 							language: Some("English".to_string()),
 							device_name: Some("Front gate".to_string()),
+							..Default::default()
 						}),
 						..Default::default()
 					},
