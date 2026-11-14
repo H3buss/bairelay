@@ -370,7 +370,7 @@ pub(crate) const REASON_SANS_SESSION: &str =
 /// Built in two parts because the first half is the technical reason,
 /// which varies with the error: see [`publish_reason_unknown`].
 pub(crate) const REASON_SANS_VERROUILLAGE: &str =
-	" — setting not locked: the family keeps its state";
+	" - setting not locked: the family keeps its state";
 
 /// The consequence of a **transient** refusal, published this time **first** in
 /// the sentence: [`publishable_reason`] cuts at 160 characters keeping the
@@ -495,7 +495,7 @@ pub(crate) fn cause(err: &Error) -> String {
 		// the broker — tag names stay readable, they are often the diagnosis.
 		// l'information.
 		Error::CameraRefused { code, detail, .. } => {
-			format!("the camera refused the command (code {code}) — it answered: {detail}")
+			format!("the camera refused the command (code {code}) - it answered: {detail}")
 		}
 		Error::CameraLoginFail => "the camera refused the login".to_string(),
 		Error::ConnectionUnavailable | Error::CannotInitCamera => {
@@ -506,7 +506,7 @@ pub(crate) fn cause(err: &Error) -> String {
 		| Error::ConnectionShutdown
 		| Error::TokioBcSendError => "the connection to the camera dropped".to_string(),
 		Error::MissingAbility { name, .. } => {
-			format!("the camera does not declare the “{name}” ability for this setting")
+			format!("the camera does not declare the {name} ability for this setting")
 		}
 		Error::UnintelligibleXml { why, .. } | Error::UnintelligibleReply { why, .. } => {
 			format!("the camera's answer is unintelligible: {why}")
@@ -1408,7 +1408,7 @@ mod tests {
 		}
 		assert!(
 			core::mem::size_of::<BcXml>() < 96 * 1024,
-			"BcXml grossit au-delà de ce que le pont sait empiler ; ce point de dialogue est un signal faible, pas un cap : le seuil est relevé à 96 KiB pour absorber les blocs de réglages, et un dépassement doit déclencher la discussion sur la pile des workers tokio"
+			"BcXml grew past what the bridge knows how to stack; this dialogue point is a weak signal, not a ceiling: the threshold is raised to 96 KiB to absorb the settings blocks, and an overflow should start the discussion about the tokio workers ' stack"
 		);
 	}
 
