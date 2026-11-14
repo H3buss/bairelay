@@ -396,7 +396,10 @@ used on every pass of the english migration, and the list of what it kept:
      partly french. Removing the entry would keep the sentence pretty and let a
      password be retained on the broker.
    - the `FRENCH` word list in `src/published_text_guard.rs` and
-     `crates/mqtt/src/published_text_guard.rs`. The guard asserts that everything
+     `crates/mqtt/src/published_text_guard.rs`, and the spec-table list in
+     `crates/mqtt/src/discovery/settings.rs` (three places, because the
+     discovery labels are the surface Home Assistant remembers longest). The
+     guard asserts that everything
      the bridge publishes is ASCII and contains none of those words, so its own
      source has to name them. Homographs are excluded on purpose — `volume`,
      `budget`, `part`, `port`, `tour`, `camera`, `status` are french words too, and

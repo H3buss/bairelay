@@ -1,22 +1,22 @@
-//! Entités de réglages pour la discovery Home Assistant.
+//! Settings entities for the Home Assistant discovery.
 //!
-//! Tout le cahier des charges des réglages vit dans le carnet de protocole de
-//! l'exploitante, qui n'est pas publié ; ce fichier n'en est que la vitrine MQTT. Il
-//! est **tableau-driven** pour une raison : chaque entité décrite ici doit
-//! tomber pile sur les topics que le binaire publie (`status/<famille>/<feuille>`)
-//! et accepte (`control/<famille>/<feuille>`). Une liste de spécifications
-//! unique, lue à la fois par l'émetteur de discovery et par les tests, est le
-//! seul moyen de garantir que les deux côtés ne dérivent pas l'un de l'autre.
+//! The whole settings specification lives in the operator's private protocol
+//! notebook; this file is only its MQTT shopfront. It is
+//! **table-driven** for one reason: every entity described here has to
+//! land exactly on the topics the binary publishes (`status/<family>/<leaf>`)
+//! and accepts (`control/<family>/<leaf>`). One single specification list,
+//! read by both the discovery emitter and the tests, is the only
+//! way to guarantee the two sides do not drift apart from each other.
 //!
-//! Deux plateformes HA absentes de la version d'origine sont ajoutées ici :
+//! Two HA platforms missing from the original version are added here:
 //!
-//! * `number` — un réglage numérique borné. Les bornes viennent **du doc du
-//!   protocole**, jamais d'un goût : 0-100 pour les volumes, 1-100 pour le
-//!   débruiteur, 0-255 pour les curseurs image, 0-50 pour la sensibilité de
-//!   détection. Une borne inconnue n'est pas inventée : le réglage est alors
-//!   exposé en lecture seule, ou pas exposé du tout.
-//! * `text` — une chaîne (serveur NTP, noms). Bornée en longueur, parce que
-//!   le firmware ne dit pas ce qu'il accepte au-delà de ce qu'il imprime.
+//! * `number` — a bounded numeric setting. The bounds come **from the protocol**,
+//!   never from taste: 0-100 for the volumes, 1-100 for the
+//!   denoiser, 0-255 for the image sliders, 0-50 for the motion
+//!   sensitivity. An unknown bound is not invented: the setting is then
+//!   exposed read-only, or not exposed at all.
+//! * `text` — a string (NTP server, names). Bounded in length, because
+//!   the firmware does not say what it accepts beyond what it prints.
 
 use std::collections::HashSet;
 
@@ -29,7 +29,7 @@ use super::{
 	cam_topic, config_topic, device_block, to_json, unique,
 };
 
-/// Une entité `number` HA : `command_topic` + `state_topic` bornés.
+/// An HA `number` entity: bounded `command_topic` + `state_topic`.
 #[derive(Serialize, Debug)]
 pub struct DiscoveryNumber {
 	pub name: String,
@@ -43,13 +43,13 @@ pub struct DiscoveryNumber {
 	pub min: f64,
 	pub max: f64,
 	pub step: f64,
-	/// `"slider"` (curseur) ou `"box"` (saisie) — HA exige l'un des deux.
+	/// `"slider"` (a slider) or `"box"` (a text box) — HA requires one of the two.
 	pub mode: &'static str,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub unit_of_measurement: Option<&'static str>,
 }
 
-/// Une entité `text` HA : une chaîne bornée en longueur.
+/// An HA `text` entity: a string bounded in length.
 #[derive(Serialize, Debug)]
 pub struct DiscoveryText {
 	pub name: String,
@@ -60,23 +60,23 @@ pub struct DiscoveryText {
 	pub availability: Vec<DiscoveryAvailability>,
 	pub command_topic: String,
 	pub state_topic: String,
-	/// Longueur minimale acceptée (0 = effacement autorisé).
+	/// Minimum accepted length (0 = clearing allowed).
 	pub min: usize,
-	/// Longueur maximale acceptée, celle que le pont valide avant d'écrire.
+	/// Maximum accepted length, the one the bridge validates before writing.
 	pub max: usize,
-	/// `"text"` (lisible) — jamais `"password"` : aucun réglage de ce pont
-	/// n'est un secret, et ce qui pourrait l'être (`<Wifi><key>`) n'est pas
-	/// publié du tout.
+	/// `"text"` (readable) — never `"password"`: no setting of this bridge
+	/// is a secret, and what could be one (`<Wifi><key>`) is
+	/// not published at all.
 	pub mode: &'static str,
 }
 
-/// Un capteur d'état dont l'unité peut être absente.
+/// A state sensor whose unit may be absent.
 ///
-/// `DiscoverySensor` (le struct historique, pour la battery) impose une
-/// unité. Plusieurs états de réglages n'en ont **aucune** de documentée — le
-/// `<signal>` du Wi-Fi est un nombre dont personne ne sait s'il est en dBm ou
-/// en pourcents. Leur rendre une unité serait un mensonge affiché dans HA,
-/// donc l'unité est optionnelle ici.
+/// `DiscoverySensor` (the historical struct, for the battery) imposes a
+/// unit. Several settings states have **no** documented
+/// unit — Wi-Fi's `<signal>` is a number nobody knows to be in dBm or
+/// in percent. Giving them a unit would be a lie displayed in HA,
+/// so the unit is optional here.
 #[derive(Serialize, Debug)]
 pub struct DiscoveryStateSensor {
 	pub name: String,
@@ -86,10 +86,10 @@ pub struct DiscoveryStateSensor {
 	pub device: DiscoveryDevice,
 	pub availability: Vec<DiscoveryAvailability>,
 	pub state_topic: String,
-	/// `measurement` pour un nombre, `None` pour un état textuel. Home
-	/// Assistant refuse un `state_class` numérique sur un état qui ne l'est
-	/// pas : le publish_now sur une langue ou une liste de carillons serait remplacer
-	/// un silence par un avertissement répdst dans le journal.
+	/// `measurement` for a number, `None` for a textual state. Home
+	/// Assistant refuses a numeric `state_class` on a state that is not
+	/// one: publishing one on a language or a chime list would replace
+	/// a silence with a warning repeated in the log.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub state_class: Option<&'static str>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -98,63 +98,63 @@ pub struct DiscoveryStateSensor {
 	pub device_class: Option<&'static str>,
 }
 
-/// La plateforme HA et ses réglages pour une spécification d'entité.
+/// The HA platform and its settings for one entity specification.
 #[derive(Debug, Clone, Copy)]
 pub enum EntityKind {
-	/// Réglage numérique borné (plateforme `number`).
+	/// Bounded numeric setting (the `number` platform).
 	Number {
 		min: f64,
 		max: f64,
 		step: f64,
 		unit: Option<&'static str>,
-		/// `true` = curseur, `false` = boîte de saisie.
+		/// `true` = slider, `false` = text box.
 		slider: bool,
 	},
-	/// Chaîne bornée (plateforme `text`).
+	/// Bounded string (the `text` platform).
 	Text { max_len: usize },
-	/// `switch` on/off, état relu en `"on"`/`"off"`.
+	/// On/off `switch`, re-read state as `"on"`/`"off"`.
 	Switch,
-	/// Le jumeau **lisible** d'un `switch` : `binary_sensor` sur les mêmes
-	/// textes `"on"`/`"off"`, sans topic de commande. Ce n'est pas un
-	/// `FlagSensor` : celui-ci lit le `"1"`/`"0"` brut du protocole, alors
-	/// qu'un interrupteur publie le texte que l'entité `switch` attend.
+	/// The **readable** twin of a `switch`: `binary_sensor` on the same
+	/// `"on"`/`"off"` texts, with no command topic. It is not a
+	/// `FlagSensor`: that one reads the protocol's raw `"1"`/`"0"`, whereas
+	/// a switch publishes the text the `switch` entity expects.
 	OnOffSensor,
-	/// `select` à options fermées, exactement les textes que la caméra accepte.
+	/// `select` with closed options, exactly the texts the camera accepts.
 	Select(&'static [&'static str]),
-	/// `binary_sensor` en lecture seule sur un `"1"`/`"0"` caméra.
+	/// Read-only `binary_sensor` on a camera `"1"`/`"0"`.
 	FlagSensor {
 		device_class: Option<&'static str>,
 	},
-	/// `sensor` numérique ou texte, en lecture seule.
+	/// Numeric or textual `sensor`, read-only.
 	StateSensor {
 		unit: Option<&'static str>,
 		device_class: Option<&'static str>,
-		/// `measurement` (se conserve dans l'historique) ou `None`.
+		/// `measurement` (kept in the history) or `None`.
 		class: Option<&'static str>,
 	},
-	/// `button` : un appui, un message MQTT.
+	/// `button`: one press, one MQTT message.
 	Button { payload: &'static str },
 }
 
-/// Une entité de réglage : la famille/feuille de topic, le libellé HA, et la
-/// plateforme. `family`/`leaf` **doivent** correspondre à
-/// [`crate::settings::Family`] / [`crate::settings::SettingCommand`] côté
-/// parsing, et aux topics que le dispatch publie après relecture.
+/// A settings entity: the topic family/leaf, the HA label, and the
+/// platform. `family`/`leaf` **must** match
+/// [`crate::settings::Family`] / [`crate::settings::SettingCommand`] on the
+/// parsing side, and the topics the dispatch publishes after a re-read.
 #[derive(Debug, Clone, Copy)]
 pub struct EntitySpec {
 	pub feature: Feature,
 	pub family: &'static str,
 	pub leaf: &'static str,
-	/// Libellé collé après le nom de la caméra ("Porche Volume interphone").
+	/// Label glued after the camera name ("Porch Intercom volume").
 	pub label: &'static str,
 	pub icon: Option<&'static str>,
 	pub kind: EntityKind,
 }
 
-/// Ce qui, parmi les genres, n'a **jamais** de topic de commande. Une entité
-/// construite sur l'un de ces genres ne peut pas être actionnée depuis Home
-/// Assistant : c'est la forme sous laquelle une famille de réglages est publiée
-/// tant que la caméra n'a pas prouvé qu'elle la relit et l'accepte en retour.
+/// What, among the kinds, **never** has a command topic. An entity
+/// built on one of these kinds cannot be actuated from Home
+/// Assistant: it is the shape in which a settings family is published
+/// until the camera has proved it re-reads it and accepts it back.
 pub fn is_read_only(kind: &EntityKind) -> bool {
 	matches!(
 		kind,
@@ -163,12 +163,12 @@ pub fn is_read_only(kind: &EntityKind) -> bool {
 }
 
 impl EntitySpec {
-	/// La plateforme HA (`switch`, `number`, …) et le segment de topic
-	/// `homeassistant/<plateforme>/...`. C'est le **genre construit** qui décide,
-	/// pas celui écrit au tableau : la copie lisible d'un `number` est un
-	/// `sensor`, donc son topic de configuration change de segment — d'où
-	/// l'obligation, chez l'opératrice, de supprimer l'entité que Home Assistant
-	/// garde en mémoire (voir `docs/lot-reglages-mqtt.md`).
+	/// The HA platform (`switch`, `number`, …) and the topic segment
+	/// `homeassistant/<platform>/...`. It is the **built** kind that decides,
+	/// not the one written in the table: the readable copy of a `number` is a
+	/// `sensor`, so its configuration topic changes segment — hence the
+	/// operator's obligation to delete the entity Home Assistant
+	/// keeps in memory (see “Ghost entities” in `docs/settings.md`).
 	fn ha_platform(kind: &EntityKind) -> &'static str {
 		match kind {
 			EntityKind::Number { .. } => "number",
@@ -181,21 +181,21 @@ impl EntitySpec {
 		}
 	}
 
-	/// L'identifiant unique HA : `{prefix}_{cam}_{family}_{leaf}` — la
-	/// famille est dans l' id parce que plusieurs familles ont une feuille
-	/// `enable` ou `sensitivity`.
+	/// The HA unique identifier: `{prefix}_{cam}_{family}_{leaf}` — the
+	/// family is in the id because several families have a
+	/// `enable` or `sensitivity` leaf.
 	pub fn unique_id(&self, ctx: &DiscoveryContext) -> String {
 		unique(ctx.topic_prefix, ctx.camera_name, &format!("{}_{}", self.family, self.leaf))
 	}
 
-	/// Le topic d'état lu par l'entité.
+	/// The state topic the entity reads.
 	pub fn state_topic(&self, ctx: &DiscoveryContext) -> String {
 		cam_topic(ctx, "status", &format!("{}/{}", self.family, self.leaf))
 	}
 
-	/// Le topic de commande, absent pour ce qui est en lecture seule. Le genre
-	/// construit décide, pas le genre du tableau : c'est ce qui fait qu'une
-	/// famille non relue se publie sans aucune commande.
+	/// The command topic, absent for what is read-only. The built
+	/// kind decides, not the table's kind: that is what makes an
+	/// un-re-read family publish with no command at all.
 	pub fn command_topic(&self, ctx: &DiscoveryContext, kind: &EntityKind) -> Option<String> {
 		if is_read_only(kind) {
 			return None;
@@ -203,22 +203,22 @@ impl EntitySpec {
 		Some(cam_topic(ctx, "control", &format!("{}/{}", self.family, self.leaf)))
 	}
 
-	/// Construit `(topic_de_config, payload)` du genre écrit au tableau : la
-	/// forme **modifiable** de l'entité.
+	/// Builds `(config_topic, payload)` of the kind written in the table: the
+	/// **modifiable** shape of the entity.
 	pub fn build(&self, ctx: &DiscoveryContext, friendly: &str) -> (String, Vec<u8>) {
 		self.build_kind(ctx, friendly, &self.kind)
 	}
 
-	/// Construit l'entité telle que la famille doit être publiée **aujourd'hui** :
-	/// modifiable si la caméra a répondu à une lecture de cette famille et
-	/// accepte qu'on lui renvoie le bloc (`ecrivable`), sinon sa copie en lecture
-	/// seule — même `unique_id`, même topic d'état, plateforme différente, aucun
+	/// Builds the entity as the family must be published **today**:
+	/// modifiable if the camera answered a read of this family and
+	/// accepts having the block sent back to it (`writable`), otherwise its read-only
+	/// copy — same `unique_id`, same state topic, different platform, no
 	/// `command_topic`.
 	///
-	/// `None` = aucune entité du tout. Un bouton n'a pas d'équivalent lisible :
-	/// il n'y a rien à afficher, seulement quelque chose à déclencher. Le publish_now
-	/// avant que la caméra ait confirmé le carillon, ce serait promettre un bouton
-	/// qui ne sonne pas — exactement le reproche fait à la version d'origine.
+	/// `None` = no entity at all. A button has no readable equivalent:
+	/// there is nothing to display, only something to trigger. Publishing it
+	/// before the camera confirmed the chime would promise a button
+	/// that does not ring — exactly the reproach made to the original version.
 	pub fn build_from(
 		&self,
 		ctx: &DiscoveryContext,
@@ -232,17 +232,17 @@ impl EntitySpec {
 		Some(self.build_kind(ctx, friendly, &twin))
 	}
 
-	/// Le genre qui affiche la même feuille sans offrir de commande. Les bornes
-	/// d'un `number` n'y figurent pas : ce sont des bornes d'**écriture**, et une
-	/// entité qui ne peut pas écrire n'a rien à en faire. L'unité, elle, reste :
-	/// elle dit ce que le nombre lu veut dire.
+	/// The kind that displays the same leaf without offering a command. The bounds
+	/// of a `number` are not in it: those are **write** bounds, and an
+	/// entity that cannot write has nothing to do with them. The unit does stay:
+	/// it says what the number read means.
 	fn read_only_twin(&self) -> Option<EntityKind> {
 		Some(match self.kind {
 			EntityKind::Number { unit, .. } => {
 				EntityKind::StateSensor { unit, device_class: None, class: Some("measurement") }
 			}
-			// Un texte et un choix sont des états parmi d'autres : ni unité, ni
-			// `state_class` (Home Assistant refuse du non numérique mesuré).
+			// A text and a choice are states like any other: no unit, no
+			// `state_class` (Home Assistant refuses measured non-numeric).
 			EntityKind::Text { .. } | EntityKind::Select(_) => {
 				EntityKind::StateSensor { unit: None, device_class: None, class: None }
 			}
@@ -254,9 +254,9 @@ impl EntitySpec {
 		})
 	}
 
-	/// `(topic_de_config, payload)` pour un genre donné — celui du tableau ou son
-	/// jumeau lisible. Les deux partagent le même code pour qu'une copie en
-	/// lecture seule ne puisse pas oublier un bloc (device, disponibilité).
+	/// `(config_topic, payload)` for a given kind — the table's or its
+	/// readable twin. The two share the same code so that a read-only
+	/// copy cannot forget a block (device, availability).
 	fn build_kind(
 		&self,
 		ctx: &DiscoveryContext,
@@ -264,11 +264,11 @@ impl EntitySpec {
 		kind: &EntityKind,
 	) -> (String, Vec<u8>) {
 		let unique_id = self.unique_id(ctx);
-		// Le libellé dit **ce que c'est**, jamais à qui c'est : Home Assistant
-		// affiche déjà l'appareil au-dessus de l'entité, et répéter le nom de la
-		// caméra (« Sonnette Volume général ») tronque le libellé utile pour ne
-		// rien ajouter. `unique_id` et le bloc `device` gardent le nom de la
-		// caméra : ce sont les identifiants, eux ne sont pas renommés.
+		// The label says **what it is**, never to whom it belongs: Home Assistant
+		// already displays the device above the entity, and repeating the camera's
+		// name ("Doorbell General volume") truncates the useful label to add
+		// nothing. `unique_id` and the `device` block keep the camera's
+		// name: those are identifiers, they are not renamed.
 		let name = self.label.to_string();
 		let device = device_block(ctx, friendly);
 		let availability = availability_blocks(ctx);
@@ -287,7 +287,7 @@ impl EntitySpec {
 				icon: self.icon.map(str::to_string),
 				device,
 				availability,
-				command_topic: command_topic.expect("un number a un command_topic"),
+				command_topic: command_topic.expect("a number has a command_topic"),
 				state_topic,
 				min: *min,
 				max: *max,
@@ -301,7 +301,7 @@ impl EntitySpec {
 				icon: self.icon.map(str::to_string),
 				device,
 				availability,
-				command_topic: command_topic.expect("un text a un command_topic"),
+				command_topic: command_topic.expect("a text has a command_topic"),
 				state_topic,
 				min: 0,
 				max: *max_len,
@@ -313,7 +313,7 @@ impl EntitySpec {
 				icon: self.icon.map(str::to_string),
 				device,
 				availability,
-				command_topic: command_topic.expect("un switch a un command_topic"),
+				command_topic: command_topic.expect("a switch has a command_topic"),
 				payload_on: "on".to_string(),
 				payload_off: "off".to_string(),
 				state_topic: Some(state_topic),
@@ -327,7 +327,7 @@ impl EntitySpec {
 				icon: self.icon.map(str::to_string),
 				device,
 				availability,
-				// Les deux textes que `put_switch` publie après relecture.
+				// The two texts `put_switch` publishes after a re-read.
 				payload_on: "on".to_string(),
 				payload_off: "off".to_string(),
 				state_topic,
@@ -338,7 +338,7 @@ impl EntitySpec {
 				icon: self.icon.map(str::to_string),
 				device,
 				availability,
-				command_topic: command_topic.expect("un select a un command_topic"),
+				command_topic: command_topic.expect("a select has a command_topic"),
 				options: options.iter().map(|s| s.to_string()).collect(),
 				state_topic: Some(state_topic),
 			}),
@@ -364,10 +364,10 @@ impl EntitySpec {
 				device,
 				availability,
 				state_topic,
-				// `class` est la décision de la ligne, pas une valeur par défaut :
-				// une ligne textuelle (liste JSON, état de charge, mélodie) qui
-				// se prétendrait `measurement` verrait Home Assistant refuser
-				// ses états non numériques — l'entité resterait « inconnue ».
+				// `class` is that line's decision, not a default value:
+				// a textual line (JSON list, charge state, melody) that
+				// claimed to be `measurement` would see Home Assistant refuse
+				// its non-numeric states — the entity would stay "unknown".
 				state_class: *class,
 				unit_of_measurement: *unit,
 				device_class: *device_class,
@@ -378,7 +378,7 @@ impl EntitySpec {
 				icon: self.icon.map(str::to_string),
 				device,
 				availability,
-				command_topic: command_topic.expect("un button a un command_topic"),
+				command_topic: command_topic.expect("a button has a command_topic"),
 				payload_press: Some((*payload).to_string()),
 			}),
 		};
@@ -388,47 +388,47 @@ impl EntitySpec {
 		)
 	}
 
-	/// La plateforme d'une copie en lecture seule (`sensor` ou `binary_sensor`),
-	/// pour les tests et le journal. `None` = aucune entité lisible : seul le
-	/// bouton, qui n'a pas d'état, disparaît complètement tant que la famille
-	/// n'est pas relue.
+	/// The platform of a read-only copy (`sensor` or `binary_sensor`),
+	/// for the tests and the log. `None` = no readable entity: only the
+	/// button, which has no state, disappears entirely until the family
+	/// is re-read.
 	pub fn read_only_platform(&self) -> Option<&'static str> {
 		Some(Self::ha_platform(&self.read_only_twin()?))
 	}
 }
 
-/// Les jours acceptés par `<AutoReboot><weekDay>`, dans l'ordre d'affichage.
+/// The days accepted by `<AutoReboot><weekDay>`, in display order.
 pub const WEEKDAYS: [&str; 8] = [
 	"everyday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 ];
 
-/// Les formats de date OSD.
+/// The OSD date formats.
 pub const OSD_FORMATS: [&str; 3] = ["DMY", "MDY", "YMD"];
 
-/// Les modes jour/nuit normalisés par la lib de référence.
+/// The day/night modes normalised by the reference library.
 pub const DAY_NIGHT_MODES: [&str; 3] = ["auto", "color", "blackAndWhite"];
 
-/// Toutes les entités de réglages, groupées par famille de topic.
+/// Every settings entity, grouped by topic family.
 ///
-/// L'ordre est stable (les tests comparent des compteurs et des listes de
-/// topics). Chaque ligne porte la plage **du protocole** : modifier une borne
-/// sans capture locale derrière soi, c'est écrire une valeur que la caméra
+/// The order is stable (the tests compare counters and lists of
+/// topics). Each line carries the **protocol's** range: changing a bound
+/// without a local capture behind you is writing a value the camera
 /// rejettera en silence.
 pub const SPECS: &[EntitySpec] = &[
-	// ── audioCfg (264 lecture / 265 écriture) ───────────────────────────
+	// ── audioCfg (264 read / 265 write) ─────────────────────────────────
 	//
-	// Le bloc imprime **trois** volumes, et chacun règle un haut-parleur
-	// différent. La version d'origine n'en découvrait que deux, sous un libellé
-	// générique : « Volume interphone » écrivait `<talkAndReplyVolume>` sans le
-	// dire, et `<volume>` — le volume général du haut-parleur de la caméra —
-	// n'avait aucune entité. Chaque ligne nomme donc la balise XML qu'elle
-	// porte : c'est la seule chose qui se vérifie contre une capture.
+	// The block prints **three** volumes, and each one drives a different
+	// speaker. The original version discovered only two of them, under a
+	// generic label: "Intercom volume" wrote `<talkAndReplyVolume>` without
+	// saying so, and `<volume>` — the camera's loudspeaker master volume —
+	// had no entity at all. Each line therefore names the XML tag it
+	// carries: it is the only thing that can be checked against a capture.
 	EntitySpec {
 		feature: Feature::Audio,
 		family: "audio",
 		// `<volume>`. Identifiant **nouveau** (`bairelay_<cam>_audio_general_volume`) :
-		// `..._audio_volume` et `..._audio_visitor_volume` existent déjà chez
-		// l'opératrice et ne sont ni renommés ni recyclés.
+		// `..._audio_volume` and `..._audio_visitor_volume` already exist at the
+		// operator's and are neither renamed nor recycled.
 		leaf: "general_volume",
 		label: "Speaker volume",
 		icon: Some("mdi:volume-high"),
@@ -437,7 +437,7 @@ pub const SPECS: &[EntitySpec] = &[
 	EntitySpec {
 		feature: Feature::Audio,
 		family: "audio",
-		// `<talkAndReplyVolume>` : ce que le visiteur entend pendant l'échange.
+		// `<talkAndReplyVolume>`: what the visitor hears during the exchange.
 		leaf: "volume",
 		label: "Intercom volume (talk)",
 		icon: Some("mdi:walkie-talkie"),
@@ -446,7 +446,7 @@ pub const SPECS: &[EntitySpec] = &[
 	EntitySpec {
 		feature: Feature::Audio,
 		family: "audio",
-		// `<visitorVolume>` : ce que la caméra envoie dans le talkie-walkie.
+		// `<visitorVolume>`: what the camera sends into the walkie-talkie.
 		leaf: "visitor_volume",
 		label: "Visitor volume",
 		icon: Some("mdi:volume-heart"),
@@ -559,7 +559,7 @@ pub const SPECS: &[EntitySpec] = &[
 		icon: Some("mdi:watermark"),
 		kind: EntityKind::Switch,
 	},
-	// ── Détection de mouvement (46 / 47) ────────────────────────────────
+	// ── Motion detection (46 / 47) ──────────────────────────────────────
 	EntitySpec {
 		feature: Feature::MotionSettings,
 		family: "motion",
@@ -574,18 +574,18 @@ pub const SPECS: &[EntitySpec] = &[
 		leaf: "sensitivity",
 		label: "Motion sensitivity",
 		icon: Some("mdi:speedometer"),
-		// 0-50, plus haut = plus sensible (doc §4.1).
+		// 0-50, higher = more sensitive (measured on the operator's doorbell).
 		kind: EntityKind::Number { min: 0.0, max: 50.0, step: 1.0, unit: None, slider: true },
 	},
-	// ── PIR (212 / 213) : l'interrupteur vient de `build_pir` ───────────
+	// ── PIR (212 / 213): the switch comes from `build_pir` ──────────────
 	EntitySpec {
 		feature: Feature::Pir,
 		family: "pir",
 		leaf: "sensitivity",
 		label: "PIR sensitivity",
 		icon: Some("mdi:sensor-outline"),
-		// `sensiValue` n'a pas de plage documentée ; 0-100 est la borne
-		// utilisée par le client de référence, et la caméra garde ce
+		// `sensiValue` has no documented range; 0-100 is the bound
+		// used by the reference client, and the camera keeps what
 		// qu'elle accepte.
 		kind: EntityKind::Number { min: 0.0, max: 100.0, step: 1.0, unit: None, slider: true },
 	},
@@ -595,11 +595,11 @@ pub const SPECS: &[EntitySpec] = &[
 		leaf: "interval",
 		label: "PIR trigger interval",
 		icon: Some("mdi:timer-sand"),
-		// `<interval>` du même `<RfAlarmCfg>` (212/213) : le temps de repos que
-		// la caméra s'impose entre deux alarmes PIR, **en secondes**. La plage
-		// 5-120 est celle que l'application Reolink expose pour ce réglage ; le
-		// firmware annonce ses propres bornes dans `intervalSecMin`/`intervalSecMax`,
-		// visibles dans `status/pir/json`. Une valeur hors de la plage ne part pas.
+		// `<interval>` of the same `<RfAlarmCfg>` (212/213): the rest time the
+		// camera imposes between two PIR alarms, **in seconds**. The 5-120
+		// range is the one the Reolink app exposes for this setting; the
+		// firmware announces its own bounds in `intervalSecMin`/`intervalSecMax`,
+		// visible in `status/pir/json`. A value outside the range does not leave.
 		kind: EntityKind::Number { min: 5.0, max: 120.0, step: 1.0, unit: Some("s"), slider: true },
 	},
 	// ── NTP (38 / 39) ───────────────────────────────────────────────────
@@ -625,7 +625,7 @@ pub const SPECS: &[EntitySpec] = &[
 		leaf: "interval",
 		label: "Sync interval",
 		icon: Some("mdi:restore"),
-		// Minutes ; 1440 = le défaut du client de référence (24 h).
+		// Minutes; 1440 = the reference client's default (24 h).
 		kind: EntityKind::Number {
 			min: 1.0,
 			max: 1440.0,
@@ -634,7 +634,7 @@ pub const SPECS: &[EntitySpec] = &[
 			slider: false,
 		},
 	},
-	// ── Heure d'dst (106 / 107) ─────────────────────────────────────────
+	// ── Daylight saving (106 / 107) ───────────────────────────────────────
 	EntitySpec {
 		feature: Feature::Dst,
 		family: "dst",
@@ -657,7 +657,7 @@ pub const SPECS: &[EntitySpec] = &[
 			slider: false,
 		},
 	},
-	// ── Redémarrage automatique (101 / 100) ─────────────────────────────
+	// ── Automatic reboot (101 / 100) ────────────────────────────────────
 	EntitySpec {
 		feature: Feature::AutoReboot,
 		family: "autoreboot",
@@ -690,7 +690,7 @@ pub const SPECS: &[EntitySpec] = &[
 		icon: Some("mdi:clock-time-three-outline"),
 		kind: EntityKind::Number { min: 0.0, max: 59.0, step: 1.0, unit: Some("min"), slider: false },
 	},
-	// ── Système (104 / 105) ─────────────────────────────────────────────
+	// ── System (104 / 105) ──────────────────────────────────────────────
 	EntitySpec {
 		feature: Feature::General,
 		family: "general",
@@ -731,7 +731,7 @@ pub const SPECS: &[EntitySpec] = &[
 		icon: Some("mdi:clock-in"),
 		kind: EntityKind::FlagSensor { device_class: None },
 	},
-	// ── Masques de confidentialité (52) — lecture seule ─────────────────
+	// ── Privacy masks (52) — read-only ──────────────────────────────────
 	EntitySpec {
 		feature: Feature::PrivacyMask,
 		family: "mask",
@@ -746,15 +746,15 @@ pub const SPECS: &[EntitySpec] = &[
 		leaf: "max_num",
 		label: "Mask slots",
 		icon: Some("mdi:tag-multiple"),
-		// Le nombre d'emplacements est une quantité numérique : elle a droit à
-		// `state_class`, que les lignes textuelles, elles, n'auront plus.
+		// The number of slots is a numeric quantity: it is entitled to
+		// `state_class`, which the textual lines will no longer have.
 		kind: EntityKind::StateSensor {
 			unit: None,
 			device_class: None,
 			class: Some("measurement"),
 		},
 	},
-	// ── Veille (574) et Wi-Fi (115) ─────────────────────────────────────
+	// ── Sleep (574) and Wi-Fi (115) ─────────────────────────────────────
 	EntitySpec {
 		feature: Feature::SleepState,
 		family: "sleep",
@@ -769,11 +769,11 @@ pub const SPECS: &[EntitySpec] = &[
 		leaf: "signal",
 		label: "Wi-Fi signal",
 		icon: Some("mdi:wifi"),
-		// Aucune unité : le protocole ne dit pas si `<signal>` est en dBm ou
+		// No unit: the protocol does not say whether `<signal>` is in dBm or
 		// en pourcents.
 		kind: EntityKind::StateSensor { unit: None, device_class: None, class: Some("measurement") },
 	},
-	// ── Batterie : les états bon marché de la 253 ───────────────────────
+	// ── Battery: the cheap states of the 253 ────────────────────────────
 	EntitySpec {
 		feature: Feature::BatteryExtra,
 		family: "battery",
@@ -833,8 +833,8 @@ pub const SPECS: &[EntitySpec] = &[
 		leaf: "list",
 		label: "Paired chimes",
 		icon: Some("mdi:bell-outline"),
-		// Liste JSON. **Pas d'état du tout quand la caméra a refusé** : « non
-		// répondu » doit rester distincte de « liste vide », qui se lit `[]`.
+		// JSON list. **No state at all when the camera refused**: "did not
+		// answer" must stay distinct from "empty list", which reads `[]`.
 		kind: EntityKind::StateSensor { unit: None, device_class: None, class: None },
 	},
 	EntitySpec {
@@ -843,14 +843,14 @@ pub const SPECS: &[EntitySpec] = &[
 		leaf: "volume",
 		label: "Chime volume",
 		icon: Some("mdi:bell-ring-outline"),
-		// `<volLevel>` du carillon, pas un pourcentage : la documentation de
-		// référence dit « 0-4 typical » et se garde bien d'affirmer une borne
+		// The chime's `<volLevel>`, not a percentage: the reference documentation
+		// says "0-4 typical" and is careful not to assert a bound,
 		// haute (`types.ts` `ChimeParams.volLevel`, `docs/lights.md`). On publie
-		// donc la **plage vue**, sans arrondir à 0-100 comme le voudrait le
-		// réflexe « volume » : une borne inventée serait une promesse inventée.
-		// L'écriture part en 485 `setParam`, qui n'accepte `<volLevel>` que si
-		// le `getParam` l'a imprimé — la règle habituelle du « jamais de balise
-		// inventée » est appliquée côté écriture, pas ici.
+		// so the **range seen**, without rounding to 0-100 as the
+		// "volume" reflex would want: an invented bound is an invented promise.
+		// The write goes out on 485 `setParam`, which only accepts `<volLevel>`
+		// if the `getParam` printed it — the usual "never invent a tag"
+		// rule applied on the write side, not here.
 		kind: EntityKind::Number { min: 0.0, max: 4.0, step: 1.0, unit: None, slider: true },
 	},
 	EntitySpec {
@@ -859,12 +859,12 @@ pub const SPECS: &[EntitySpec] = &[
 		leaf: "music",
 		label: "Chime melody",
 		icon: Some("mdi:music-circle-outline"),
-		// L'identifiant de mélodie **lu** dans le 485 du carillon interrogé.
-		// Verdict seule assumée : aucune commande du protocole n'énumère les
-		// mélodies (`id introuvable` dans la note de protocole, §1.4), et une
-		// entité `select` dont les options seraient inventées est exactement ce
-		// que ce pont refuse de publish_now. Les identifiants que la caméra imprime
-		// elle-même, eux, sont publiés — voir `melodies` juste en dessous.
+		// The melody identifier **read** in the 485 of the polled chime.
+		// Read-only verdict assumed: no protocol command enumerates the
+		// melodies ("id not found" in the protocol notebook), and a
+		// `select` entity whose options were invented is exactly what
+		// this bridge refuses to publish. The identifiers the camera prints
+		// itself are published — see `melodies` just below.
 		kind: EntityKind::StateSensor { unit: None, device_class: None, class: None },
 	},
 	EntitySpec {
@@ -873,10 +873,10 @@ pub const SPECS: &[EntitySpec] = &[
 		leaf: "melodies",
 		label: "Camera-declared melodies",
 		icon: Some("mdi:playlist-music"),
-		// Les `musicId` que **la caméra** a imprimés dans ses `<alarminCfg>`
-		// (msg 486) et dans son 485, recopiés tels quels. C'est la seule liste
-		// de mélodies que ce pont s'autorise à publish_now : elle vient d'une
-		// réponse, pas d'une table. Vide = effacé, jamais « 0 ».
+		// The `musicId`s **the camera** printed in its `<alarminCfg>`
+		// (msg 486) and in its 485, copied as they came. It is the only melody
+		// list this bridge allows itself to publish: it comes from an
+		// answer, not from a table. Empty = cleared, never " 0 ".
 		kind: EntityKind::StateSensor { unit: None, device_class: None, class: None },
 	},
 	EntitySpec {
@@ -885,26 +885,26 @@ pub const SPECS: &[EntitySpec] = &[
 		leaf: "ring",
 		label: "Ring the chime",
 		icon: Some("mdi:bell-ring"),
-		// Le payload est un id de mélodie ; le carillon visé est celui appairé
-		// à la dernière lecture. Sans carillon appairé la commande échoue, et
-		// FAIL le dit.
+		// The payload is a melody id; the chime targeted is the one paired
+		// with the last read. Without a paired chime the command fails, and
+		// FAIL says so.
 		kind: EntityKind::Button { payload: "1" },
 	},
 ];
 
-/// Toutes les spécifications d'une famille de discovery, dans l'ordre.
+/// Every specification of a discovery family, in order.
 pub fn specs_for(feature: Feature) -> impl Iterator<Item = &'static EntitySpec> {
 	SPECS.iter().filter(move |s| s.feature == feature)
 }
 
-/// Émet `(topic_config, payload)` pour chaque entité d'une fonctionnalité, dans
-/// la forme que sa famille mérite aujourd'hui.
+/// Emits `(config_topic, payload)` for each entity of a feature, in the
+/// shape its family deserves today.
 ///
-/// `ecrivables` = les familles dont la caméra a **répondu à une lecture** et
-/// qu'elle accepte de réécrire. Une famille absente de cet ensemble sort en
-/// lecture seule (et un bouton n'en sort pas du tout) : c'est la règle
-/// « rien d'actionnable avant preuve », appliquée là où elle est vérifiable —
-/// la plateforme publiée suit ce qui a dst lu, jamais ce qui est espéré.
+/// `writable` = the families the camera **answered a read of** and
+/// accepts having rewritten. A family absent from this set comes out read-only
+/// (and a button does not come out at all): it is the rule
+/// "nothing actionable before proof", applied where it is checkable —
+/// the published platform follows what was read, never what is hoped.
 pub fn build_feature_entities(
 	ctx: &DiscoveryContext,
 	feature: Feature,
@@ -913,10 +913,10 @@ pub fn build_feature_entities(
 	let friendly = super::title_case(ctx.camera_name);
 	specs_for(feature)
 		.filter_map(|spec| {
-			// Une famille que le parsing ne connaît pas ne peut pas être
-			// relue ni écrite : elle reste lisible, indéfiniment. Le test
-			// `every_family_of_a_spec_is_known_of_parsing` vérifie que ce
-			// cas ne se présente pas.
+			// A family the parsing does not know cannot be
+			// read or written: it stays readable, indefinitely. The test
+			// `every_family_of_a_spec_is_known_of_parsing` checks that this
+			// case does not occur.
 			let writable =
 				Family::from_slug(spec.family).is_some_and(|f| writable.contains(&f));
 			spec.build_from(ctx, &friendly, writable)
@@ -938,8 +938,8 @@ mod tests {
 	};
 	static PRESETS: [(u8, String); 0] = [];
 
-	/// Un contexte de discovery minimal, les mêmes valeurs que les tests du
-	/// publisher, pour que les topics attendus se lisent d'un coup d'œil.
+	/// A minimal discovery context, the same values as the publisher's tests,
+	/// so the expected topics can be read at a glance.
 	fn ctx() -> DiscoveryContext<'static> {
 		DiscoveryContext {
 			topic_prefix: "bairelay",
@@ -961,7 +961,7 @@ mod tests {
 			let id = spec.unique_id(&c);
 			assert!(
 				!ids.contains(&id),
-				"deux entités partagent le unique_id {id} : HA fusionnerait les deux"
+				"two entities share the unique_id {id}: HA would merge the two"
 			);
 			ids.push(id);
 		}
@@ -976,7 +976,7 @@ mod tests {
 						&& slug
 							.chars()
 							.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
-					"slug invalide dans la discovery : {slug:?}"
+					"invalid slug in the discovery: {slug:?}"
 				);
 			}
 		}
@@ -984,35 +984,36 @@ mod tests {
 
 	#[test]
 	fn the_control_topics_match_the_parsing() {
-		// Le pont `control/<famille>/<feuille>` n'est accepté que pour les
-		// familles/feuilles que `crate::settings` sait parser : une spec qui
-		// diverge créerait une entité HA dont la commande est ignorée.
+		// The `control/<family>/<leaf>` bridge is only accepted for the
+		// families/leaves `crate::settings` knows how to parse: a spec that
+		// diverges would create an HA entity whose command is ignored.
 		let c = ctx();
 		for spec in SPECS {
-			// On teste la forme **modifiable** : c'est elle qui promet un
-			// contrôle. La copie lisible, elle, n'a structurellement pas de
-			// `command_topic` (le test `une_famille_non_relue...` le vérifie).
+			// We test the **modifiable** shape: it is the one that promises a
+			// control. The readable copy structurally has no
+			// `command_topic` (the `a_family_not_reread_publishes_without_a_command`
+//		// test checks that).
 			if spec.command_topic(&c, &spec.kind).is_none() {
 				continue;
 			}
 			let (family, leaf) = (spec.family, spec.leaf);
 			assert!(
 				crate::settings::accepts(family, leaf),
-				"discovery émet control/{family}/{leaf} que le parsing refuse"
+				"discovery emits control/{family}/{leaf} that the parsing refuses"
 			);
 		}
 	}
 
 	#[test]
 	fn every_family_of_a_spec_is_known_of_parsing() {
-		// Une famille du tableau de discovery que `Family` ne connaît pas ne
-		// pourrait jamais être marquée « lue et écrivable » : ses entités
-		// resteraient muettes en écriture pour toujours, sans que rien ne le
-		// dise. Ce test est la barrière qui empêche cet état.
+		// A discovery-table family that `Family` does not know could
+		// never be marked "read and writable": its entities
+		// would stay mute on writes forever, without anything
+		// saying so. This test is the barrier that prevents that state.
 		for spec in SPECS {
 			assert!(
 				crate::settings::Family::from_slug(spec.family).is_some(),
-				"la spec {}/{} porte une famille que le parsing ne connaît pas",
+				"spec {}/{} carries a family the parsing does not know",
 				spec.family,
 				spec.leaf
 			);
@@ -1025,7 +1026,7 @@ mod tests {
 			if let EntityKind::Number { min, max, step, .. } = spec.kind {
 				assert!(
 					min < max && step > 0.0 && step <= (max - min),
-					"plage incohérente pour {}/{} : {min}..{max} pas {step}",
+					"incoherent range for {}/{}: {min}..{max} not {step}",
 					spec.family,
 					spec.leaf
 				);
@@ -1053,12 +1054,12 @@ mod tests {
 		assert_eq!(
 			v["command_topic"],
 			"bairelay/cam1/control/denoise/level",
-			"la commande repart vers le topic que le dispatch écoute"
+			"the command goes back to the topic the dispatch listens on"
 		);
 		assert_eq!(
 			v["state_topic"],
 			"bairelay/cam1/status/denoise/level",
-			"l'état vient de la relecture publiée par le dispatch"
+			"the state comes from the re-read published by the dispatch"
 		);
 		assert_eq!(
 			v["availability"],
@@ -1074,7 +1075,7 @@ mod tests {
 					"payload_not_available": "unreachable"
 				}
 			]),
-			"deux blocs : le pont, puis la présence de la caméra"
+			"two blocks: the bridge, then the camera's presence"
 		);
 		assert_eq!(v["device"]["identifiers"][0], "bairelay_cam1");
 	}
@@ -1082,24 +1083,24 @@ mod tests {
 	#[test]
 	fn a_read_only_sensor_has_no_command_topic() {
 		let c = ctx();
-		let mut vus = 0;
+		let mut seen = 0;
 		for spec in SPECS {
-			// Le même prédicat que le constructeur : si la règle change ici, ce
-			// test change avec elle, au lieu de laisser filer un genre nouveau.
+			// The same predicate as the constructor: if the rule changes here, this
+			// test changes with it, instead of letting a new kind slip through.
 			if !is_read_only(&spec.kind) {
 				continue;
 			}
-			vus += 1;
+			seen += 1;
 			let (_, payload) = spec.build(&c, "Porche");
 			let v: serde_json::Value = serde_json::from_slice(&payload).expect("json");
 			assert!(
 				v.get("command_topic").is_none(),
-				"{}/{} est en lecture seule mais expose un command_topic",
+				"{}/{} is read-only but exposes a command_topic",
 				spec.family,
 				spec.leaf
 			);
 		}
-		assert!(vus > 0, "aucune spec en lecture seule à vérifier");
+		assert!(seen > 0, "no read-only spec to check");
 	}
 
 	#[test]
@@ -1113,7 +1114,7 @@ mod tests {
 		let v: serde_json::Value = serde_json::from_slice(&payload).expect("json");
 		assert!(
 			v.get("unit_of_measurement").is_none(),
-			"le protocole ne définit pas l'unité de <signal> : {v}"
+			"the protocol does not define the unit of <signal>: {v}"
 		);
 	}
 
@@ -1141,21 +1142,21 @@ mod tests {
 		let (_, payload) = spec.build(&c, "Porche");
 		let v: serde_json::Value = serde_json::from_slice(&payload).expect("json");
 		let options: Vec<&str> = v["options"].as_array().expect("options").iter().map(|o| o.as_str().expect("str")).collect();
-		assert_eq!(options, WEEKDAYS.to_vec(), "les options sont les textes du protocole, pas des libellés");
+		assert_eq!(options, WEEKDAYS.to_vec(), "the options are the protocol's texts, not labels");
 	}
 
-	/// Les trois volumes d'`audioCfg` : trois entités, trois identifiants, une
-	/// balise XML chacune (documentée sur la ligne du tableau). Le défaut
-	/// d'origine n'était pas un libellé maladroit : `<volume>` n'avait aucune
-	/// entité, et « Volume interphone » écrivait `<talkAndReplyVolume>` sans le
-	/// dire à personne.
+	/// The three volumes of `audioCfg`: three entities, three identifiers, one
+	/// XML tag each (documented on the table line). The original
+	/// defect was not a clumsy label: `<volume>` had no
+	/// entity at all, and "Intercom volume" wrote `<talkAndReplyVolume>` without
+	/// telling anybody.
 	#[test]
 	fn the_three_volumes_are_three_separate_entities() {
 		let c = ctx();
 		let audio: Vec<&EntitySpec> = specs_for(Feature::Audio).collect();
 		let attendus = [
-			// feuille, libellé, unique_id — l'identifiant du volume général est
-			// nouveau, les deux autres sont ceux déjà publiés chez l'opératrice.
+			// leaf, label, unique_id — the general volume's identifier is
+			// new, the other two are the ones already published at the operator's.
 			("general_volume", "Speaker volume", "bairelay_cam1_audio_general_volume"),
 			("volume", "Intercom volume (talk)", "bairelay_cam1_audio_volume"),
 			("visitor_volume", "Visitor volume", "bairelay_cam1_audio_visitor_volume"),
@@ -1165,17 +1166,17 @@ mod tests {
 			let spec = audio
 				.iter()
 				.find(|s| s.leaf == leaf)
-				.unwrap_or_else(|| panic!("aucune spec audio/{leaf}"));
+				.unwrap_or_else(|| panic!("no audio/{leaf} spec"));
 			assert_eq!(spec.label, label, "audio/{leaf}");
 			assert_eq!(spec.unique_id(&c), identifiant);
 			assert!(
 				crate::settings::accepts("audio", leaf),
-				"la discovery publie audio/{leaf} que le parsing refuse"
+				"discovery publishes audio/{leaf} that the parsing refuses"
 			);
-			// Et trois commandes distinctes, sinon deux entités écriraient la
-			// même balise sous deux noms différents.
+			// And three distinct commands, otherwise two entities would write the
+			// same tag under two different names.
 			let cmd = crate::settings::SettingCommand::parse(Family::Audio, leaf, "50")
-				.unwrap_or_else(|| panic!("audio/{leaf} refusé au parsing"));
+				.unwrap_or_else(|| panic!("audio/{leaf} refused by the parsing"));
 			assert_eq!(cmd.family(), Family::Audio);
 			assert_eq!(cmd.leaf(), leaf);
 			ids.push(spec.leaf);
@@ -1186,29 +1187,29 @@ mod tests {
 		assert_eq!(tri.len(), 3, "{ids:?}");
 	}
 
-	/// Tant que la caméra n'a pas répondu à une lecture d'une famille, ses
-	/// entités se publient en lecture seule : aucune commande nulle part, et un
-	/// bouton n'est pas publié du tout. Relue, la même famille retrouve ses
-	/// commandes **sans changer d'identifiant**.
+	/// Until the camera has answered a read of a family, its
+	/// entities publish read-only: no command anywhere, and a
+	/// button is not published at all. Re-read, the same family gets its
+	/// commands back **without changing identifier**.
 	#[test]
 	fn a_family_not_reread_publishes_without_a_command() {
 		let c = ctx();
 		let non_read: HashSet<Family> = HashSet::new();
 		let read: HashSet<Family> = [Family::Audio].into_iter().collect();
 
-		let lectes = build_feature_entities(&c, Feature::Audio, &non_read);
-		assert!(!lectes.is_empty(), "la famille audio ne publie plus rien du tout");
+		let published_entities = build_feature_entities(&c, Feature::Audio, &non_read);
+		assert!(!published_entities.is_empty(), "the audio family publishes nothing at all anymore");
 		let mut ids_read: Vec<String> = Vec::new();
-		for (topic, payload) in &lectes {
+		for (topic, payload) in &published_entities {
 			let v: serde_json::Value = serde_json::from_slice(payload).expect("json");
 			assert!(
 				v.get("command_topic").is_none(),
-				"une entité publiée sans lecture porte une commande : {topic}"
+				"an entity published without a read carries a command: {topic}"
 			);
 			assert!(
 				topic.starts_with("homeassistant/sensor/")
 					|| topic.starts_with("homeassistant/binary_sensor/"),
-				"plateforme modifiable publiée sans lecture : {topic}"
+				"modifiable platform published without a read: {topic}"
 			);
 			ids_read.push(v["unique_id"].as_str().expect("unique_id").to_string());
 		}
@@ -1217,23 +1218,23 @@ mod tests {
 		let mut ids_modifs: Vec<String> = Vec::new();
 		for (topic, payload) in &writable {
 			let v: serde_json::Value = serde_json::from_slice(payload).expect("json");
-			assert!(v.get("command_topic").is_some(), "{topic} n'offre toujours pas de commande");
+			assert!(v.get("command_topic").is_some(), "{topic} still offers no command");
 			ids_modifs.push(v["unique_id"].as_str().expect("unique_id").to_string());
 		}
 
-		// Le bouton `chime/ring` est le seul à disparaître en lecture seule ; la
-		// famille audio n'en a pas, donc les deux ensembles se correspondent.
+		// The `chime/ring` button is the only one to disappear in read-only; the
+		// audio family has none, so the two sets match each other.
 		ids_read.sort();
 		ids_modifs.sort();
 		assert_eq!(
 			ids_read, ids_modifs,
-			"les identifiants ne doivent pas dépendre de ce qui a dst lu"
+			"identifiers must not depend on what was read"
 		);
 	}
 
-	/// La copie lisible n'est pas un capteur dégénéré : elle garde ce qui rend
-	/// l'état compréhensible (l'unité) et perd ce qui serait un mensonge (les
-	/// bornes d'écriture, et un `state_class` sur du texte).
+	/// The readable copy is not a degenerate sensor: it keeps what makes the
+	/// state understandable (the unit) and loses what would be a lie (the write
+	/// bounds, and a `state_class` on text).
 	#[test]
 	fn the_readable_copy_keeps_the_unit_and_drops_the_bounds() {
 		let c = ctx();
@@ -1245,17 +1246,17 @@ mod tests {
 		assert_eq!(
 			topic,
 			"homeassistant/sensor/bairelay_cam1_audio_general_volume/config",
-			"un number lu est un sensor : le topic de configuration change de segment"
+			"a read number is a sensor: the configuration topic changes segment"
 		);
 		let v: serde_json::Value = serde_json::from_slice(&payload).expect("json");
-		assert_eq!(v["unit_of_measurement"], "%", "le nombre lu doit rester un pourcentage");
+		assert_eq!(v["unit_of_measurement"], "%", "the number read must stay a percentage");
 		assert_eq!(v["state_class"], "measurement");
-		assert!(v.get("min").is_none() && v.get("max").is_none(), "des bornes sans écriture");
+		assert!(v.get("min").is_none() && v.get("max").is_none(), "bounds without writing");
 		assert!(v.get("command_topic").is_none());
 
-		// Un interrupteur devient un binary_sensor qui lit les textes que le
-		// pont publie réellement (« on »/« off »), pas les « 1 »/« 0 » bruts du
-		// protocole — sinon l'entité resterait éteinte quelle que soit la valeur.
+		// A switch becomes a binary_sensor that reads the texts the bridge
+		// really publishes ("on"/"off"), not the protocol's raw "1"/"0" —
+		// otherwise the entity would stay off whatever the value.
 		let switch = SPECS
 			.iter()
 			.find(|s| s.family == "audio" && s.leaf == "visitor_loudspeaker")
@@ -1269,44 +1270,44 @@ mod tests {
 		assert_eq!(v["payload_on"], "on");
 		assert_eq!(v["payload_off"], "off");
 
-		// Le bouton n'a aucun état à afficher : rien à publish_now avant lecture.
+		// The button has no state to display: nothing to publish before a read.
 		let bouton = SPECS
 			.iter()
 			.find(|s| matches!(s.kind, EntityKind::Button { .. }))
-			.expect("une spec button");
+			.expect("a button spec");
 		assert!(bouton.build_from(&c, "Porche", false).is_none());
 		assert_eq!(bouton.read_only_platform(), None);
 	}
 
-	/// Un `text` et un `select` lus deviennent des capteurs **textuels** : un
-	/// `state_class: measurement` sur une langue ou un jour de la semaine
-	/// remplirait le journal de Home Assistant d'avertissements d'incompatibilité.
+	/// A `text` and a `select` that were read become **textual** sensors: a
+	/// `state_class: measurement` on a language or a weekday would
+	/// fill Home Assistant's log with incompatibility warnings.
 	#[test]
 	fn a_textual_state_is_never_marked_measured() {
 		let c = ctx();
-		let mut vus = 0;
+		let mut seen = 0;
 		for spec in SPECS {
 			if !matches!(spec.kind, EntityKind::Text { .. } | EntityKind::Select(_)) {
 				continue;
 			}
-			vus += 1;
+			seen += 1;
 			let (_, payload) = spec.build_from(&c, "Porche", false).expect("jumeau lisible");
 			let v: serde_json::Value = serde_json::from_slice(&payload).expect("json");
-			let ou = format!("{}/{}", spec.family, spec.leaf);
-			assert!(v.get("state_class").is_none(), "{ou} mesuré alors que c'est du texte");
-			assert!(v.get("unit_of_measurement").is_none(), "{ou} porte une unité");
-			assert!(v.get("options").is_none(), "{ou} offre des choix sans commande");
+			let spec = format!("{}/{}", spec.family, spec.leaf);
+			assert!(v.get("state_class").is_none(), "{spec} measured when it is text");
+			assert!(v.get("unit_of_measurement").is_none(), "{spec} carries a unit");
+			assert!(v.get("options").is_none(), "{spec} offers choices without a command");
 			assert!(
 				v.get("command_topic").is_none(),
-				"{ou} promet une commande qu'il n'a pas à ce stade"
+				"{spec} promises a command it does not have at this stage"
 			);
 		}
-		assert!(vus >= 2, "aucune spec text/select à tester");
+		assert!(seen >= 2, "no text/select spec to test");
 	}
 
-	/// La fabrique de disponibilité est unique : chaque entité de réglage porte
-	/// les deux blocs, le pont puis la présence, comme les entités historiques.
-	/// Un oubli ici se répéterait sur toutes les entités du tableau.
+	/// The availability factory is unique: every settings entity carries
+	/// both blocks, the bridge then the presence, like the historical entities.
+	/// A mistake here would repeat on every entity of the table.
 	#[test]
 	fn each_setting_entity_carries_both_availability_blocks() {
 		let c = ctx();
@@ -1316,7 +1317,7 @@ mod tests {
 			let v: serde_json::Value = serde_json::from_slice(&payload).expect("json");
 			let blocs = v["availability"].as_array().unwrap_or_else(|| {
 				panic!(
-					"{}.{} : availability devrait être un tableau",
+					"{}.{}: availability should be an array",
 					spec.family, spec.leaf
 				)
 			});
@@ -1324,13 +1325,13 @@ mod tests {
 			assert_eq!(
 				blocs[0]["topic"],
 				"bairelay/status",
-				"{}.{} : bloc du pont",
+				"{}.{}: the bridge block",
 				spec.family, spec.leaf
 			);
 			assert_eq!(
 				blocs[1]["topic"],
 				"bairelay/cam1/presence",
-				"{}.{} : bloc de présence",
+				"{}.{}: the presence block",
 				spec.family, spec.leaf
 			);
 			assert_eq!(
@@ -1341,7 +1342,7 @@ mod tests {
 			);
 			seen += 1;
 		}
-		assert!(seen > 0, "aucune spec de réglage n'a dst vérifiée");
+		assert!(seen > 0, "no settings spec was verified");
 	}
 
 	/// The labels of the spec table are what Home Assistant shows the operator, and
