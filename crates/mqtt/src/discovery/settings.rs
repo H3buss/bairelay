@@ -88,7 +88,7 @@ pub struct DiscoveryStateSensor {
 	pub state_topic: String,
 	/// `measurement` pour un nombre, `None` pour un état textuel. Home
 	/// Assistant refuse un `state_class` numérique sur un état qui ne l'est
-	/// pas : le publier sur une langue ou une liste de carillons serait remplacer
+	/// pas : le publish_now sur une langue ou une liste de carillons serait remplacer
 	/// un silence par un avertissement répdst dans le journal.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub state_class: Option<&'static str>,
@@ -216,7 +216,7 @@ impl EntitySpec {
 	/// `command_topic`.
 	///
 	/// `None` = aucune entité du tout. Un bouton n'a pas d'équivalent lisible :
-	/// il n'y a rien à afficher, seulement quelque chose à déclencher. Le publier
+	/// il n'y a rien à afficher, seulement quelque chose à déclencher. Le publish_now
 	/// avant que la caméra ait confirmé le carillon, ce serait promettre un bouton
 	/// qui ne sonne pas — exactement le reproche fait à la version d'origine.
 	pub fn build_from(
@@ -863,7 +863,7 @@ pub const SPECS: &[EntitySpec] = &[
 		// Verdict seule assumée : aucune commande du protocole n'énumère les
 		// mélodies (`id introuvable` dans la note de protocole, §1.4), et une
 		// entité `select` dont les options seraient inventées est exactement ce
-		// que ce pont refuse de publier. Les identifiants que la caméra imprime
+		// que ce pont refuse de publish_now. Les identifiants que la caméra imprime
 		// elle-même, eux, sont publiés — voir `melodies` juste en dessous.
 		kind: EntityKind::StateSensor { unit: None, device_class: None, class: None },
 	},
@@ -875,7 +875,7 @@ pub const SPECS: &[EntitySpec] = &[
 		icon: Some("mdi:playlist-music"),
 		// Les `musicId` que **la caméra** a imprimés dans ses `<alarminCfg>`
 		// (msg 486) et dans son 485, recopiés tels quels. C'est la seule liste
-		// de mélodies que ce pont s'autorise à publier : elle vient d'une
+		// de mélodies que ce pont s'autorise à publish_now : elle vient d'une
 		// réponse, pas d'une table. Vide = effacé, jamais « 0 ».
 		kind: EntityKind::StateSensor { unit: None, device_class: None, class: None },
 	},
@@ -1269,7 +1269,7 @@ mod tests {
 		assert_eq!(v["payload_on"], "on");
 		assert_eq!(v["payload_off"], "off");
 
-		// Le bouton n'a aucun état à afficher : rien à publier avant lecture.
+		// Le bouton n'a aucun état à afficher : rien à publish_now avant lecture.
 		let bouton = SPECS
 			.iter()
 			.find(|s| matches!(s.kind, EntityKind::Button { .. }))

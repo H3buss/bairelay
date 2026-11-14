@@ -253,7 +253,7 @@ pub async fn dispatch_control(
 		// La valeur a déjà passé les bornes du protocole dans
 		// `bairelay_mqtt::settings`. Ce qui reste est le geste de la maison :
 		// relire le bloc, n'y retoucher que la balise demandée, l'écrire, relire,
-		// et publier la relecture — jamais la valeur demandée.
+		// et publish_now la relecture — jamais la valeur demandée.
 		ControlCommand::Setting { setting, .. } => {
 			let family = setting.family();
 			match cam.bc_camera_concrete() {
@@ -598,7 +598,7 @@ async fn publish_pir_after_write(
 	cache.set_pir(kept);
 }
 
-/// Relit une seule famille et rend le verdict que la discovery doit publier.
+/// Relit une seule famille et rend le verdict que la discovery doit publish_now.
 ///
 /// Échec = états effacés **et** motif publié ; `reglages::read_family` s'en
 /// charge pour ce que la caméra a refusé, et le délai, qui se déclenche **ici**,
@@ -2715,7 +2715,7 @@ mod tests {
 	/// Une famille jamais relue se découvre **sans aucune commande**. Ce n'est
 	/// qu'après une lecture réussie que ses entités deviennent modifiables, et le
 	/// basculement de plateforme vide l'ancien topic de discovery **avant** de
-	/// publier le nouveau : sinon Home Assistant garde une entité fantôme qui
+	/// publish_now le nouveau : sinon Home Assistant garde une entité fantôme qui
 	/// pointe vers un interrupteur qui n'existe plus.
 	#[test]
 	fn discovery_ntp_has_no_command_until_the_first_read() {
@@ -3000,7 +3000,7 @@ mod tests {
 		for (topic, _, _) in rows.iter().skip(after) {
 			assert!(
 				!topic.starts_with("homeassistant/"),
-				"une relecture qui rate ne doit publier aucune discovery, \
+				"une relecture qui rate ne doit publish_now aucune discovery, \
 				 donc n'en rétracter et n'en rétrograder aucune : {topic} ; \
 				 observations : {burst:?}"
 			);

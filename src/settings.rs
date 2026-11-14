@@ -130,7 +130,7 @@ async fn publish_audio(publ: &StatusPublisher<'_>, cfg: &AudioCfg) {
 	// `<talkAndReplyVolume>` (parole), `<visitorVolume>` (visiteur).
 	// `AudioCfg::volume` est un `String` et non un `Option` : une chaîne vide
 	// veut dire « la caméra n'a pas imprimé cette balise », pas « le volume est
-	// à zéro ». Y publier `""` serait inventer un état ; on efface.
+	// à zéro ». Y publish_now `""` serait inventer un état ; on efface.
 	let general = Some(cfg.volume.as_str()).filter(|v| !v.trim().is_empty());
 	put(publ, Family::Audio, "general_volume", general).await;
 	put(publ, Family::Audio, "volume", cfg.talk_and_reply_volume.as_deref()).await;
@@ -171,7 +171,7 @@ async fn publish_motion(publ: &StatusPublisher<'_>, cfg: &MotionCfg) {
 	put(publ, Family::Motion, "sensitivity", cfg.sensitivity()).await;
 	// Pas de JSON ici : la forme `<MdAlarm>` (seule réponse de certaines
 	// caméras au msg 46) a des champs non énumérés dans le protocole, et les
-	// publier n'apporte rien que les deux feuilles ci-dessus ne disent.
+	// publish_now n'apporte rien que les deux feuilles ci-dessus ne disent.
 }
 
 /// Le PIR a deux topics d'état : l'interrupteur historique
@@ -272,7 +272,7 @@ async fn publish_chime(publ: &StatusPublisher<'_>, cfg: &DingDongCfg) {
 			let items: Vec<serde_json::Value> = list
 				.iter()
 				// Un bloc sans id adressable n'est pas un carillon : la règle du
-				// 484 (note de protocole §1.2) est de l'ignorer, et le publier
+				// 484 (note de protocole §1.2) est de l'ignorer, et le publish_now
 				// `{"id": null}` ferait croire à une entrée exploitable.
 				.filter(|d| d.identifier().is_some())
 				.map(|d| {
@@ -395,7 +395,7 @@ pub(crate) const REASON_SANS_OSDCHANNEL: &str = concat!(
 /// identifiant exploitable — sous l'une comme sous l'autre orthographe
 /// documentées du porteur (`<dingdongDeviceInfo>`, `<dingdongList>`). C'est
 /// exactement la situation de terrain observée : un carillon physique appairé
-/// et une liste publiée vide. Le motif le dit au lieu de publier `[]` en
+/// et une liste publiée vide. Le motif le dit au lieu de publish_now `[]` en
 /// silence, parce que `[]` se lit « aucun carillon » alors qu'il faut lire « la
 /// caméra n'énumère pas celui-ci ».
 pub(crate) const REASON_CHIME_SANS_ENTRY: &str = concat!(
@@ -601,8 +601,8 @@ impl Writability {
 
 /// Lit une famille, publie ses feuilles, et met le topic `reason` à jour : vide
 /// quand la famille est en bonne santé, la phrase du refus sinon. Répond
-/// `(famille, verdict)`, c'est-à-dire ce que la discovery doit publier — ou ne
-/// pas publier du tout ([`Verdict::Unknown`]).
+/// `(famille, verdict)`, c'est-à-dire ce que la discovery doit publish_now — ou ne
+/// pas publish_now du tout ([`Verdict::Unknown`]).
 ///
 /// C'est **là**, et pas chez l'appelant, que la famille bascule : lecture
 /// réussie → plus aucun motif ; refus → états effacés **et** motif publié. Les
@@ -658,7 +658,7 @@ pub(crate) async fn read_family(
 ///
 /// Il existe parce que la salve de wake ([`crate::burst`]) lit la battery
 /// elle-même — c'est pour son niveau qu'elle se déclenche — et doit quand même
-/// publier les motifs et le verdict comme le fait `query/settings`. Deux chemins
+/// publish_now les motifs et le verdict comme le fait `query/settings`. Deux chemins
 /// qui publient la battery avec deux règles de verdict, c'est exactement la
 /// divergence que ce module refuse partout ailleurs.
 pub(crate) async fn battery_read(
@@ -941,7 +941,7 @@ pub(crate) async fn sync_family(
 ///
 /// Le retour — un `Vec` que l'appelant fournit et qui se remplit au fil de l'eau
 /// — énumère **toutes** les familles dans l'ordre lu, chacune avec son verdict
-/// ([`Verdict`]) : c'est ce dont la discovery a besoin pour publier les réglages
+/// ([`Verdict`]) : c'est ce dont la discovery a besoin pour publish_now les réglages
 /// modifiables, en lecture seule, ou les laisser où ils sont. Une famille refusée
 /// d'un code passager y figure en [`Verdict::Transient`] et se publie
 /// **modifiable** avec sa raison à côté ; une famille qu'on n'a pas pu tenter du

@@ -774,7 +774,7 @@ mod tests {
 				b"reachable".to_vec(),
 				true
 			)],
-			"deux succès consécutifs ne doivent rien publier de plus"
+			"deux succès consécutifs ne doivent rien publish_now de plus"
 		);
 		publ.publish_presence(false).await.unwrap();
 		publ.publish_presence(false).await.unwrap();

@@ -116,7 +116,7 @@ pub(crate) fn motion_hold(
 }
 
 /// Le corps partagé des trois chemins de wake mouvementé : tenir le verrou,
-/// publier l'état de mouvement s'il le faut, **puis** proposer la salve de
+/// publish_now l'état de mouvement s'il le faut, **puis** proposer la salve de
 /// lecture ([`crate::burst`]).
 ///
 /// L'ordre est une règle, pas un détail : l'événement doit être sur le bus avant

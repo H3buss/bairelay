@@ -775,7 +775,7 @@ mod tests {
 		}
 		// Battery level sensor (legacy) plus the five extra battery states
 		// share the 253 frame and the flag: 18 + SPECS − 6, moins le bouton de
-		// carillon, qui n'a pas d'état à publier avant lecture.
+		// carillon, qui n'a pas d'état à publish_now avant lecture.
 		assert_eq!(
 			out.len(),
 			12 + crate::discovery::settings::SPECS.len() - specs_without_state()

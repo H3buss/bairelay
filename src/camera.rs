@@ -766,7 +766,7 @@ impl CameraHandle {
 	}
 
 	/// Le client MQTT de cette caméra, `None` quand le pont tourne sans
-	/// broker. La salve en a besoin pour publier son propre état en plus des
+	/// broker. La salve en a besoin pour publish_now son propre état en plus des
 	/// réglages : le publieur d'état emprunte le client, il faut donc le nommer
 	/// ici aussi.
 	pub(crate) fn mqtt_client(&self) -> Option<&bairelay_mqtt::SharedMqttClient> {

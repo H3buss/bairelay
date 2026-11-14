@@ -22,7 +22,7 @@
 //! 2. **Jamais périodique, jamais au démarrage.** Ce module n'a aucune
 //!    `interval`, aucune `sleep` de cadencement, et n'est appelé d'aucun
 //!    path de démarrage : la mémoire de
-//!    [`crate::family_state::proven_families`] suffit à publier la discovery
+//!    [`crate::family_state::proven_families`] suffit à publish_now la discovery
 //!    sans radio. La seule `sleep` du module est la sonde d'attente de session
 //!    ([`await_session`]), bornée, qui n'émet aucune commande.
 //! 3. **Jamais pendant un flux.** [`CameraHandle::flux_en_cours`] refuse la
@@ -170,7 +170,7 @@ impl Wake {
 /// `status/<cam>/status/burst`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Stop {
-	/// Pas de MQTT : rien à publier, donc rien à lire.
+	/// Pas de MQTT : rien à publish_now, donc rien à lire.
 	NoMqtt,
 	/// Un flux est en cours : la règle 3.
 	Stream,
@@ -477,7 +477,7 @@ async fn task(handle: Arc<CameraHandle>, reason: Wake) {
 			camera = %handle.name(),
 			reason = reason.slug(),
 			state = stop.slug(),
-			"salve sans MQTT : rien à publier, donc rien à lire"
+			"salve sans MQTT : rien à publish_now, donc rien à lire"
 		);
 		return;
 	};
@@ -492,7 +492,7 @@ async fn task(handle: Arc<CameraHandle>, reason: Wake) {
 			reason = reason.slug(),
 			"salve refusée : un flux est en cours"
 		);
-		publier(&mqtt, &prefix, handle.name(), reason, Stop::Stream, 0, 0).await;
+		publish_now(&mqtt, &prefix, handle.name(), reason, Stop::Stream, 0, 0).await;
 		return;
 	}
 
@@ -507,7 +507,7 @@ async fn task(handle: Arc<CameraHandle>, reason: Wake) {
 			salle = ?SESSION_WAIT,
 			"salve sans session Baïchuan : la caméra ne s'est pas laissée joindre"
 		);
-		publier(&mqtt, &prefix, handle.name(), reason, Stop::NoSession, 0, 0).await;
+		publish_now(&mqtt, &prefix, handle.name(), reason, Stop::NoSession, 0, 0).await;
 		return;
 	};
 
@@ -563,7 +563,7 @@ async fn task(handle: Arc<CameraHandle>, reason: Wake) {
 		passageres = read.iter().filter(|(_, v)| *v == Verdict::Transient).count(),
 		"salve de wake terminée : session rendue"
 	);
-	publier(&mqtt, &prefix, handle.name(), reason, stop, commands, read.len()).await;
+	publish_now(&mqtt, &prefix, handle.name(), reason, stop, commands, read.len()).await;
 	// `_verrou` et `_fin` se libèrent ici : la caméra peut se rendormir.
 }
 
@@ -731,7 +731,7 @@ pub(crate) async fn await_session(handle: &CameraHandle) -> Option<Arc<BcCamera>
 /// un topic de diagnostic, et la discovery publierait une entité que
 /// l'opératrice n'a pas demandée. Le motif détaillé, famille par famille, est
 /// déjà publié sur `status/<famille>/reason` par `reglages`.
-async fn publier(
+async fn publish_now(
 	mqtt: &SharedMqttClient,
 	prefix: &str,
 	camera: &str,
