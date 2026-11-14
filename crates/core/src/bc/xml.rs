@@ -1084,28 +1084,44 @@ pub struct TalkAbility {
 	pub audio_config_list: Vec<AudioConfigList>,
 }
 
-/// duplexList xml
+/// `<duplexList>` wrapper carrying the repeated `<duplex>` elements.
+///
+/// A collection, like [`AuthTypeList`] models the repeated `<authType>`:
+/// the tag is a *list*, so a camera advertising both `FDX` and `FBX` in one
+/// `<duplexList>` sends two `<duplex>` children, which a scalar field cannot
+/// hold (quick_xml fails the whole reply with ``duplicate field `duplex` ``).
 #[derive(PartialEq, Eq, Default, Debug, Deserialize, Serialize)]
 pub struct DuplexList {
-	/// The supported duplex known values are "FBX"
+	/// Each supported duplex mode, known values `"FDX"`, `"FBX"`.
 	#[serde(default)]
-	pub duplex: String,
+	pub duplex: Vec<String>,
 }
 
-/// audioStreamModeList xml
+/// `<audioStreamModeList>` wrapper carrying the repeated `<audioStreamMode>`
+/// elements.
+///
+/// Measured on hardware: one `<audioStreamModeList>` carrying *two*
+/// `<audioStreamMode>` children (`followVideoStream`, `mixAudioStream`),
+/// which is what made a scalar field drop the entire `<TalkAbility>` reply
+/// with ``duplicate field `audioStreamMode` ``.
 #[derive(PartialEq, Eq, Default, Debug, Deserialize, Serialize)]
 pub struct AudioStreamModeList {
-	/// The supported audio stream mode
+	/// Each supported audio stream mode, known values `"followVideoStream"`,
+	/// `"mixAudioStream"`.
 	#[serde(default, rename = "audioStreamMode")]
-	pub audio_stream_mode: String,
+	pub audio_stream_mode: Vec<String>,
 }
 
-/// audioConfigList xml
+/// `<audioConfigList>` wrapper carrying the repeated `<audioConfig>` elements.
+///
+/// Same reasoning as [`AudioStreamModeList`]: nothing stops a firmware from
+/// advertising several codecs (different `lengthPerEncoder`, say) inside one
+/// `<audioConfigList>`, and a scalar field would lose the whole reply.
 #[derive(PartialEq, Eq, Default, Debug, Deserialize, Serialize)]
 pub struct AudioConfigList {
-	/// The supported audio configs
+	/// Each supported audio config.
 	#[serde(default, rename = "audioConfig")]
-	pub audio_config: AudioConfig,
+	pub audio_config: Vec<AudioConfig>,
 }
 
 /// An XML that desctibes a list of events such as motion detection
@@ -2322,6 +2338,7 @@ pub struct User {
 	#[serde(default, rename = "userSetState")]
 	pub user_set_state: String,
 }
+
 
 /// Convience function to return the xml version used throughout the library
 pub fn xml_ver() -> String {
