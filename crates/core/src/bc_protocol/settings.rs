@@ -1672,9 +1672,11 @@ impl RawRequest {
 }
 
 /// The shape **this** firmware expects for a settings frame — read
-/// **and** write —, measured on 13/11/2026 with the MQTT probe
-/// (the `RawRequest` series below, driven from
-/// `bairelay/<cam>/control/sonde/<serial>`).
+/// **and** write —, measured on 13/11/2026 on the operator's doorbell with an
+/// MQTT probe that lives outside this repository. The `RawRequest` series below
+/// reproduces the measurement row by row, so the table can be re-run without
+/// the probe; nothing in this project consumes or serves the probe's own topic,
+/// and no bridge topic should be inferred from it.
 ///
 /// Four families refused `400` without ever writing an answer. The variable
 /// was neither the wake nor the body: it is the absence of an `<Extension>` naming the
