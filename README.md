@@ -303,6 +303,38 @@ Arming replaces any other webhook URL on the doorbell, such as Home Assistant's 
 
 ---
 
+### Camera settings families
+
+Beyond video, wake and events, the bridge reads and writes the camera's own setting
+blocks: sixteen families, of which nine publish writable entities, two partly, and five
+read-only (privacy mask, sleep state, Wi-Fi signal, battery, and the AI-detection block,
+which is pinned read-only).
+
+Two rules decide what Home Assistant gets to see:
+
+* **nothing actionable before proof.** A family comes out writable only after the camera
+  has answered a read of it. Until then its entities are published read-only and the
+  reason goes out on `{prefix}/{cam}/status/{family}/reason` — "we have not asked the
+  camera yet" is a different statement from "the camera refuses", and it is published as
+  one.
+* **proof survives a restart.** The families the bridge has proof for are kept in
+  `config-families-read.json`, next to the config file, so restarting the add-on does not
+  make the camera pay fifteen radio commands to re-prove what it proved yesterday. The
+  file holds family slugs and nothing else: no setting values, no identifiers, no secrets.
+
+Writes are batched into one guarded burst, so a battery camera's wake window is not spent
+twice, and a write is followed by a read of the block: what the bridge prints and
+publishes is what the camera kept, not what was asked of it. The same code is reachable
+without the bridge running, as `bairelay audio-settings` and `bairelay chime-settings`.
+
+Per-camera `stream` (for example `stream = "main"`) states which stream that camera may
+serve, whatever the RTSP URL suffix asks for.
+
+Entity labels were french in the revision this work starts from and are english now.
+`unique_id` did not change, so existing `entity_id`s stay put and no automation breaks on
+its own; every label that changed is listed in [`docs/settings.md`](docs/settings.md),
+where a test compares the table with the labels the code actually publishes.
+
 ### Further reading
 
 - [`docs/settings.md`](docs/settings.md) — the camera setting families: what the
