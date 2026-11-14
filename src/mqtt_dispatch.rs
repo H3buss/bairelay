@@ -2312,7 +2312,7 @@ mod tests {
 		let texte = String::from_utf8_lossy(payload).to_string();
 		assert!(*conserve, "le motif est conservé, sinon il disparaît au rechargement");
 		assert!(
-			texte.contains("refusé"),
+			texte.contains("refused"),
 			"le motif doit dire un refus, pas le taire : {texte:?}"
 		);
 		assert!(!texte.contains('<'), "le motif ne porte pas de XML brut : {texte:?}");
@@ -2706,7 +2706,7 @@ mod tests {
 			panic!("un refus ne doit pas être silencieux ; observations : {rows:?}");
 		};
 		assert!(
-			String::from_utf8_lossy(cause).contains("refusé"),
+			String::from_utf8_lossy(cause).contains("refused"),
 			"le motif doit nommer le refus : {:?}",
 			String::from_utf8_lossy(cause)
 		);
@@ -3478,7 +3478,7 @@ mod tests {
 			panic!("un refus ne doit pas être silencieux ; observations : {rows:?}");
 		};
 		let mot = String::from_utf8_lossy(cause).to_string();
-		assert!(mot.contains("refusé"), "le motif doit nommer le refus : {mot}");
+		assert!(mot.contains("refused"), "le motif doit nommer le refus : {mot}");
 		assert!(mot.contains("interval"), "et la balise en cause : {mot}");
 	}
 }
