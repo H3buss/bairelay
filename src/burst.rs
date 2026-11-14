@@ -296,7 +296,7 @@ impl BurstGuard {
 	/// A family was just refused: count, and say how many times in a
 	/// row. A read that succeeds calls [`BurstGuard::note_family_read`]
 	/// and puts the counter back to zero — a family that comes back is not a
-	/// famille morte.
+	/// dead family.
 	pub(crate) fn note_family_refused(&self, family: Family) -> usize {
 		let mut refused = self.refus_familles.lock().unwrap_or_else(|p| p.into_inner());
 		let compteur = refused.entry(family).or_insert(0);
@@ -832,7 +832,7 @@ mod tests {
 			.await;
 		let (mqtt, capture) = mock_client();
 		let handle = Arc::new(CameraHandle::new(
-			minimal_camera_config("cam-salve"),
+			minimal_camera_config("cam-burst"),
 			CancellationToken::new(),
 			Some(mqtt),
 		));
@@ -852,7 +852,7 @@ mod tests {
 		let state = capture
 			.published_payloads()
 			.into_iter()
-			.find(|(t, _)| t == "bairelay/cam-salve/status/burst")
+			.find(|(t, _)| t == "bairelay/cam-burst/status/burst")
 			.expect("the burst state is published");
 		let state = String::from_utf8_lossy(&state.1).into_owned();
 		assert!(state.starts_with("{\"reason\":\"press\""), "{state}");
