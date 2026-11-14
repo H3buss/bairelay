@@ -312,7 +312,7 @@ pub async fn dispatch_control(
 					crate::settings::publish_reason(
 						&publisher,
 						family,
-						crate::settings::REASON_SANS_SESSION,
+						crate::settings::REASON_NO_SESSION,
 					)
 					.await;
 					Err(Error::Other("settings need a connected Baichuan session"))

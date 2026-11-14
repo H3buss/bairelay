@@ -359,7 +359,7 @@ pub(crate) const REASON_READ_ONLY: &str =
 /// The bridge has no open Baichuan session: the command could not leave.
 /// This is not the camera refusing, but it is a refusal — and a refusal that
 /// stays silent is indistinguishable from a dead bridge.
-pub(crate) const REASON_SANS_SESSION: &str =
+pub(crate) const REASON_NO_SESSION: &str =
 	"no Baichuan session is open: nothing was sent to the camera";
 
 /// What the camera just answered was wrong **once**: the setting is not locked for
@@ -369,7 +369,7 @@ pub(crate) const REASON_SANS_SESSION: &str =
 ///
 /// Built in two parts because the first half is the technical reason,
 /// which varies with the error: see [`publish_reason_unknown`].
-pub(crate) const REASON_SANS_VERROUILLAGE: &str =
+pub(crate) const REASON_NO_LOCK: &str =
 	" - setting not locked: the family keeps its state";
 
 /// The consequence of a **transient** refusal, published this time **first** in
@@ -385,7 +385,7 @@ pub(crate) const REASON_TRANSITOIRE: &str =
 /// wrongly — we are the ones who cannot write without inventing a tag, the one
 /// thing this bridge refuses everywhere. Naming the tag is the point of the
 /// sentence: it is what is left to read when the camera is not at hand.
-pub(crate) const REASON_SANS_OSDCHANNEL: &str = concat!(
+pub(crate) const REASON_NO_OSDCHANNEL: &str = concat!(
 	"the camera's answer carries no <OsdChannelName>: ",
 	"nothing to send back, read-only"
 );
@@ -398,14 +398,14 @@ pub(crate) const REASON_SANS_OSDCHANNEL: &str = concat!(
 /// and an empty list published. The reason says so instead of publishing `[]`
 /// in silence, because `[]` reads as “no chime” when what has to be read is “the
 /// camera does not enumerate this one”.
-pub(crate) const REASON_CHIME_SANS_ENTRY: &str = concat!(
+pub(crate) const REASON_CHIME_NO_ENTRY: &str = concat!(
 	"484 answered with nothing recognised: chime not enumerated, ",
 	"so there is nothing to address on 485"
 );
 
 /// Same verdict, other cause: 484 did not answer at all (a model without a
 /// wireless chime, or a refusal). The nuance matters, so it is kept distinct.
-pub(crate) const REASON_CHIME_SANS_ID: &str = concat!(
+pub(crate) const REASON_CHIME_NO_ID: &str = concat!(
 	"the camera did not answer 484: no chime id, ",
 	"so there is nothing to address on 485"
 );
@@ -416,7 +416,7 @@ pub(crate) const REASON_CHIME_SANS_ID: &str = concat!(
 /// **per type**) document only `<sensitivity>`, `<stayTime>` and target sizes.
 /// Publishing a `command_topic` here would promise the writing of an invented
 /// tag; the reason therefore names what has to be reported from the field.
-pub(crate) const REASON_AI_SANS_BALISE: &str = concat!(
+pub(crate) const REASON_AI_NO_TAG: &str = concat!(
 	"no known enable tag for this type (342/AiDetectCfg documents only ",
 	"sensitivity, stayTime, sizes): no command topic"
 );
@@ -437,7 +437,7 @@ pub(crate) async fn publish_reason(publ: &StatusPublisher<'_>, family: Family, r
 /// wrongly, or did not answer, and the bridge changes nothing else but this topic.
 ///
 /// The sentence carries the technical reason **and** the consequence for Home
-/// Assistant ([`REASON_SANS_VERROUILLAGE`]): what is written here locks no
+/// Assistant ([`REASON_NO_LOCK`]): what is written here locks no
 /// entity. That is the half the operator looks at first, and without it a
 /// `400` during a burst of fifteen commands looks like a forbidden setting.
 pub(crate) async fn publish_reason_unknown(
@@ -445,7 +445,7 @@ pub(crate) async fn publish_reason_unknown(
 	family: Family,
 	reason: &str,
 ) {
-	publish_reason(publ, family, &format!("{reason}{REASON_SANS_VERROUILLAGE}")).await;
+	publish_reason(publ, family, &format!("{reason}{REASON_NO_LOCK}")).await;
 }
 
 /// Publishes the reason for a **transient** refusal: the camera answered badly, too
@@ -818,7 +818,7 @@ pub(crate) async fn sync_family(
 			// three — a trade-off accepted and written down with the OSD analysis.
 			if cfg.channel_name.is_none() {
 				scope.writable = false;
-				scope.cause = Some(REASON_SANS_OSDCHANNEL);
+				scope.cause = Some(REASON_NO_OSDCHANNEL);
 			}
 			publish_osd(publ, &cfg).await;
 			Ok(4)
@@ -902,9 +902,9 @@ pub(crate) async fn sync_family(
 			if cfg.chime_id.is_none() {
 				scope.writable = false;
 				scope.cause = Some(if cfg.list_answered_without_entry {
-					REASON_CHIME_SANS_ENTRY
+					REASON_CHIME_NO_ENTRY
 				} else {
-					REASON_CHIME_SANS_ID
+					REASON_CHIME_NO_ID
 				});
 			}
 			Ok(4)
@@ -923,7 +923,7 @@ pub(crate) async fn sync_family(
 			// check to perform; and hence no state touched here — the event
 			// sensors' states are not read back.
 			scope.writable = false;
-			scope.cause = Some(REASON_AI_SANS_BALISE);
+			scope.cause = Some(REASON_AI_NO_TAG);
 			Ok(0)
 		}
 		.await,
