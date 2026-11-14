@@ -662,11 +662,12 @@ impl BcCamera {
 	/// `has_ability_rw` gates let the command through for **this session
 	/// only**.
 	///
-	/// This is the single escape hatch for firmware that under-reports: it is
-	/// off unless a caller passes it explicitly (the binary wires it to the
-	/// per-camera `two_way_audio = true` config entry, whose default is
-	/// `false`), it never touches the advertised-ability report, and it never
-	/// relaxes the gate for any other camera. Call it after `login` —
+	/// This is the single escape hatch for firmware that under-reports: the set
+	/// is empty unless a caller names an ability explicitly, it never touches
+	/// the advertised-ability report, and it never relaxes the gate for any
+	/// other camera. On this branch the only callers are tests: no tool and no
+	/// MQTT path opts a camera in, so the set stays empty in production. Call it
+	/// after `login` —
 	/// `login` is what fills the ability map it sits beside.
 	pub async fn declare_ability(&self, name: impl Into<String>) {
 		self.ability_assertions.write().await.insert(name.into());
