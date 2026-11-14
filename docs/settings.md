@@ -6,11 +6,15 @@ as discovered entities. It exists because a battery doorbell answers for a few
 seconds at a time: everything here is organised around spending that window
 well.
 
-The protocol-level notebooks the measurements come from
-(`docs/protocole-reglages.md`, `docs/reglages-app-reolink.md`,
-`docs/canal-evenements-udp.md`) live with the capture tooling on the audio
-branch. Wherever one of those measurements decides a behaviour, the number is
-restated here, so this file is enough to review the behaviour.
+The measurements come from the operator's private protocol notebooks, which are
+**not published with this repository**: they carry the device identifier in clear
+text, the camera's administrator account, broker credentials and the home's public
+host name, and this camera is off the cloud precisely so that it cannot be found.
+A cleaned-up copy is not the fix — a notebook that has held a credential is not
+something to publish in a hurry. So the citations in the code say where a thing was
+measured rather than pointing at a file nobody outside the house can open, and
+wherever a measurement decides a behaviour, the number is restated here and in the
+comment that depends on it. This file is enough to review the behaviour.
 
 ## Families
 

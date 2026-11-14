@@ -63,7 +63,7 @@ pub enum Feature {
 	Pir,
 	Ai,
 	Doorbell,
-	// ── Réglages (voir `reglages.rs` et `docs/protocole-reglages.md`) ────
+	// ── Réglages (voir `settings.rs` et le carnet de protocole de l'exploitante) ──
 	/// `<audioCfg>` (264/265) : volumes et haut-parleur visiteur.
 	Audio,
 	/// `<aiDenoise>` (439/440) : débruiteur micro.

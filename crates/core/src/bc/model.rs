@@ -68,7 +68,7 @@ pub const MSG_ID_GET_OSD: u32 = 44;
 /// Write the OSD blocks back (both carriers, patched in place).
 pub const MSG_ID_SET_OSD: u32 = 45;
 /// Read the motion-detection configuration. The reply carries `<MdAlarm>`
-/// on the firmwares documented in `docs/protocole-reglages.md`, and `<MD>`
+/// on the firmwares recorded on the operator's doorbell, and `<MD>`
 /// on the ones that print the setter's own shape; both are modelled.
 pub const MSG_ID_GET_MOTION_DETECT: u32 = 46;
 /// Write the motion-detection configuration. Documented request body is
@@ -170,7 +170,7 @@ pub const MSG_ID_SET_ZOOM_FOCUS: u32 = 295;
 /// Read one AI-detection type's `<AiDetectCfg>`. The request names the type,
 /// so there is no single all-types read.
 ///
-/// **Tranche documentée** (`docs/protocole-reglages.md` §4.2): les deux
+/// **Tranche documentée** (le carnet de protocole de l'exploitante): les deux
 /// sources amont se contredisent sur le setter (343 vs 345), mais le **code
 /// exécutable** de la lib de référence n'utilise que **343** — c'est donc 343
 /// qui est coté ici, et 345 qui reste une note. `bairelay` n'écrit pas

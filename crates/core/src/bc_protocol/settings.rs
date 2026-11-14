@@ -1,5 +1,5 @@
-//! The camera's settings, block by block — `docs/protocole-reglages.md`
-//! is this module's specification.
+//! The camera's settings, block by block. The measurements behind these rules
+//! live in the operator's private notebook, so every number is restated here.
 //!
 //! Every family follows the same law, taken from reading the reference
 //! library (`Api.ts`: `setAudioCfg`, `setImage`, `setMask`, `setNtp`,
@@ -643,8 +643,8 @@ impl BcCamera {
 	/// Writes `<SystemGeneral>` (msg 105) **without touching the clock**, then re-reads
 	/// (104) and returns the re-read.
 	///
-	/// Two markers imposed by the firmware (`docs/protocole-reglages.md`
-	/// §6.2, payloads confirmed by pcap) are set here and nowhere else:
+	/// Two markers imposed by the firmware (measured, and the payloads confirmed
+	/// by pcap) are set here and nowhere else:
 	///
 	/// * `<year>0</year>` = "do not re-set the manual time". Without it the
 	///   camera re-sets the clock from the block's `year…second` fields, which

@@ -1,7 +1,7 @@
 //! Entités de réglages pour la discovery Home Assistant.
 //!
-//! Tout le cahier des charges des réglages vit dans
-//! `docs/protocole-reglages.md`; ce fichier n'en est que la vitrine MQTT. Il
+//! Tout le cahier des charges des réglages vit dans le carnet de protocole de
+//! l'exploitante, qui n'est pas publié ; ce fichier n'en est que la vitrine MQTT. Il
 //! est **tableau-driven** pour une raison : chaque entité décrite ici doit
 //! tomber pile sur les topics que le binaire publie (`status/<famille>/<feuille>`)
 //! et accepte (`control/<famille>/<feuille>`). Une liste de spécifications

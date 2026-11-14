@@ -8,7 +8,7 @@
 //! * certaines firmwares acceptent la requête (200) puis stockent n'importe
 //!   quoi — un `OK` mensonger ;
 //! * d'autres éteignent silencieusement le réglage concerné ;
-//! * et surtout, `docs/protocole-reglages.md` §1 : un bloc partiellement
+//! * et surtout, le carnet de protocole de l'exploitante : un bloc partiellement
 //!   invalide peut être annulé **sans réponse d'erreur**.
 //!
 //! Le refus se traduit par un `FAIL` sur le même topic control, ce que Home
@@ -61,8 +61,8 @@ pub enum Family {
 	/// Rien ici ne correspond à une commande unique : l'état vient de la poussée
 	/// 33, et les réglages par type (`<AiDetectCfg>`, 342/343) sont interrogés
 	/// **un par type**, avec une balise d'activation que personne n'a jamais lue
-	/// (`docs/reglages-app-reolink.md` lignes 55-58, `docs/protocole-reglages.md`
-	/// §4.2). La famille est donc épinglée en lecture seule tant que le dump 342
+	/// mesurés dans l'application et dans le carnet de l'exploitante.
+	/// La famille est donc épinglée en lecture seule tant que le dump 342
 	/// n'existe pas — et c'est `status/ai/reason` qui le dit, au lieu du silence
 	/// actuel.
 	Ai,
@@ -400,7 +400,7 @@ impl SettingCommand {
 			(Family::Motion, "sensitivity") => MotionSensitivity(int_in(p, 0, 50)?),
 			(Family::Pir, "sensitivity") => PirSensitivity(int_in(p, 0, 100)?),
 			// 5-120 s : la plage que l'application Reolink expose pour ce
-			// réglage (`reglages-app-reolink.md`, ligne 51). Le firmware peut en
+			// réglage (mesuré dans l'application). Le firmware peut en
 			// annoncer de plus étroites dans `intervalSecMin`/`intervalSecMax` :
 			// dans ce cas il garde ce qu'il accepte, et c'est la relecture qui est
 			// publiée — pas la valeur demandée.

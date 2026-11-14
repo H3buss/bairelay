@@ -3167,8 +3167,8 @@ pub struct AutoReboot {
 /// as printed **capitalised** (`Version="1.1"`), so both spellings are
 /// carried: whichever the camera used comes back out, and the other stays
 /// absent. This block is the closest thing the protocol has to a microphone
-/// setting — no mic gain or mic mute exists anywhere in the surface (see
-/// `docs/protocole-reglages.md` §2, « Absences »).
+/// setting — no mic gain or mic mute exists anywhere in the surface that was
+/// measured on this doorbell).
 #[derive(PartialEq, Eq, Default, Debug, Clone, Deserialize, Serialize)]
 pub struct AiDenoise {
 	/// XML Version, capitalised spelling (`<aiDenoise Version="1.1">`).
@@ -3415,7 +3415,7 @@ pub struct OsdChannelName {
 /// `shelterList` whose per-mask child tags (and the `pixel << 16 | canvas`
 /// coordinate coding) have no local capture, and the firmware "rejects, or
 /// silently cancels, a block that omits fields it sent"
-/// (`docs/protocole-reglages.md` §1). Serialising this struct would therefore
+/// (observed on the operator's doorbell). Serialising this struct would therefore
 /// send back a block amputated of the masks themselves — exactly the failure
 /// the house rules forbid — so `set_privacy_masks` refuses instead of
 /// guessing. `enable`/`maxNum` are still worth reading.
@@ -3499,7 +3499,7 @@ pub struct MdScope {
 }
 
 /// `<MdAlarm>` — the shape the msg **46** getter is documented to answer on
-/// the firmwares `docs/protocole-reglages.md` §4.1 studied. Readable, **never
+/// the firmwares measured on the operator's doorbell. Readable, **never
 /// written**: the block's "champs libres" are not enumerated anywhere, and a
 /// write built from this struct would drop them.
 #[derive(PartialEq, Eq, Default, Debug, Clone, Deserialize, Serialize)]
