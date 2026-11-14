@@ -570,7 +570,7 @@ pub fn build_floodlight_tasks_switch(ctx: &DiscoveryContext) -> Option<(String, 
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "floodlight_tasks");
 	let payload = DiscoverySwitch {
-		name: "Horaires du projecteur".to_string(),
+		name: "Floodlight schedule".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:spotlight-beam".to_string()),
 		device: device_block(ctx, &friendly),
@@ -608,7 +608,7 @@ pub fn build_motion(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "md");
 	let payload = DiscoveryBinarySensor {
-		name: "Mouvement détecté".to_string(),
+		name: "Motion detected".to_string(),
 		unique_id: unique_id.clone(),
 		device_class: None,
 		icon: Some("mdi:motion-sensor".to_string()),
@@ -694,7 +694,7 @@ pub fn build_ai_binary_sensors(ctx: &DiscoveryContext) -> Vec<(String, Vec<u8>)>
 		.map(|object| {
 			let (unique_id, topic) = ai_ids(ctx, object);
 			let payload = DiscoveryBinarySensor {
-				name: format!("Reconnaissance {}", object.short_name()),
+				name: format!("{} detection", object.display_name()),
 				unique_id,
 				device_class: Some(object.device_class().to_string()),
 				icon: Some(object.icon().to_string()),
@@ -718,7 +718,7 @@ pub fn build_doorbell(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let (unique_id, topic) = doorbell_ids(ctx);
 	let payload = DiscoveryEvent {
-		name: "Appui sur le bouton".to_string(),
+		name: "Button press".to_string(),
 		unique_id,
 		device_class: "doorbell".to_string(),
 		icon: "mdi:doorbell".to_string(),
@@ -742,7 +742,7 @@ pub fn build_led(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let (unique_id, topic) = led_ids(ctx);
 	let payload = DiscoverySwitch {
-		name: "Voyant lumineux".to_string(),
+		name: "Status light".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:led-on".to_string()),
 		device: device_block(ctx, &friendly),
@@ -772,7 +772,7 @@ pub fn build_ir(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let (unique_id, topic) = ir_ids(ctx);
 	let payload = DiscoverySelect {
-		name: "Mode infrarouge".to_string(),
+		name: "Infrared mode".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:lightbulb-night".to_string()),
 		device: device_block(ctx, &friendly),
@@ -797,7 +797,7 @@ pub fn build_pir(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "pir");
 	let payload = DiscoverySwitch {
-		name: "Détection PIR".to_string(),
+		name: "PIR detection".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:motion-sensor".to_string()),
 		device: device_block(ctx, &friendly),
@@ -881,10 +881,10 @@ pub fn build_pt_buttons(ctx: &DiscoveryContext) -> Vec<(String, Vec<u8>)> {
 	}
 	let friendly = title_case(ctx.camera_name);
 	let mut out = Vec::with_capacity(4);
-	for (dir, sens) in [("left", "gauche"), ("right", "droite"), ("up", "haut"), ("down", "bas")] {
+	for (dir, word) in [("left", "Left"), ("right", "Right"), ("up", "Up"), ("down", "Down")] {
 		let unique_id = unique(ctx.topic_prefix, ctx.camera_name, &format!("pan_{dir}"));
 		let payload = DiscoveryButton {
-			name: format!("PTZ {sens}"),
+			name: format!("PTZ {word}"),
 			unique_id: unique_id.clone(),
 			icon: Some(format!("mdi:pan-{dir}")),
 			device: device_block(ctx, &friendly),
@@ -904,7 +904,7 @@ pub fn build_battery(ctx: &DiscoveryContext) -> Option<(String, Vec<u8>)> {
 	let friendly = title_case(ctx.camera_name);
 	let unique_id = unique(ctx.topic_prefix, ctx.camera_name, "battery");
 	let payload = DiscoverySensor {
-		name: "Niveau de batterie".to_string(),
+		name: "Battery level".to_string(),
 		unique_id: unique_id.clone(),
 		icon: Some("mdi:battery".to_string()),
 		device: device_block(ctx, &friendly),
@@ -1375,7 +1375,7 @@ mod tests {
 		// Le libellé dit **ce que c'est**, pas à qui ça appartient : le nom de
 		// l'appareil est déjà porté par `device`, et Home Assistant l'affiche au-
 		// dessus de la carte. `unique_id` et les topics, eux, ne bougent pas.
-		assert_eq!(v["name"], "Reconnaissance personne");
+		assert_eq!(v["name"], "Person detection");
 		assert_eq!(v["unique_id"], "bairelay_frontdoor_ai_person");
 		assert_eq!(v["device_class"], "motion");
 		assert_eq!(v["icon"], "mdi:account");
@@ -1419,12 +1419,12 @@ mod tests {
 			})
 			.collect();
 		let expect = [
-			("Reconnaissance personne", "motion", "mdi:account"),
-			("Reconnaissance véhicule", "motion", "mdi:car"),
-			("Reconnaissance animal", "motion", "mdi:paw"),
-			("Reconnaissance figure", "motion", "mdi:face-recognition"),
+			("Person detection", "motion", "mdi:account"),
+			("Vehicle detection", "motion", "mdi:car"),
+			("Animal detection", "motion", "mdi:paw"),
+			("Face detection", "motion", "mdi:face-recognition"),
 			(
-				"Reconnaissance colis",
+				"Package detection",
 				"presence",
 				"mdi:package-variant-closed",
 			),
@@ -1463,7 +1463,7 @@ mod tests {
 			"homeassistant/event/bairelay_frontdoor_doorbell/config"
 		);
 		let v = parse(&payload);
-		assert_eq!(v["name"], "Appui sur le bouton");
+		assert_eq!(v["name"], "Button press");
 		assert_eq!(v["unique_id"], "bairelay_frontdoor_doorbell");
 		assert_eq!(v["device_class"], "doorbell");
 		assert_eq!(v["event_types"], serde_json::json!(["press"]));

@@ -183,6 +183,145 @@ setup that only ever shows the substream in Home Assistant should say
 `stream = "sub"`, and then a stray `/main` from an old dashboard costs nothing
 instead of costing a wake.
 
+## Renaming
+
+Everything the bridge **shows** is English now: Home Assistant entity names, the
+reason sentences on `status/{family}/reason`, and the values on `status/burst`.
+Everything Home Assistant **keys on** is untouched: `unique_id`, `object_id`, the
+config topics, the state topics and the state payloads.
+
+That distinction is the whole migration. Home Assistant assigns an `entity_id`
+once, when it first sees a discovery record, and never renames it when the
+`name` field later changes. So his automations that reference
+`number.bairelay_frontdoor_volume_visiteur` keep working exactly as written; what
+changes is the label next to it in the dashboard. The two things that would have
+broken them — a changed `unique_id`, or a retained config left behind on an old
+topic — did not happen here, and `topic_names_match_spec` plus
+`chaque_spec_a_un_unique_id_unique` are what keep them from happening later.
+
+### Entity names
+
+| was | now |
+| --- | --- |
+| Volume général | Speaker volume |
+| Volume interphone (parole) | Intercom volume (talk) |
+| Volume visiteur | Visitor volume |
+| Haut-parleur visiteur | Visitor loudspeaker |
+| Débruitage micro | Microphone denoise |
+| Force débruitage | Force denoise |
+| Luminosité | Brightness |
+| Contraste | Contrast |
+| Saturation | Saturation |
+| Teinte | Hue |
+| Netteté | Sharpness |
+| Mode jour/nuit | Day/night mode |
+| Horodatage à l'écran | On-screen timestamp |
+| Nom à l'écran | On-screen name |
+| Texte du nom à l'écran | On-screen name text |
+| Filigrane | Watermark |
+| Détection de mouvement | Motion detection |
+| Sensibilité mouvement | Motion sensitivity |
+| Sensibilité PIR | PIR sensitivity |
+| Intervalle entre deux déclenchements PIR | PIR trigger interval |
+| Synchro NTP | NTP sync |
+| Serveur NTP | NTP server |
+| Intervalle de synchro | Sync interval |
+| Heure d'été | Daylight saving |
+| Décalage heure d'été | Daylight saving offset |
+| Redémarrage automatique | Auto reboot |
+| Jour de redémarrage | Reboot day |
+| Heure de redémarrage | Reboot hour |
+| Minute de redémarrage | Reboot minute |
+| Format de date | Date format |
+| Format heure (0=24h, 1=12h) | Time format (0=24h, 1=12h) |
+| Langue | Language |
+| Nom système de l'appareil | Device system name |
+| En heure d'été actuellement | Currently in daylight saving |
+| Masquage actif | Masking active |
+| Emplacements de masque | Mask slots |
+| En veille | Sleeping |
+| Signal Wi-Fi | Wi-Fi signal |
+| Tension batterie | Battery voltage |
+| Courant batterie | Battery current |
+| Température batterie | Battery temperature |
+| État de charge | Charge status |
+| Batterie faible | Battery low |
+| Carillons appairés | Paired chimes |
+| Volume du carillon | Chime volume |
+| Mélodie du carillon | Chime melody |
+| Mélodies déclarées par la caméra | Camera-declared melodies |
+| Faire sonner le carillon | Ring the chime |
+| Horaires du projecteur | Floodlight schedule |
+| Mouvement détecté | Motion detected |
+| Appui sur le bouton | Button press |
+| Voyant lumineux | Status light |
+| Mode infrarouge | Infrared mode |
+| Détection PIR | PIR detection |
+| Niveau de batterie | Battery level |
+| PTZ gauche / droite / haut / bas | PTZ Left / PTZ Right / PTZ Up / PTZ Down |
+| Reconnaissance personne / véhicule / animal / figure / colis | Person detection / Vehicle detection / Animal detection / Face detection / Package detection |
+
+### Reason sentences on `status/{family}/reason`
+
+Non-retained, ephemeral, nothing keys on them — they are for the human reading
+the log or the entity's last state.
+
+| was | now |
+| --- | --- |
+| la caméra n'a pas répondu à temps | the camera did not answer in time |
+| la caméra lit ce réglage mais refuse qu'on lui renvoie le bloc : lecture seule | the camera reads this setting but refuses the block back: read-only |
+| aucune session Baïchuan en cours : rien n'a été envoyé à la caméra | no Baichuan session is open: nothing was sent to the camera |
+| — réglage non verrouillé : la famille garde son état | — setting not locked: the family keeps its state |
+| erreur de lecture transitoire : la famille reste publiée modifiable | transient read error: the family stays published as writable |
+| la réponse de la caméra ne contient pas `<OsdChannelName>` : rien à lui renvoyer, lecture seule | the camera's answer carries no `<OsdChannelName>`: nothing to send back, read-only |
+| 484 a répondu sans aucune entrée reconnue : carillon non énuméré, … | 484 answered with nothing recognised: chime not enumerated, … |
+| la caméra n'a pas répondu à 484 : aucun identifiant de carillon, … | the camera did not answer 484: no chime id, … |
+| aucune balise d'activation connue par type (342/AiDetectCfg ne documente que … | no known enable tag for this type (342/AiDetectCfg documents only … |
+| la caméra n'a donné aucun motif | the camera gave no reason |
+| motif masqué : il aurait pu contenir un secret | reason hidden: it could have contained a secret |
+
+The credential mask still matches the French words `mot de passe` — that list is
+a scanner over the camera's text, not a label, and translating it would blind the
+mask.
+
+### `status/burst` payload
+
+The keys changed too, because the topic is new on this branch and nothing
+consumes it yet — cheaper to fix now than after someone builds a dashboard on it.
+
+```json
+{"raison":"appui","etat":"terminee","commandes":3,"budget":8,"familles":2}
+{"reason":"press","state":"done","commands":3,"budget":8,"families":2}
+```
+
+| key | now |
+| --- | --- |
+| raison | reason — `appui`→`press`, `mouvement`→`motion`, `poussee`→`push` |
+| etat | state — `sans-mqtt`→`no-mqtt`, `flux`→`stream`, `sans-session`→`no-session`, `refus`→`refused`, `budget`→`budget`, `duree`→`duration`, `annulee`→`cancelled`, `terminee`→`done` |
+| commandes | commands |
+| familles | families |
+
+### Ghost entities, and what still guards against them
+
+When an `object_id` really does change, Home Assistant publishes the new entity
+and keeps the old one until an empty retained payload arrives on the old config
+topic. The bridge already does that diff: `publish()` records the topic set it
+published per camera and clears every topic that disappeared from it
+(`publish_diffs_against_previous_set_clears_disappearing_topics`,
+`une_famille_relue_se_publie_vide_avant_sa_nouvelle_configuration`), which covers
+a *known* entity whose identity changes — not only an unknown camera.
+
+The one thing that mechanism cannot see is a change made **between two runs**:
+the recorded set lives in memory, so a restart never diffs against what the
+previous version published. Nothing needs that today — no slug moved — but this
+pass nearly needed it: the label pass first rewrote `AiObject::Animal =>
+"animal"` inside `topic_name()`, which is the topic and `unique_id` suffix, not
+the label, and `topic_names_match_spec` failed immediately. So the protection is
+the pinned wire contract, not the cleanup: `topic_name()` now carries a doc line
+saying it is wire surface, and those tests are what stand between a rename and
+two hundred entities his dashboard no longer finds.
+
+
 ## Options
 
 Everything the engine reads, and where the rest of its tuning lives:

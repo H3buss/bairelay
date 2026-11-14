@@ -2881,7 +2881,7 @@ mod tests {
 		};
 		assert!(*conserve, "le motif est conservé");
 		assert!(
-			String::from_utf8_lossy(motif).contains("lecture seule"),
+			String::from_utf8_lossy(motif).contains("read-only"),
 			"le motif doit dire la lecture seule, pas un défaut de lecture : {:?}",
 			String::from_utf8_lossy(motif)
 		);
@@ -3013,11 +3013,11 @@ mod tests {
 		let mot = String::from_utf8_lossy(motif).to_string();
 		assert!(mot.contains("400"), "le motif doit citer le code reçu : {mot}");
 		assert!(
-			mot.contains("reste publiée modifiable"),
+			mot.contains("stays published as writable"),
 			"et annonce d'abord la conséquence, avant le détail technique : {mot}"
 		);
 		assert!(
-			!mot.contains("non verrouillé"),
+			!mot.contains("not locked"),
 			"le refus passager a sa propre phrase, celle du verdict indéterminé \
 			 ne doit pas resservir : {mot}"
 		);
@@ -3096,7 +3096,7 @@ mod tests {
 			panic!("et la raison du refus s'affiche à côté ; observations : {rows:?}");
 		};
 		let mot = String::from_utf8_lossy(motif).to_string();
-		assert!(mot.contains("400") && mot.contains("modifiable"), "les deux ensemble : {mot}");
+		assert!(mot.contains("400") && mot.contains("writable"), "les deux ensemble : {mot}");
 	}
 
 	/// La limite de la correction : un refus qui n'est **pas** une raison passagère
@@ -3157,7 +3157,7 @@ mod tests {
 		};
 		let mot = String::from_utf8_lossy(motif).to_string();
 		assert!(mot.contains("500"), "le motif cite le code : {mot}");
-		assert!(mot.contains("non verrouillé"), "et le verdict indéterminé garde sa phrase : {mot}");
+		assert!(mot.contains("not locked"), "et le verdict indéterminé garde sa phrase : {mot}");
 	}
 
 	/// La suite du même incident, à l'endroit où le terrain l'a vérifié : une
@@ -3291,7 +3291,7 @@ mod tests {
 			mot.contains("OsdChannelName"),
 			"le motif doit nommer la balise absente : {mot}"
 		);
-		assert!(mot.contains("lecture seule"), "et le statut de la famille : {mot}");
+		assert!(mot.contains("read-only"), "et le statut de la famille : {mot}");
 		for (topic, payload, _) in
 			rows.iter().filter(|(t, p, _)| t.starts_with("homeassistant/") && t.ends_with("/config") && !p.is_empty())
 		{

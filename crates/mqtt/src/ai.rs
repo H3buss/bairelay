@@ -21,7 +21,9 @@ impl AiObject {
 		AiObject::Package,
 	];
 
-	/// Lower-case name used in topics and unique-id suffixes.
+	/// Lower-case name used in topics and unique-id suffixes. **Wire surface**:
+	/// these strings are MQTT topics and Home Assistant `unique_id`s, so changing
+	/// one moves the entity instead of renaming it. They are not labels.
 	pub fn topic_name(self) -> &'static str {
 		match self {
 			AiObject::Person => "person",
@@ -32,7 +34,9 @@ impl AiObject {
 		}
 	}
 
-	/// Entity display name in Home Assistant.
+	/// Entity display name in Home Assistant: the class word inside the
+	/// label (`Person detection`). Capitalised because Home Assistant shows it as
+	/// the entity's name.
 	pub fn display_name(self) -> &'static str {
 		match self {
 			AiObject::Person => "Person",
@@ -43,19 +47,6 @@ impl AiObject {
 		}
 	}
 
-	/// French short class name, used inside a Home Assistant entity label
-	/// (« Reconnaissance personne »). The label must say what the entity is,
-	/// never which camera it belongs to, so the class word has to be readable
-	/// on its own — hence French here, like every other published label.
-	pub fn short_name(self) -> &'static str {
-		match self {
-			AiObject::Person => "personne",
-			AiObject::Vehicle => "véhicule",
-			AiObject::Animal => "animal",
-			AiObject::Face => "figure",
-			AiObject::Package => "colis",
-		}
-	}
 
 	/// Material Design icon of the entity.
 	pub fn icon(self) -> &'static str {

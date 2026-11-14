@@ -350,17 +350,17 @@ pub(crate) async fn clear_family(publ: &StatusPublisher<'_>, family: Family) {
 
 /// Le motif qu'une famille n'a pas répondu dans le délai. Le timeout est déclenché
 /// par le dispatch, pas par le cœur protocole : c'est ici qu'on sait le dire.
-pub(crate) const REASON_TIMEOUT: &str = "la caméra n'a pas répondu à temps";
+pub(crate) const REASON_TIMEOUT: &str = "the camera did not answer in time";
 
 /// Met une famille en état d'être lue sans être écrite, et le dit.
 pub(crate) const REASON_LECTURE_SEULE: &str =
-	"la caméra lit ce réglage mais refuse qu'on lui renvoie le bloc : lecture seule";
+	"the camera reads this setting but refuses the block back: read-only";
 
 /// Le pont n'a pas de session Baïchuan en cours : la commande n'a pas pu partir.
 /// Ce n'est pas un refus de la caméra, mais c'est un refus — et un refus qui se
 /// tait est indistinguable d'un pont mort.
 pub(crate) const REASON_SANS_SESSION: &str =
-	"aucune session Baïchuan en cours : rien n'a été envoyé à la caméra";
+	"no Baichuan session is open: nothing was sent to the camera";
 
 /// Ce que la caméra vient de répondre était mauvais **une fois** : le réglage
 /// n'est pas verrouillé pour autant, et le topic doit le dire. Sans ce suffixe,
@@ -370,7 +370,7 @@ pub(crate) const REASON_SANS_SESSION: &str =
 /// Formé en deux parties parce que la première moitié est le motif technique,
 /// variable selon l'erreur : voir [`publish_reason_unknown`].
 pub(crate) const REASON_SANS_VERROUILLAGE: &str =
-	" — réglage non verrouillé : la famille garde son état";
+	" — setting not locked: the family keeps its state";
 
 /// La conséquence d'un refus **transitoire**, publiée cette fois **en tête** de
 /// la phrase : [`publishable_reason`] coupe à 160 caractères en gardant le début,
@@ -378,7 +378,7 @@ pub(crate) const REASON_SANS_VERROUILLAGE: &str =
 /// de la caméra est incompréhensible : …`). Or c'est précisément la moitié que
 /// l'opératrice regarde : la famille est-elle utilisable ou non.
 pub(crate) const REASON_TRANSITOIRE: &str =
-	"erreur de lecture transitoire : la famille reste publiée modifiable";
+	"transient read error: the family stays published as writable";
 
 /// Refus **local** et structurel : la balise qu'il faudrait renvoyer pour écrire
 /// n'est pas dans la réponse de la caméra. Ce n'est pas la caméra qui a répondu
@@ -386,8 +386,8 @@ pub(crate) const REASON_TRANSITOIRE: &str =
 /// seule chose que ce pont refuse partout. Nommer la balise est le but de la
 /// phrase : c'est ce qui reste à lire quand on n'a pas la caméra sous la main.
 pub(crate) const REASON_SANS_OSDCHANNEL: &str = concat!(
-	"la réponse de la caméra ne contient pas <OsdChannelName> : ",
-	"rien à lui renvoyer, lecture seule"
+	"the camera's answer carries no <OsdChannelName>: ",
+	"nothing to send back, read-only"
 );
 
 /// Refus **local**, lui aussi : la caméra a bien répondu au 484 (liste des
@@ -399,14 +399,14 @@ pub(crate) const REASON_SANS_OSDCHANNEL: &str = concat!(
 /// silence, parce que `[]` se lit « aucun carillon » alors qu'il faut lire « la
 /// caméra n'énumère pas celui-ci ».
 pub(crate) const REASON_CARILLON_SANS_ENTREE: &str = concat!(
-	"484 a répondu sans aucune entrée reconnue : carillon non énuméré, ",
+	"484 answered with nothing recognised: chime not enumerated, ",
 	"donc rien à adresser en 485"
 );
 
 /// Même verdict, autre cause : le 484 n'a pas répondu du tout (modèle sans
 /// carillon sans fil, ou refus). La nuance compte, elle est donc distincte.
 pub(crate) const REASON_CARILLON_SANS_ID: &str = concat!(
-	"la caméra n'a pas répondu à 484 : aucun identifiant de carillon, ",
+	"the camera did not answer 484: no chime id, ",
 	"donc rien à adresser en 485"
 );
 
@@ -417,7 +417,7 @@ pub(crate) const REASON_CARILLON_SANS_ID: &str = concat!(
 /// de cible. Publier un `command_topic` ici serait promettre l'écriture d'une
 /// balise inventée ; le motif nomme donc ce qu'il faut rapporter du terrain.
 pub(crate) const REASON_AI_SANS_BALISE: &str = concat!(
-	"aucune balise d'activation connue par type (342/AiDetectCfg ne documente que ",
+	"no known enable tag for this type (342/AiDetectCfg documents only ",
 	"sensibilite, stayTime, tailles) : pas de topic de commande"
 );
 

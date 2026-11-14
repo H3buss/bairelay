@@ -271,7 +271,7 @@ pub(crate) async fn report_doorbell_press(
 		tracing::warn!(camera = %camera_name, error = %e, "publish_doorbell_press failed");
 	}
 	if let Some(handle) = reveil {
-		crate::burst::trigger(std::sync::Arc::clone(handle), crate::burst::Wake::Appui);
+		crate::burst::trigger(std::sync::Arc::clone(handle), crate::burst::Wake::Press);
 	}
 }
 
@@ -310,7 +310,7 @@ pub(crate) async fn report_alarm_update(
 			if let Some(handle) = reveil {
 				crate::burst::trigger(
 					std::sync::Arc::clone(handle),
-					crate::burst::Wake::Mouvement,
+					crate::burst::Wake::Motion,
 				);
 			}
 		}

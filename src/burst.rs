@@ -148,20 +148,20 @@ const MAX_CONSECUTIVE_REFUSALS: usize = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Wake {
 	/// Appui sur le bouton de la sonnette.
-	Appui,
+	Press,
 	/// Remontée de mouvement (alarme de session, alarme relayée, PIR webhook).
-	Mouvement,
+	Motion,
 	/// Trame entrante sur le canal du faux cloud (poussée TCP).
-	Poussee,
+	Push,
 }
 
 impl Wake {
 	/// Le mot court publié dans l'état de salve.
 	pub(crate) fn slug(self) -> &'static str {
 		match self {
-			Wake::Appui => "appui",
-			Wake::Mouvement => "mouvement",
-			Wake::Poussee => "poussee",
+			Wake::Press => "press",
+			Wake::Motion => "motion",
+			Wake::Push => "push",
 		}
 	}
 }
@@ -171,36 +171,36 @@ impl Wake {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Stop {
 	/// Pas de MQTT : rien à publier, donc rien à lire.
-	SansMqtt,
+	NoMqtt,
 	/// Un flux est en cours : la règle 3.
-	Flux,
+	Stream,
 	/// Aucune session Baïchuan n'a été établie pendant [`SESSION_WAIT`].
-	SansSession,
+	NoSession,
 	/// [`MAX_CONSECUTIVE_REFUSALS`] refus d'affilée, ou une tentative impossible
 	/// ([`Verdict::Unknown`]) : la salve s'arrête là, motifs publiés.
-	Refus,
+	Refused,
 	/// La borne [`COMMAND_BUDGET`] a fait sauter au moins une famille.
 	Budget,
 	/// [`TIME_BUDGET`] dépassée.
-	Duree,
+	Duration,
 	/// Le pont s'arrête (jeton de la caméra annulé).
-	Annulee,
+	Cancelled,
 	/// Tout le plan est passé.
-	Terminee,
+	Done,
 }
 
 impl Stop {
 	/// Le mot court publié dans l'état de salve.
 	pub(crate) fn slug(self) -> &'static str {
 		match self {
-			Stop::SansMqtt => "sans-mqtt",
-			Stop::Flux => "flux",
-			Stop::SansSession => "sans-session",
-			Stop::Refus => "refus",
+			Stop::NoMqtt => "no-mqtt",
+			Stop::Stream => "stream",
+			Stop::NoSession => "no-session",
+			Stop::Refused => "refused",
 			Stop::Budget => "budget",
-			Stop::Duree => "duree",
-			Stop::Annulee => "annulee",
-			Stop::Terminee => "terminee",
+			Stop::Duration => "duration",
+			Stop::Cancelled => "cancelled",
+			Stop::Done => "done",
 		}
 	}
 }
@@ -342,9 +342,9 @@ impl Drop for BurstRelease {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BurstPlan {
 	/// Les familles qui seront relues, dans l'ordre de lecture.
-	pub(crate) familles: Vec<Family>,
+	pub(crate) families: Vec<Family>,
 	/// Total des commandes évalué ([`cout`]).
-	pub(crate) commandes: usize,
+	pub(crate) commands: usize,
 	/// Familles écartées parce que la borne ne les payait pas.
 	pub(crate) sautees: usize,
 }
@@ -412,18 +412,18 @@ fn rang(famille: Family) -> u8 {
 ///
 /// C'est aussi ce qui rend la borne **haute** au sens strict :
 /// [`BurstPlan::commandes`] ne dépasse jamais `budget`.
-pub(crate) fn build_plan(familles: &[Family], budget: usize) -> BurstPlan {
+pub(crate) fn build_plan(families: &[Family], budget: usize) -> BurstPlan {
 	let mut payees: Vec<(u8, usize, Family)> =
-		familles.iter().copied().map(|f| (rang(f), cout(f), f)).collect();
+		families.iter().copied().map(|f| (rang(f), cout(f), f)).collect();
 	payees.sort_by_key(|(rangement, prix, _)| (*rangement, *prix));
-	let mut plan = BurstPlan { familles: Vec::new(), commandes: 0, sautees: 0 };
+	let mut plan = BurstPlan { families: Vec::new(), commands: 0, sautees: 0 };
 	for (_, prix, famille) in payees {
-		if plan.commandes + prix > budget {
+		if plan.commands + prix > budget {
 			plan.sautees += 1;
 			continue;
 		}
-		plan.commandes += prix;
-		plan.familles.push(famille);
+		plan.commands += prix;
+		plan.families.push(famille);
 	}
 	plan
 }
@@ -449,34 +449,34 @@ pub(crate) fn familles_a_lire(camera: &str) -> Vec<Family> {
 ///
 /// Rend la poignée de la tâche pour les tests ; les appelants de production
 /// l'ignorent : la salve est détachée par construction.
-pub(crate) fn trigger(handle: Arc<CameraHandle>, raison: Wake) -> Option<JoinHandle<()>> {
+pub(crate) fn trigger(handle: Arc<CameraHandle>, reason: Wake) -> Option<JoinHandle<()>> {
 	if !handle.salve().prendre(Instant::now()) {
 		tracing::debug!(
 			camera = %handle.name(),
-			raison = raison.slug(),
+			reason = reason.slug(),
 			"réveil sans salve : une salve tourne déjà, ou ce réveil tombe dans la fenêtre du précédent"
 		);
 		return None;
 	}
 	tracing::info!(
 		camera = %handle.name(),
-		raison = raison.slug(),
+		reason = reason.slug(),
 		budget = COMMAND_BUDGET,
 		"salve de réveil engagée"
 	);
-	Some(tokio::spawn(tache(handle, raison)))
+	Some(tokio::spawn(tache(handle, reason)))
 }
 
 /// Le corps de la salve, une fois la garde réservée.
-async fn tache(handle: Arc<CameraHandle>, raison: Wake) {
+async fn tache(handle: Arc<CameraHandle>, reason: Wake) {
 	let _fin = BurstRelease(Arc::clone(handle.salve()));
 
 	let Some(mqtt) = handle.mqtt_client() else {
-		let arret = Stop::SansMqtt;
+		let arret = Stop::NoMqtt;
 		tracing::debug!(
 			camera = %handle.name(),
-			raison = raison.slug(),
-			etat = arret.slug(),
+			reason = reason.slug(),
+			state = arret.slug(),
 			"salve sans MQTT : rien à publier, donc rien à lire"
 		);
 		return;
@@ -489,10 +489,10 @@ async fn tache(handle: Arc<CameraHandle>, raison: Wake) {
 	if handle.flux_en_cours() {
 		tracing::info!(
 			camera = %handle.name(),
-			raison = raison.slug(),
+			reason = reason.slug(),
 			"salve refusée : un flux est en cours"
 		);
-		publier(&mqtt, &prefix, handle.name(), raison, Stop::Flux, 0, 0).await;
+		publier(&mqtt, &prefix, handle.name(), reason, Stop::Stream, 0, 0).await;
 		return;
 	}
 
@@ -503,11 +503,11 @@ async fn tache(handle: Arc<CameraHandle>, raison: Wake) {
 	let Some(bc) = await_session(&handle).await else {
 		tracing::info!(
 			camera = %handle.name(),
-			raison = raison.slug(),
+			reason = reason.slug(),
 			salle = ?SESSION_WAIT,
 			"salve sans session Baïchuan : la caméra ne s'est pas laissée joindre"
 		);
-		publier(&mqtt, &prefix, handle.name(), raison, Stop::SansSession, 0, 0).await;
+		publier(&mqtt, &prefix, handle.name(), reason, Stop::NoSession, 0, 0).await;
 		return;
 	};
 
@@ -525,27 +525,27 @@ async fn tache(handle: Arc<CameraHandle>, raison: Wake) {
 	let plan = build_plan(&a_lire, COMMAND_BUDGET);
 	tracing::info!(
 		camera = %handle.name(),
-		raison = raison.slug(),
-		familles = plan.familles.len(),
+		reason = reason.slug(),
+		families = plan.families.len(),
 		sautees = plan.sautees,
 		ecartees,
-		commandes = plan.commandes,
+		commands = plan.commands,
 		budget = COMMAND_BUDGET,
 		"plan de salve"
 	);
 
 	let mut lues: Vec<(Family, Verdict)> = Vec::new();
-	let mut commandes = 0usize;
+	let mut commands = 0usize;
 	let tournee = tokio::time::timeout(
 		TIME_BUDGET,
-		salve(&handle, &bc, &publisher, &plan, &mut lues, &mut commandes),
+		salve(&handle, &bc, &publisher, &plan, &mut lues, &mut commands),
 	)
 	.await;
 	let mut arret = match tournee {
 		Ok(arret) => arret,
-		Err(_) => Stop::Duree,
+		Err(_) => Stop::Duration,
 	};
-	if arret == Stop::Terminee && plan.sautees > 0 {
+	if arret == Stop::Done && plan.sautees > 0 {
 		arret = Stop::Budget;
 	}
 
@@ -554,16 +554,16 @@ async fn tache(handle: Arc<CameraHandle>, raison: Wake) {
 
 	tracing::info!(
 		camera = %handle.name(),
-		raison = raison.slug(),
-		etat = arret.slug(),
-		commandes,
+		reason = reason.slug(),
+		state = arret.slug(),
+		commands,
 		budget = COMMAND_BUDGET,
-		familles = lues.len(),
+		families = lues.len(),
 		modifiables = lues.iter().filter(|(_, v)| *v == Verdict::Writable).count(),
 		passageres = lues.iter().filter(|(_, v)| *v == Verdict::Transient).count(),
 		"salve de réveil terminée : session rendue"
 	);
-	publier(&mqtt, &prefix, handle.name(), raison, arret, commandes, lues.len()).await;
+	publier(&mqtt, &prefix, handle.name(), reason, arret, commands, lues.len()).await;
 	// `_verrou` et `_fin` se libèrent ici : la caméra peut se rendormir.
 }
 
@@ -579,7 +579,7 @@ async fn salve(
 	publ: &StatusPublisher<'_>,
 	plan: &BurstPlan,
 	lues: &mut Vec<(Family, Verdict)>,
-	commandes: &mut usize,
+	commands: &mut usize,
 ) -> Stop {
 	let garde = handle.salve();
 
@@ -603,7 +603,7 @@ async fn salve(
 		garde.note_battery(issu.is_ok());
 		let (famille, verdict) = settings::battery_read(publ, &issu).await;
 		lues.push((famille, verdict));
-		*commandes += 1;
+		*commands += 1;
 		// Un `400` sur la trame 253 ne doit pas éteindre la tournée non plus :
 		// c'est exactement le cas mesuré où la batterie refuse et où le carillon,
 		// juste derrière, aurait répondu. Le « stopper » de la trame 253 a déjà
@@ -615,28 +615,28 @@ async fn salve(
 				famille = famille.slug(),
 				"salve arrêtée sur la batterie : rien n'a répondu, la session est rendue"
 			);
-			return Stop::Refus;
+			return Stop::Refused;
 		}
 	}
 
 	// Refus **d'affilée dans cette tournée** : remis à zéro dès qu'une famille
 	// répond. C'est ce compteur qui rend la session, pas celui par famille.
 	let mut refus_tournee = 0usize;
-	for &famille in &plan.familles {
+	for &famille in &plan.families {
 		let prix = cout(famille);
-		if *commandes + prix > COMMAND_BUDGET {
+		if *commands + prix > COMMAND_BUDGET {
 			tracing::info!(
 				camera = %handle.name(),
 				famille = famille.slug(),
-				commandes = *commandes,
+				commands = *commands,
 				budget = COMMAND_BUDGET,
-				"salve arrêtée par la borne de commandes"
+				"salve arrêtée par la borne de commands"
 			);
 			return Stop::Budget;
 		}
-		*commandes += prix;
+		*commands += prix;
 		if handle.cancel_token().is_cancelled() {
-			return Stop::Annulee;
+			return Stop::Cancelled;
 		}
 		let (famille, verdict) = read_family(bc, publ, famille).await;
 		lues.push((famille, verdict));
@@ -667,9 +667,9 @@ async fn salve(
 						camera = %handle.name(),
 						famille = famille.slug(),
 						plafond = MAX_CONSECUTIVE_REFUSALS,
-						"salve rendue après deux refus d'affilée : les familles lues restent publiées"
+						"salve rendue après deux refus d'affilée : les families lues restent publiées"
 					);
-					return Stop::Refus;
+					return Stop::Refused;
 				}
 			}
 			// Rien n'a répondu : ce n'est pas un refus, c'est l'absence. Tenir
@@ -678,9 +678,9 @@ async fn salve(
 				tracing::info!(
 					camera = %handle.name(),
 					famille = famille.slug(),
-					"salve arrêtée sur une tentative impossible : les familles déjà lues restent publiées, la session est rendue"
+					"salve arrêtée sur une tentative impossible : les families déjà lues restent publiées, la session est rendue"
 				);
-				return Stop::Refus;
+				return Stop::Refused;
 			}
 			// La famille a répondu : elle n'est plus en dette de refus, et la
 			// série de refus de la tournée est rompue.
@@ -692,7 +692,7 @@ async fn salve(
 		}
 	}
 
-	Stop::Terminee
+	Stop::Done
 }
 
 /// Attendre que la session Baïchuan de cette caméra soit là.
@@ -735,19 +735,19 @@ async fn publier(
 	mqtt: &SharedMqttClient,
 	prefix: &str,
 	camera: &str,
-	raison: Wake,
-	etat: Stop,
-	commandes: usize,
-	familles: usize,
+	reason: Wake,
+	state: Stop,
+	commands: usize,
+	families: usize,
 ) {
 	let topic = format!("{prefix}/{camera}/status/burst");
 	let payload = format!(
-		r#"{{"raison":"{raison}","etat":"{etat}","commandes":{commandes},"budget":{budget},"familles":{familles}}}"#,
-		raison = raison.slug(),
-		etat = etat.slug(),
-		commandes = commandes,
+		r#"{{"reason":"{reason}","state":"{state}","commands":{commands},"budget":{budget},"families":{families}}}"#,
+		reason = reason.slug(),
+		state = state.slug(),
+		commands = commands,
 		budget = COMMAND_BUDGET,
-		familles = familles,
+		families = families,
 	);
 	if let Err(e) = mqtt.publish_retained(&topic, payload.as_bytes()).await {
 		tracing::debug!(camera = %camera, error = %e, "publication de l'état de salve ratée");
@@ -838,9 +838,9 @@ mod tests {
 		));
 		handle.set_bc_camera_for_test(Arc::new(BcCamera::from_mock_connection(mock).await));
 
-		let premiere = trigger(Arc::clone(&handle), Wake::Appui).expect("la première salve part");
+		let premiere = trigger(Arc::clone(&handle), Wake::Press).expect("la première salve part");
 		// Le second réveil du même réveil : l'alarme webhook qui suit l'appui.
-		let seconde = trigger(Arc::clone(&handle), Wake::Mouvement);
+		let seconde = trigger(Arc::clone(&handle), Wake::Motion);
 		assert!(seconde.is_none(), "un second réveil dans la fenêtre ne paie pas de salve");
 		premiere.await.expect("la salve n'a pas paniqué");
 
@@ -849,15 +849,15 @@ mod tests {
 			vec![MSG_ID_BATTERY_INFO],
 			"une seule salve = une seule trame 253, et rien d'autre"
 		);
-		let etat = capture
+		let state = capture
 			.published_payloads()
 			.into_iter()
 			.find(|(t, _)| t == "bairelay/cam-salve/status/burst")
 			.expect("l'état de salve est publié");
-		let etat = String::from_utf8_lossy(&etat.1).into_owned();
-		assert!(etat.starts_with("{\"raison\":\"appui\""), "{etat}");
-		assert!(etat.contains("\"commandes\":1"), "{etat}");
-		assert!(!etat.contains("\"etat\":\"refus\""), "{etat}");
+		let state = String::from_utf8_lossy(&state.1).into_owned();
+		assert!(state.starts_with("{\"reason\":\"press\""), "{state}");
+		assert!(state.contains("\"commands\":1"), "{state}");
+		assert!(!state.contains("\"state\":\"refus\""), "{state}");
 	}
 
 	/// Pas de réveil = pas une commande. C'est la propriété que la batterie
@@ -999,11 +999,11 @@ mod tests {
 		handle.set_bc_camera_for_test(Arc::new(BcCamera::from_mock_connection(mock).await));
 
 		let plan = BurstPlan {
-			familles: vec![Family::Motion, Family::Mask],
-			commandes: 2,
+			families: vec![Family::Motion, Family::Mask],
+			commands: 2,
 			sautees: 0,
 		};
-		let (arret, commandes) = {
+		let (arret, commands) = {
 			let publisher = StatusPublisher::new(
 				handle.mqtt_client().expect("harnais avec MQTT"),
 				handle.topic_prefix(),
@@ -1028,12 +1028,12 @@ mod tests {
 		};
 		assert_eq!(
 			arret,
-			Stop::Refus,
+			Stop::Refused,
 			"deux refus d'affilée rendent la session ([MAX_CONSECUTIVE_REFUSALS])"
 		);
 		assert_eq!(
-			commandes, 3,
-			"trame 253 (1) + les deux familles refusées (1 + 1) : les deux lectures refusées ont bien été payées, donc tentées"
+			commands, 3,
+			"trame 253 (1) + les deux families refusées (1 + 1) : les deux lectures refusées ont bien été payées, donc tentées"
 		);
 		let topics = capture.published_topics();
 		assert!(
@@ -1055,7 +1055,7 @@ mod tests {
 			.build()
 			.await;
 		handle.set_bc_camera_for_test(Arc::new(BcCamera::from_mock_connection(mock).await));
-		let tache = trigger(Arc::clone(&handle), Wake::Poussee).expect("salve autorisée");
+		let tache = trigger(Arc::clone(&handle), Wake::Push).expect("salve autorisée");
 		tache.await.expect("pas de panique");
 		assert_eq!(
 			handle.wake_lock().count(),
@@ -1122,7 +1122,7 @@ mod tests {
 			.filter(|f| !garde.famille_saturee(*f))
 			.collect();
 		assert_eq!(a_lire, vec![Family::Chime], "la famille saturée ne repart pas au budget");
-		assert_eq!(build_plan(&a_lire, 6).familles, vec![Family::Chime]);
+		assert_eq!(build_plan(&a_lire, 6).families, vec![Family::Chime]);
 	}
 
 	/// Le rang mesuré passe avant le coût. La fenêtre réelle tenant quatre ordres
@@ -1140,24 +1140,24 @@ mod tests {
 			Family::Chime,
 		];
 		let plan = build_plan(&entrees, COMMAND_BUDGET);
-		let tete: Vec<&str> = plan.familles.iter().take(2).map(|f| f.slug()).collect();
-		assert_eq!(tete, vec!["osd", "motion"], "les deux familles qui servent entrent les premières");
+		let tete: Vec<&str> = plan.families.iter().take(2).map(|f| f.slug()).collect();
+		assert_eq!(tete, vec!["osd", "motion"], "les deux families qui servent entrent les premières");
 		assert_eq!(
-			*plan.familles.last().expect("le plan n'est pas vide"),
+			*plan.families.last().expect("le plan n'est pas vide"),
 			Family::Image,
 			"`image` ferme la marche"
 		);
-		assert!(plan.commandes <= COMMAND_BUDGET, "{} commandes", plan.commandes);
+		assert!(plan.commands <= COMMAND_BUDGET, "{} commands", plan.commands);
 
 		// Fenêtre plus étroite : c'est encore `image` qui reste sur le quai, et
 		// non l'une des deux premières.
 		let plan = build_plan(&entrees, 4);
 		assert!(
-			!plan.familles.contains(&Family::Image),
+			!plan.families.contains(&Family::Image),
 			"{:?} — la famille inutile est écartée avant les autres",
-			plan.familles
+			plan.families
 		);
-		assert_eq!(plan.familles.len(), 4, "les quatre qui rapportent tiennent : {:?}", plan.familles);
+		assert_eq!(plan.families.len(), 4, "les quatre qui rapportent tiennent : {:?}", plan.families);
 	}
 
 	/// La borne est **haute** : aucun plan ne la dépasse, et une famille chère en
@@ -1167,24 +1167,24 @@ mod tests {
 		let toutes: Vec<Family> = Family::ALL.to_vec();
 		let plan = build_plan(&toutes, COMMAND_BUDGET);
 		assert!(
-			plan.commandes <= COMMAND_BUDGET,
-			"{} commandes pour une borne de {}",
-			plan.commandes,
+			plan.commands <= COMMAND_BUDGET,
+			"{} commands pour une borne de {}",
+			plan.commands,
 			COMMAND_BUDGET
 		);
-		assert!(plan.sautees > 0, "seize familles coûtent plus que la borne");
+		assert!(plan.sautees > 0, "seize families coûtent plus que la borne");
 
 		// `chime` (5) devant des familles à une commande : le plan les paie de
 		// la moins chère à la plus chère, donc les petites passent en premier.
 		let plan = build_plan(&[Family::Chime, Family::Audio, Family::Pir], 7);
 		assert_eq!(
-			plan.familles,
+			plan.families,
 			vec![Family::Audio, Family::Pir, Family::Chime],
 			"1 + 1 + 5 = 7, la borne est atteinte sans être dépassée"
 		);
 		let plan = build_plan(&[Family::Chime, Family::Audio, Family::Pir], 6);
 		assert_eq!(
-			plan.familles,
+			plan.families,
 			vec![Family::Audio, Family::Pir],
 			"la famille chère est sautée, pas la fenêtre entière"
 		);
@@ -1192,7 +1192,7 @@ mod tests {
 
 		// `ai` ne coûte rien : il reste dans le plan, et son motif avec lui.
 		let plan = build_plan(&[Family::Ai], 0);
-		assert_eq!(plan.familles, vec![Family::Ai], "une famille sans commande ne mange pas la borne");
+		assert_eq!(plan.families, vec![Family::Ai], "une famille sans commande ne mange pas la borne");
 	}
 
 	/// Une caméra sans MQTT ne lance rien : personne n'attend la lecture.
@@ -1207,7 +1207,7 @@ mod tests {
 			CancellationToken::new(),
 			None,
 		));
-		let t = trigger(Arc::clone(&handle), Wake::Appui).expect("la garde s'ouvre quand même");
+		let t = trigger(Arc::clone(&handle), Wake::Press).expect("la garde s'ouvre quand même");
 		t.await.expect("pas de panique");
 		assert_eq!(handle.wake_lock().count(), 0);
 	}

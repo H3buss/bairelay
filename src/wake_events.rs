@@ -65,7 +65,7 @@ pub(crate) fn push_edge(
 		hold,
 		cancel,
 		true,
-		crate::burst::Wake::Poussee,
+		crate::burst::Wake::Push,
 	);
 	true
 }
@@ -87,7 +87,7 @@ pub(crate) fn motion_edge(
 		hold,
 		cancel,
 		true,
-		crate::burst::Wake::Mouvement,
+		crate::burst::Wake::Motion,
 	);
 }
 
@@ -111,7 +111,7 @@ pub(crate) fn motion_hold(
 		hold,
 		cancel,
 		false,
-		crate::burst::Wake::Mouvement,
+		crate::burst::Wake::Motion,
 	);
 }
 
