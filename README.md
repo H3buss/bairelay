@@ -303,6 +303,16 @@ Arming replaces any other webhook URL on the doorbell, such as Home Assistant's 
 
 ---
 
+### Further reading
+
+- [`docs/settings.md`](docs/settings.md) — the camera setting families: what the
+  bridge reads and writes, which families are read-only and why, the read burst
+  that spends a wake window, the per-camera `stream` option, and the options
+  table.
+- [`docs/availability.md`](docs/availability.md) — the two availability blocks
+  (bridge life, camera reachability), why a closed session does not make a device
+  unavailable, and why one failed attempt is enough on a battery camera.
+
 ## Command-line usage
 
 Bairelay has three **service modes** (long-running), several **camera commands** (one-shot), and one **utility command** (`check-config`):

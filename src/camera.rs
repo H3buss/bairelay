@@ -1075,15 +1075,14 @@ impl CameraHandle {
 		Ok((Arc::new(camera), device_info.device_type))
 	}
 
-	/// Publie le verdict de présence de la caméra, en message conservé, une fois
-	/// par transition seulement.
+	/// Publish this camera's presence verdict, retained, once per transition only.
 	///
-	/// Trois événements le pilotent, et tous trois existent déjà : le démarrage du
-	/// pont (verdict optimiste), une session ouverte (contact réussi), une tentative
-	/// de connexion qui renonce. Jamais un appel réseau de plus vers la caméra : la
-	/// configuration en service pose `interroger = false`, et un réveil pour rien
-	/// coûte de la batterie.
-	async fn publier_presence(&self, joignable: bool) {
+	/// Three events drive it, and all three already happen anyway: the bridge
+	/// starting (an optimistic verdict), a session opening (a real contact), and a
+	/// connection attempt giving up. Never one more network call towards the
+	/// camera — waking a sleeping doorbell to ask it whether it is there is exactly
+	/// the battery this option is meant to save. See `docs/availability.md`.
+	async fn publish_presence(&self, reachable: bool) {
 		let Some(ref mqtt) = self.mqtt_client else {
 			return;
 		};
@@ -1093,10 +1092,10 @@ impl CameraHandle {
 			&self.config.name,
 			Arc::clone(&self.presence_publiee),
 		);
-		if let Err(e) = publisher.publish_presence(joignable).await {
+		if let Err(e) = publisher.publish_presence(reachable).await {
 			tracing::warn!(
 				camera = %self.config.name,
-				joignable,
+				reachable,
 				error = %e,
 				"Failed to publish presence status"
 			);
@@ -1242,8 +1241,8 @@ impl CameraHandle {
 		// qui a abouti. Toute commande et toute requête abouties se déroulent dans une
 		// session, donc ce point les couvre toutes, sans interrogation de plus. La
 		// fermeture de la session, elle, ne dit rien de la présence : une sonnette
-		// endormie reste joignable sur demande.
-		self.publier_presence(true).await;
+		// endormie reste reachable sur demande.
+		self.publish_presence(true).await;
 
 		*self.bc_camera.write_recover() = Some(Arc::clone(&driver));
 		*self.bc_camera_concrete.write_recover() = concrete.clone();
@@ -1601,9 +1600,9 @@ impl CameraHandle {
 		}
 
 		// Verdict de présence optimiste au démarrage : rien ne dit encore que la
-		// caméra est injoignable, et griser tout un tableau de bord avant le premier
+		// caméra est inreachable, et griser tout un tableau de bord avant le premier
 		// contact serait un mensonge que le premier échec corrige de lui-même.
-		self.publier_presence(true).await;
+		self.publish_presence(true).await;
 
 		// Spawn the preview publisher at camera lifetime (NOT session
 		// scope): it must keep publishing status/preview with the
@@ -1689,7 +1688,7 @@ impl CameraHandle {
 					// présente une fois le déroulé normal de la tentative terminé, les rondes
 					// internes de découverte ayant eu leur budget. La présence passe ici, et
 					// nulle part ailleurs.
-					self.publier_presence(false).await;
+					self.publish_presence(false).await;
 					if is_login_failure(&e) {
 						tracing::error!(camera = %self.config.name, error = %format!("{:#}", e), "Authentication failed — check credentials. Stopping retries.");
 						self.set_state(CameraState::Disconnected);
